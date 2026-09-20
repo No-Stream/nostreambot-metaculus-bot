@@ -7,6 +7,13 @@ methodology reference AGENTS.md points at. Everything here is free and offline: 
 API reads, GitHub artifact reads, local files. Zero paid provider calls, zero publishing,
 no commits from analysis agents.
 
+Read this playbook and the current `docs/performance_analysis.md` before using old
+`scratch/residual_*` material. The dated directories hold datasets, logs and reports; routine
+pulls, round assembly and standard dimensions use committed CLIs and modules. Do not create a
+scratch driver, copy a prior-round driver, or reimplement a standard dimension. A focused
+follow-up investigation may use a scratch script. If routine functionality is missing, record
+the gap and agree on a maintained addition first.
+
 Outputs land in a fresh dated dir `scratch/residual_<date>/` (gitignored — grep prior
 rounds with `rg --no-ignore`). Never modify a prior round's dir; it is the diff baseline.
 
@@ -27,11 +34,35 @@ stale archive silently drops recent questions and receipts. Non-negotiable first
    next steps) and FUTURE.md. For each item: shipped since (commit evidence)? date/n-gate
    due now? still open? The ledger tells the dimension and dossier agents what to check.
 
-## Phase 2 — Pull
+## Phase 2 — Pull and assemble
 
-- Fresh `resilient_pull.py` on the active tournament(s); probe for new slugs via the
-  workflow yamls + a cheap API probe. Reuse verified-complete baselines from prior rounds
-  (each round's README records which pulls are safe to reuse and why).
+- For Metaculus, use the committed performance-analysis CLI once per active slug. Its default
+  tournament can lag the live season, so pass the slug explicitly and pass the matching prior
+  pull to detect platform re-resolutions:
+
+  ```bash
+  uv run python -m metaculus_bot.performance_analysis \
+    --tournament <slug> \
+    --output scratch/residual_<date>/perf_<slug>.json \
+    --prior scratch/residual_<prior>/perf_<slug>.json
+  ```
+
+- Before using a new slug, run `make probe_slugs`. `make verify_pull` is an offline audit, but it
+  requires a same-pull raw-post checkpoint beside the records file, named
+  `perf_<slug>_checkpoint.json`; the performance-analysis CLI does not write that checkpoint.
+  Its `collector.fetch_resolved_questions` API returns the raw posts, but capturing them from a
+  separate call gives a separate snapshot. If exact checkpoint capture is needed for routine
+  verification, report that gap and agree on maintained CLI support rather than writing a
+  scratch capture script.
+
+- The `RoundSpec` builder and output writer described in `docs/performance_analysis.md` consume
+  staged per-slug `perf_<slug>.json` files, the prior tagged dataset, `question_weights.json`,
+  `platform_rescored.json`, and the telemetry archive. The checkpoint is for `verify_pull`, not
+  the builder. Invoke the maintained API directly; there is no integrated multi-source round
+  CLI or round-owned driver script.
+
+- Reuse verified-complete baselines from prior rounds (each round's README records which pulls
+  are safe to reuse and why).
 - Era-tag every record on `bot_comment_created_at` (submission time) against the era map.
   Tag exclusion cohorts by IMPORTING the constants, never by retyping the ids:
   `KNOWN_BUG_QIDS`, `DEGRADED_RUN_QIDS` (dry-key 1-of-3), `PARTIAL_DEGRADED_QIDS` (2-of-3)

@@ -2276,6 +2276,13 @@ outer tail, the supply probe, per-model recovery, the spot-peer rule,
 `spot_peer_delta`, and the clip-threshold sweep) live in
 `docs/performance_analysis.md`.
 
+**Routine residual refreshes use the committed CLI and `RoundSpec` library API described
+there and in the residual playbook.** Do not write new scratch scripts, copy prior-round
+drivers, or recreate standard dimensions without an agreed functionality change. Keep dated
+`scratch/residual_<date>/` directories for round data and reports. Focused follow-up analyses
+may use scratch scripts; if routine support is missing, report the gap and agree on a maintained
+addition.
+
 `metaculus_bot/performance_analysis/` evaluates the live bot's calibration
 against actual resolutions. The pull hits only the Metaculus API (resolved
 questions plus the bot's own comments, user id 275109, auth via
@@ -2287,8 +2294,9 @@ uv run python -m metaculus_bot.performance_analysis --tournament <slug> --output
 ```
 
 The `--tournament` default is `DEFAULT_TOURNAMENT` (`performance_analysis/cli.py`)
-and lags the live season, so pass the current slug explicitly. Pass
-`--cached <path>` to re-analyze a saved dataset without re-fetching.
+and lags the live season, so pass the current slug explicitly. It collects one Metaculus slug
+per call; on a routine refresh, also pass `--prior <previous same-slug dataset>` to detect
+platform re-resolutions. Pass `--cached <path>` to re-analyze a saved dataset without re-fetching.
 
 The width monitor (`performance_analysis/width_monitor.py`) tracks how wide the
 published numeric distributions are and how well that width is calibrated, split
@@ -2371,15 +2379,25 @@ permanently unrecoverable. The twice-weekly launchd job in
 
 ### Auditing a round pull, and probing the season slugs
 
-Two free CLIs sit either side of a residual-round pull. Both were per-round scratch
-scripts pasted forward for months before promotion, so their history lives in
-`scratch/residual_*/`.
+Use these maintained commands to preflight a pull and audit its output:
 
 ```bash
 make probe_slugs                                     # before the pull: is the season config current?
 make verify_pull ARGS="--records scratch/residual_<date>/perf_<slug>.json \
   --prior-records scratch/residual_<prior>/perf_<slug>.json"
 ```
+
+`verify_pull` requires the raw posts from the same pull in a sibling file named
+`perf_<slug>_checkpoint.json`. The performance-analysis CLI does not write this checkpoint;
+`collector.fetch_resolved_questions` returns raw posts, but a separate call is a separate
+snapshot. Comparing separate snapshots cannot establish coverage of the exact scored pull.
+If maintained CLI support for checkpoint output is needed, agree on that addition rather than
+adding a scratch capture script.
+
+These are pull checks, not a full-round driver. For routine round assembly, use the committed
+`RoundSpec` library API described in `docs/performance_analysis.md` and the residual playbook.
+There is no integrated multi-source round CLI; keep `scratch/residual_<date>/` for round inputs
+and outputs rather than copied driver or dimension scripts.
 
 `scripts/probe_slugs.py` reads one project object per candidate slug,
 `/api/projects/tournaments/<slug>/`, and reports whether it exists, its visibility,
@@ -2395,8 +2413,8 @@ season under a spelling the constants do not name. Post and question counts stay
 `make supply_probe`'s job; this probe pages nothing.
 
 `scripts/verify_pull.py` is fully offline. It reads the pull's checkpoint (the raw post
-payloads it fetched, written beside the records file, so one `--records` path locates
-both) and runs five checks: which resolved posts produced no record and why, which
+payloads saved beside the records file as `<records stem>_checkpoint.json`, so one
+`--records` path locates both) and runs five checks: which resolved posts produced no record and why, which
 resolved members of a covered group post produced none, the diff against the prior round
 (`--output` writes that cohort as JSON), whether every platform score on an overlapping
 record reproduces exactly, and whether the pull still parses per-model forecasts and

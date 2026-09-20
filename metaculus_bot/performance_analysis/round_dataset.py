@@ -3,11 +3,12 @@
 Every round pulls resolved questions, merges them with the baselines the previous round already
 tagged, and writes one ``perf_all_tagged.json`` that every downstream lane reads. The rules for
 doing that are the same round to round and live here; only the directories, the labels and the
-tournament slugs change, and those arrive in a :class:`RoundSpec` from the round's own script.
+tournament slugs change, and callers supply those in a :class:`RoundSpec`.
 
 Field insertion order is load-bearing: ``perf_all_tagged.json`` is compared byte-for-byte between
-rounds, so the tagging steps below assign in a fixed order. What each output file is for and how a
-round drives this module: ``docs/performance_analysis.md`` "The round dataset builder".
+rounds, so the tagging steps below assign in a fixed order. Invoke this maintained API directly
+for routine refreshes; do not create a new scratch driver. The input contract and permitted
+follow-up analyses are documented in ``docs/performance_analysis.md`` "The round dataset builder".
 """
 
 from __future__ import annotations
