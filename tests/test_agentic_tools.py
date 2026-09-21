@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 import aiohttp
 import pytest
 from google.genai import types as genai_types
+from PIL import Image
 from pypdf import PdfWriter
 
 from metaculus_bot.constants import (
@@ -129,6 +130,12 @@ def _scanned_pdf() -> bytes:
     writer.add_blank_page(width=200, height=200)
     buffer = io.BytesIO()
     writer.write(buffer)
+    return buffer.getvalue()
+
+
+def _static_png() -> bytes:
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 6), "navy").save(buffer, format="PNG")
     return buffer.getvalue()
 
 
@@ -715,12 +722,13 @@ async def test_fetch_pagination_second_call_uses_cache(monkeypatch: pytest.Monke
     )
 
     first = await agentic_tools.fetch(_URL)
-    second = await agentic_tools.fetch(_URL, start_char=agentic_tools._FETCH_WINDOW_CHARS)
+    continuation_start = int(first.content_markdown.split("start_char=", 1)[1].split("]", 1)[0])
+    second = await agentic_tools.fetch(_URL, start_char=continuation_start)
 
     assert first.truncated is True
-    assert "[truncated at 8000 of 8005 chars — call again with start_char=8000]" in first.content_markdown
+    assert f"[truncated at {continuation_start} of 8005 chars" in first.content_markdown
     assert second.method == "cache"
-    assert second.content_markdown == "A" * 5
+    assert first.content_markdown[:continuation_start] + second.content_markdown == "A" * 8005
     assert asked == [_URL], "the continuation is served from the shared read cache, with no second request"
 
 
@@ -1293,14 +1301,14 @@ async def test_fetch_empty_plain_still_escalates_to_rendered(monkeypatch: pytest
 async def test_fetch_still_escalates_to_read_document_after_the_rungs_ran(monkeypatch: pytest.MonkeyPatch) -> None:
     """A ladder result only a reader can turn into text must still reach read_document.
 
-    A declared image is the shape that produces it: nothing local reads those bytes, and the
-    archive rung still gets its turn on the URL first, so the escalation has to survive a rung
-    having run rather than only firing on a bare direct fetch.
+    An unreadable document produces this shape, and the archive rung still gets its turn
+    on the URL first, so the escalation has to survive a rung having run rather than only firing
+    on a bare direct fetch.
     """
-    url = "https://example.com/chart.png"
+    url = "https://example.com/report.pdf"
     _serve_direct(
         monkeypatch,
-        {url: _direct("unsupported_type", url=url, reason="image_needs_reader", content_type="image/png")},
+        {url: _direct("unreadable_document", url=url, content_type="application/pdf")},
     )
     archive_asked: list[str] = []
 
@@ -2448,17 +2456,19 @@ class TestReadDocumentAcquiresBeforePaying:
             "metaculus_bot.research.fetch_ladder.guard.is_public_http_url", AsyncMock(return_value=True)
         )
         monkeypatch.setattr("metaculus_bot.research.fetch_ladder.guard._get_session", lambda: session)
+        monkeypatch.setattr(classify, "read_body_capped", AsyncMock(return_value=_static_png()))
         rendered_on = _serve_rendered(monkeypatch, None)
         monkeypatch.setenv("GOOGLE_API_KEY", "key")
-        monkeypatch.setattr(
-            agentic_tools, "_run_document_read_sync", MagicMock(return_value=("The chart shows 41.", 1, ["SUCCESS"]))
-        )
+        document_reader = MagicMock(return_value=("The chart shows 41.", 1, ["SUCCESS"]))
+        monkeypatch.setattr(agentic_tools, "_run_document_read_sync", document_reader)
         monkeypatch.setattr("asyncio.to_thread", AsyncMock(side_effect=lambda fn, *args, **kwargs: fn(*args, **kwargs)))
 
         outcome = await agentic_tools.read_document("https://example.gov/chart.png", "what does the chart show?")
 
-        assert outcome.method == "document"
-        assert outcome.content_markdown == "The chart shows 41."
+        assert outcome.status == "ok"
+        assert outcome.method == "image_local"
+        assert len(outcome.image_views) == 1
+        document_reader.assert_not_called()
         assert rendered_on == []
 
     @pytest.mark.asyncio
@@ -2565,12 +2575,10 @@ class TestTheDocumentedEscalationDoesNotRepeatItself:
 
     ``READ_DOCUMENT_DESCRIPTION`` tells the driver to call it "for a URL where fetch returned
     status=blocked/js_wall/error", and ``fetch`` auto-escalates its own document results, so this
-    population is the main path rather than an edge. Nothing recorded a failed acquisition, so
-    both halves of the ladder ran twice: a second GET of an image whose body is never downloaded
-    on either pass, and a second Chromium launch (100-300 MB, up to 35 s, out of a
-    process-global cap of 2) for a page whose render just returned nothing. Only "rendered to
-    nothing" is memoized — a blocked, errored or throttled GET stays re-requestable, because the
-    driver is TOLD to retry those and 429 is in the retryable block set.
+    population is the main path rather than an edge. Image bytes and empty render results are
+    cached, avoiding repeated acquisition. A blocked, errored or throttled GET stays
+    re-requestable because the driver is told to retry those and 429 is in the retryable block
+    set.
     """
 
     @staticmethod
@@ -2585,16 +2593,11 @@ class TestTheDocumentedEscalationDoesNotRepeatItself:
 
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("_robots_allowed")
-    async def test_an_image_escalation_issues_one_request_not_two(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """An image is classified from its Content-Type, so a second GET learns nothing.
-
-        The branch comment used to claim the escalation cost no second request; that holds for a
-        scanned PDF, whose parse is cached under the URL, and never held for an image, whose body
-        is not downloaded on either pass and so is cached nowhere.
-        """
+    async def test_an_image_delivery_issues_one_request_not_two(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A fetched image retains its body and delivers normalized pixels without a second GET."""
         url = "https://example.gov/chart.png"
         session = _FakeSession(_FakeResponse(status=200, headers={"Content-Type": "image/png"}))
-        read_body = AsyncMock(return_value=b"")
+        read_body = AsyncMock(return_value=_static_png())
         monkeypatch.setattr(
             "metaculus_bot.research.fetch_ladder.guard.is_public_http_url", AsyncMock(return_value=True)
         )
@@ -2609,12 +2612,12 @@ class TestTheDocumentedEscalationDoesNotRepeatItself:
 
         outcome = await agentic_tools.fetch(url)
 
-        assert outcome.method == "document"
-        # The archive rung takes its own turn here, so the count is of THIS url's requests.
+        assert outcome.method == "image_local"
+        assert len(outcome.image_views) == 1
         assert [requested for requested, _ in session.calls].count(url) == 1, (
-            "the escalation must not re-GET a URL the direct rung just classified"
+            "pixel delivery must not re-GET a URL the direct rung just acquired"
         )
-        assert read_body.await_count == 0, "an image's body is never downloaded, on either pass"
+        assert read_body.await_count == 1, "the image body is retained once for view_image"
         assert rendered_on == []  # no browser reads an image
 
     @pytest.mark.asyncio

@@ -13,6 +13,8 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
 from metaculus_bot.constants import MANTIC_HOST, METACULUS_HOST
+from metaculus_bot.research.image_leads import ImageLead
+from metaculus_bot.research.resolution_fetch_result import LocalKind
 from metaculus_bot.research.resolution_url_scan import is_metaculus_self_ref
 
 _FETCH_LINK_CAP = 25
@@ -34,6 +36,10 @@ class PlainFetchResult:
     throttle_phrase: str | None = None
     throttle_chars: int | None = None
     throttle_method: str | None = None
+    local_kind: LocalKind | None = None
+    navigation_only: bool = False
+    local_read_refused: bool = False
+    image_leads: tuple[ImageLead, ...] = ()
 
 
 class _LinkCollector(HTMLParser):
@@ -77,7 +83,7 @@ def _extract_links_from_html(html: str, base_url: str) -> list[str]:
 
 # Named rather than spelled at each site: three producers and two consumers branch on it.
 DOCUMENT_NEEDED_METHOD = "document_needed"
-_DOCUMENT_NEEDED_MSG = "This URL is a PDF or image — use read_document(url, ask) to read it."
+_DOCUMENT_NEEDED_MSG = "This URL is a PDF — use read_document(url, ask) to read it."
 
 
 def _document_needed_result(current_url: str, content_type: str) -> PlainFetchResult:

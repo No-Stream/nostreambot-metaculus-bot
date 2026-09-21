@@ -47,6 +47,19 @@ def _internal_tool_schemas() -> list[dict[str, Any]]:
                         "claim": {"type": "string"},
                         "source_url": {"type": "string"},
                         "quote": {"type": "string"},
+                        "evidence_kind": {"type": "string", "enum": ["text", "image"], "default": "text"},
+                        "image_id": {
+                            "type": "string",
+                            "description": "For image evidence, the image_id delivered by a preceding tool result.",
+                        },
+                        "visual_observation": {
+                            "type": "string",
+                            "description": (
+                                "For image evidence, state exactly what you visually observed and label numerical "
+                                "values as transcribed or estimated. This records your interpretation; delivery "
+                                "provenance does not machine-verify the observation."
+                            ),
+                        },
                         "date": {"type": "string"},
                         "retrieved_how": {"type": "string"},
                         "topic": {"type": "string"},
@@ -61,7 +74,14 @@ def _internal_tool_schemas() -> list[dict[str, Any]]:
                             ),
                         },
                     },
-                    "required": ["claim", "source_url", "quote"],
+                    "required": ["claim", "source_url"],
+                    "allOf": [
+                        {
+                            "if": {"properties": {"evidence_kind": {"const": "image"}}, "required": ["evidence_kind"]},
+                            "then": {"required": ["image_id", "visual_observation"]},
+                            "else": {"required": ["quote"]},
+                        }
+                    ],
                     "additionalProperties": True,
                 },
             }
@@ -154,8 +174,9 @@ def _internal_tool_schemas() -> list[dict[str, Any]]:
         ),
         _tool_schema(
             "record_findings",
-            "Bank detached findings. Claims must stay citation-only and avoid likelihood or verdict language. "
-            "Optional derivation field carries arithmetic-only synthesis over the finding's own quoted numbers.",
+            "Bank detached findings. Text evidence requires a quote; visual evidence requires a delivered image_id "
+            "and visual_observation tied to that image's exact source URL. Claims must stay citation-only and avoid "
+            "likelihood or verdict language. Optional derivation carries arithmetic over quoted text evidence.",
             finding_schema,
         ),
         _tool_schema(

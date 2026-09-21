@@ -47,6 +47,13 @@ class TestDriverSystemPromptSourceAttribution:
         assert "State each source's evidence in its own claim and quote" in collapsed
         assert "Put your comparison in claim" not in collapsed
 
+    def test_visual_evidence_names_delivery_fields_and_interpretation_limit(self) -> None:
+        collapsed = " ".join(build_system_prompt("2026-09-11").split())
+        assert "set evidence_kind=image" in collapsed
+        assert "delivered image_id, its exact source or final URL, and visual_observation" in collapsed
+        assert "label numerical readings as transcribed or estimated" in collapsed
+        assert "delivery proves which source pixels you saw, not that your interpretation is correct" in collapsed
+
 
 class TestGapFillAnalyzerPrompt:
     """Covers the benchmarking carve-out in the analyzer prompt."""

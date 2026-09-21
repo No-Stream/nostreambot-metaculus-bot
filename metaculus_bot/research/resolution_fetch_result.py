@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 
 from metaculus_bot.constants import RESOLUTION_SOURCE_WAYBACK_MAX_AGE_DAYS
 from metaculus_bot.research.http_fetch import MAX_UNDECODABLE_CHAR_RATIO, DatawrapperChartRef
+from metaculus_bot.research.image_leads import ImageLead
 
 # `stale_data` has two producers, and only one of them earns the benign diagnostics token.
 # The Tier-2 Datawrapper hop reached a dataset whose Last-Modified is outside the freshness
@@ -281,6 +282,8 @@ FetchRoute = Literal[
     "url_context",
 ]
 
+LocalKind = Literal["archive", "workbook", "word", "image"]
+
 # One forecaster-facing sentence per non-direct route, rendered under the "primary grading
 # evidence" caveat for every route present in a question's snapshot. Keyed by `FetchRoute` and
 # ITERATED, so the mapping is both the vocabulary check and the render order: cheapest and most
@@ -535,6 +538,12 @@ class FetchResult:
     passages_returned: int | None = None
     passages_grounded: int | None = None
     fallback_used: bool | None = None
+    # Small routing metadata only. Parsed source contents and raster bytes stay in the bounded
+    # process-run cache, never in the archive-facing result.
+    local_kind: LocalKind | None = None
+    navigation_only: bool = False
+    local_read_refused: bool = False
+    image_leads: tuple[ImageLead, ...] = ()
 
     def __post_init__(self) -> None:
         """Enforce the ``text`` invariant the field comment states.

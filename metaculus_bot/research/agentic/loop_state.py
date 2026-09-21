@@ -25,6 +25,7 @@ from metaculus_bot.research.agentic.types import (
     LoopTelemetry,
     ResearchPlan,
 )
+from metaculus_bot.research.image_assets import ImageView
 
 
 @dataclass(slots=True)
@@ -78,6 +79,12 @@ class _LoopState:
     # was hit so we soft-continued without a plan (telemetry plan_skipped).
     plan_nudges: int = 0
     plan_skipped: bool = False
+    # Pixel identity is the attachment identity; sources retain every URL alias
+    # that produced those pixels without attaching the image more than once.
+    image_views_by_id: dict[str, ImageView] = field(default_factory=dict)
+    image_sources_by_id: dict[str, set[str]] = field(default_factory=dict)
+    image_observations_by_id: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    delivered_image_ids: set[str] = field(default_factory=set)
 
 
 @dataclass(slots=True)
@@ -106,6 +113,7 @@ class _ToolExecutionResult:
     # every URL it surfaced "snippet". Merged into state.url_best_tier (best-tier
     # wins) post-gather. Empty when the outcome granted no retrieval authority.
     provenance_tiers: dict[str, str] = field(default_factory=dict)
+    image_views: list[ImageView] = field(default_factory=list)
 
 
 def _get_field(value: Any, field: str) -> Any:

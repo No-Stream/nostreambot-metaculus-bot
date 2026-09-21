@@ -42,13 +42,15 @@ from metaculus_bot.constants import (
     GOOGLE_API_KEY_ENV,
     RESOLUTION_SOURCE_URL_CONTEXT_MAX_ATTEMPTS,
 )
-from metaculus_bot.research import document_cache, document_text, fetch_markers
+from metaculus_bot.research import document_cache, document_text, fetch_markers, source_presentation
 from metaculus_bot.research.agentic import ladder_adapter, local_document
+from metaculus_bot.research.agentic.dispatch import tool_content_body_budget
 from metaculus_bot.research.agentic.fetch_outcomes import (
     DOCUMENT_NEEDED_METHOD,
     PlainFetchResult,
     _fetch_plain_url_block,
 )
+from metaculus_bot.research.agentic.image_tools import ImageViewState, view_acquired_image, view_image
 from metaculus_bot.research.agentic.tool_backends import (
     _call_asknews_search,
     _call_exa_search,
@@ -61,13 +63,16 @@ from metaculus_bot.research.agentic.tool_descriptions import (
     _READ_DOCUMENT_PARAMETERS,
     _SEARCH_NEWS_PARAMETERS,
     _SEARCH_WEB_PARAMETERS,
+    _VIEW_IMAGE_PARAMETERS,
     FETCH_DESCRIPTION,
     READ_DOCUMENT_DESCRIPTION,
     SEARCH_NEWS_DESCRIPTION,
     SEARCH_WEB_DESCRIPTION,
+    VIEW_IMAGE_DESCRIPTION,
 )
 from metaculus_bot.research.agentic.types import ToolOutcome, ToolSpec
-from metaculus_bot.research.fetch_ladder.context import LadderContext, QuestionRungBudget
+from metaculus_bot.research.fetch_ladder import run_cache
+from metaculus_bot.research.fetch_ladder.context import LadderContext, LocalReadReceipt, QuestionRungBudget
 from metaculus_bot.research.fetch_ladder.digest import bm25_digest
 from metaculus_bot.research.fetch_ladder.ladder import fetch_url
 from metaculus_bot.research.fetch_ladder.policy import (
@@ -77,38 +82,60 @@ from metaculus_bot.research.fetch_ladder.policy import (
     LADDER_CALLER_GAP_FILL_V2,
     LadderPolicy,
 )
+from metaculus_bot.research.http_fetch import pdf_parse_semaphore
+from metaculus_bot.research.image_leads import render_image_leads
 from metaculus_bot.research.resolution_fetch_result import FetchResult
 from metaculus_bot.research.robots_policy import ROBOTS_FETCH_TIMEOUT_S, google_extended_blocks_url, robots_host
+from metaculus_bot.research.source_documents import ParsedSource
 
 logger = logging.getLogger(__name__)
 
 _FETCH_WINDOW_CHARS = 8000
 _READ_DOCUMENT_TIMEOUT_S = 60.0
-# Two rungs share this: the free local ladder, then the paid reader on what the total leaves it.
-_LOCAL_DOCUMENT_BUDGET_S = 25.0
+_LOCAL_DOCUMENT_BUDGET_S = GAP_FILL_DOCUMENT_POLICY.total_wall_s
 _READ_DOCUMENT_TOTAL_BUDGET_S = 65.0
 _FETCH_HOST_SEMAPHORES: dict[str, asyncio.Semaphore] = {}
 
 
-def _slice_fetch_window(text: str, start_char: int) -> tuple[str, bool]:
+def _slice_fetch_window(text: str, start_char: int, *, max_chars: int = _FETCH_WINDOW_CHARS) -> tuple[str, bool]:
     start = max(0, start_char)
     if start >= len(text):
         return "", False
-    end = min(len(text), start + _FETCH_WINDOW_CHARS)
-    window = text[start:end]
+    end = min(len(text), start + max_chars)
     if end >= len(text):
-        return window, False
-    marker = f"\n[truncated at {end} of {len(text)} chars — call again with start_char={end}]"
-    return window + marker, True
+        return text[start:end], False
+    while True:
+        marker = f"\n[truncated at {end} of {len(text)} chars — call again with start_char={end}]"
+        adjusted_end = min(len(text), start + max(0, max_chars - len(marker)))
+        if adjusted_end == end:
+            return text[start:end] + marker, True
+        end = adjusted_end
 
 
 def _format_fetch_error(message: str, *, status: str = "error", method: str = "plain") -> ToolOutcome:
     return ToolOutcome(content_markdown=message, method=method, status=status)
 
 
-def _render_fetch_outcome(url: str, text: str, links: list[str], *, method: str, start_char: int) -> ToolOutcome:
-    window, truncated = _slice_fetch_window(text, start_char)
-    return ToolOutcome(content_markdown=window, links=links, method=method, truncated=truncated)
+def _render_fetch_outcome(
+    url: str,
+    text: str,
+    links: list[str],
+    *,
+    method: str,
+    start_char: int,
+    image_leads: str = "",
+) -> ToolOutcome:
+    del url
+    prototype = ToolOutcome(content_markdown="", links=links, method=method)
+    body_budget = tool_content_body_budget("fetch", prototype, _FETCH_WINDOW_CHARS)
+    lead_block = f"\n\n{image_leads}" if image_leads and start_char == 0 else ""
+    window, truncated = _slice_fetch_window(text, start_char, max_chars=max(0, body_budget - len(lead_block)))
+    return ToolOutcome(
+        content_markdown=window + lead_block,
+        links=links,
+        method=method,
+        truncated=truncated,
+    )
 
 
 _NO_CONTENT_FETCH_MSG = (
@@ -149,9 +176,24 @@ def _throttled_fetch_outcome(url: str, text: str, phrase: str, *, method: str, c
     )
 
 
-def _read_content_outcome(url: str, text: str, links: list[str], *, method: str, start_char: int) -> ToolOutcome:
+def _read_content_outcome(
+    url: str,
+    text: str,
+    links: list[str],
+    *,
+    method: str,
+    start_char: int,
+    image_leads: str = "",
+) -> ToolOutcome:
     """Render a successful body the shared ladder has already classified."""
-    return _render_fetch_outcome(url, text, links, method=method, start_char=start_char)
+    return _render_fetch_outcome(
+        url,
+        text,
+        links,
+        method=method,
+        start_char=start_char,
+        image_leads=image_leads,
+    )
 
 
 def _empty_fetch_outcome(url: str) -> ToolOutcome:
@@ -182,7 +224,13 @@ def _per_call_ctx(question_ctx: LadderContext | None, *, query: str) -> LadderCo
 
 
 async def _fetch_via_ladder(
-    url: str, *, query: str, pol: LadderPolicy, ctx: LadderContext | None, record: bool = True
+    url: str,
+    *,
+    query: str,
+    pol: LadderPolicy,
+    ctx: LadderContext | None,
+    record: bool = True,
+    local_read_receipt: LocalReadReceipt | None = None,
 ) -> PlainFetchResult:
     """One run of the shared fetch ladder for ``url``, as this ladder's own result.
 
@@ -196,6 +244,8 @@ async def _fetch_via_ladder(
     if blocked is not None:
         return blocked
     request_context = _per_call_ctx(ctx, query=query)
+    if local_read_receipt is not None:
+        request_context.local_read_receipt = local_read_receipt
     if request_context.policy.known_api is not None:
         pol = replace(pol, known_api=request_context.policy.known_api)
     result = await fetch_url(url, policy=pol, ctx=request_context)
@@ -280,9 +330,14 @@ def _held_from_result(url: str, result: PlainFetchResult) -> local_document.Held
     """
     if result.method == local_document.OVERSIZE_DOCUMENT_METHOD:
         return local_document.HeldDocument(oversize=True)
+    if result.local_read_refused or result.local_kind == "image":
+        return local_document.HeldDocument(local_refusal=result)
     if result.status == "blocked" and _fetch_plain_url_block(result.url) is not None:
         # A 3xx onto a question platform, held so the paid reader (Google's address) declines the same hop.
         return local_document.HeldDocument(refused_landing=result)
+    source = run_cache.local_source_for(url) or run_cache.local_source_for(result.url)
+    if source is not None:
+        return local_document.HeldDocument(source=source)
     pdf = document_cache.cached_document(result.url)
     if pdf is not None:
         held = local_document.held_pdf(pdf)
@@ -294,7 +349,12 @@ def _held_from_result(url: str, result: PlainFetchResult) -> local_document.Held
     return held
 
 
-async def _run_local_document_ladder(url: str, *, ctx: LadderContext | None) -> local_document.HeldDocument:
+async def _run_local_document_ladder(
+    url: str,
+    *,
+    ctx: LadderContext | None,
+    local_read_receipt: LocalReadReceipt | None = None,
+) -> local_document.HeldDocument:
     """The free rungs a document read gets: the shared ladder under ``GAP_FILL_DOCUMENT_POLICY``.
 
     Its 25 s wall is what every rung bounds itself against, and its rung set is ``fetch``'s minus
@@ -305,32 +365,68 @@ async def _run_local_document_ladder(url: str, *, ctx: LadderContext | None) -> 
     runs on a page whose text is thin enough to look like a JavaScript shell, because digesting 100
     characters of navigation chrome would answer the ask out of furniture.
     """
-    plain = await _fetch_via_ladder(url, query="", pol=GAP_FILL_DOCUMENT_POLICY, ctx=ctx)
+    plain = await _fetch_via_ladder(
+        url,
+        query="",
+        pol=GAP_FILL_DOCUMENT_POLICY,
+        ctx=ctx,
+        local_read_receipt=local_read_receipt,
+    )
     return _held_from_result(url, plain)
 
 
 async def _acquire_local_document(url: str, *, ctx: LadderContext | None = None) -> local_document.HeldDocument:
     """What the free ladder holds for ``url``: something already read this run, or a fresh try.
 
-    Bounded by ``_LOCAL_DOCUMENT_BUDGET_S`` so a slow host cannot spend the paid reader's
-    budget as well as its own; on expiry we hold nothing and the reader gets its turn. The same
-    figure is the ladder's own ``total_wall_s``, so every rung inside it declines under its floor
-    rather than being cancelled mid-dial. The cancelled work includes at most one in-flight
-    extraction thread, which finishes and drops its result, because a thread cannot be cancelled.
+    Bounded by an outer ``_LOCAL_DOCUMENT_BUDGET_S`` wall matching the ladder policy, so a slow
+    queue, host, or parser cannot spend the paid reader's budget as well as its own. Every rung
+    also declines under its remaining-wall floor. A per-call receipt distinguishes the one timeout
+    that is terminal: once local-source bytes are acquired, the parser timeout cannot fall through
+    to a paid reader while its worker finishes in the background. An ordinary acquisition timeout
+    keeps the established paid fallback.
 
-    That thread does NOT finish inside its own ``max_seconds``. The clock for that budget starts
-    only once ``extract_pdf_text`` has read the declared page count and the whole bookmark
-    outline, and the page in flight always completes, so the worker outlives this cancellation by
-    that un-clocked prologue plus one page. It also hands its slot in the shared two-slot parse
-    gate back as it unwinds, so a fresh parse can start alongside the abandoned one. Recorded in
-    FUTURE.md under "The PDF parse overruns ``max_seconds``".
+    A local-source parsing thread may outlive its caller because Python cannot cancel it. That
+    worker keeps the shared parse gate occupied until it really finishes, preventing abandoned
+    archive or Office work from opening extra parser capacity.
     """
+    cached_source = run_cache.local_source_for(url)
+    if cached_source is not None:
+        return local_document.HeldDocument(source=cached_source)
+    cached_image = run_cache.image_source_for(url)
+    if cached_image is not None:
+        return local_document.HeldDocument(
+            local_refusal=PlainFetchResult(
+                status="error",
+                method="local_navigation",
+                text="This URL is a raster image; use view_image(url, crop) to inspect its pixels.",
+                links=[],
+                url=cached_image.url,
+                content_type=cached_image.content_type,
+                local_kind="image",
+                navigation_only=True,
+            )
+        )
     cached_pdf = document_cache.cached_document(url)
     if cached_pdf is not None:
         return local_document.held_pdf(cached_pdf)
+    local_read_receipt = LocalReadReceipt()
     try:
-        return await asyncio.wait_for(_run_local_document_ladder(url, ctx=ctx), timeout=_LOCAL_DOCUMENT_BUDGET_S)
+        return await asyncio.wait_for(
+            _run_local_document_ladder(url, ctx=ctx, local_read_receipt=local_read_receipt),
+            timeout=_LOCAL_DOCUMENT_BUDGET_S,
+        )
     except TimeoutError:
+        if local_read_receipt.encountered or run_cache.local_source_for(url) is not None:
+            return local_document.HeldDocument(
+                local_refusal=PlainFetchResult(
+                    status="error",
+                    method="local_selection",
+                    text="Local source read timed out after its bytes were acquired; no model fallback was attempted.",
+                    links=[],
+                    url=url,
+                    local_read_refused=True,
+                )
+            )
         logger.info(
             "agentic read_document local acquisition exceeded %.0fs, falling back to the reader: %s",
             _LOCAL_DOCUMENT_BUDGET_S,
@@ -400,20 +496,108 @@ async def _local_digest_outcome(
     return ToolOutcome(content_markdown=rendered, method=local_document.DIGEST_LOCAL_METHOD)
 
 
-async def fetch(
-    url: str, start_char: int = 0, *, question_topic: str = "", ctx: LadderContext | None = None
-) -> ToolOutcome:
-    """Read ``url`` for the driver through the shared ladder, then return its requested window.
+def _local_source_for_result(url: str, plain: PlainFetchResult) -> ParsedSource:
+    source = run_cache.local_source_for(url) or run_cache.local_source_for(plain.url)
+    if source is None:
+        raise RuntimeError(f"local source cache entry disappeared for {url}")
+    return source
 
-    The rungs — the impersonated retry on a host's 403, the browser on a page too thin to be the
-    page, the archive on one our address never reached — all run inside ``fetch_url`` under
-    ``GAP_FILL_FETCH_POLICY``, so what is left here is reading the outcome: refuse a blocked URL,
-    paginate a locally read document, hand a document with no text layer to ``read_document``, and
-    otherwise window and cache what was read. A page the browser could not rescue either comes back
-    ``empty`` and NEVER as a plain success, because the loop grants the ``fetched`` tier on status
-    alone (docs/agentic_gap_fill.md).
-    """
-    plain = await _fetch_via_ladder(url, query=question_topic, pol=GAP_FILL_FETCH_POLICY, ctx=ctx)
+
+def _local_source_fetch_outcome(
+    url: str,
+    plain: PlainFetchResult,
+    *,
+    start_char: int,
+    member: str | None,
+    sheet: str | None,
+) -> ToolOutcome:
+    source = _local_source_for_result(url, plain)
+    try:
+        sections = source_presentation.select_source_sections(source, member=member, sheet=sheet)
+        selected_member = next((entry for entry in source.members if entry.name == member), None)
+        navigation_only = (
+            (source.kind == "archive" and member is None)
+            or (source.kind == "workbook" and sheet is None)
+            or (selected_member is not None and selected_member.kind == "workbook" and sheet is None)
+        )
+        if navigation_only:
+            return _render_fetch_outcome(
+                url,
+                source_presentation.source_inventory(source, member=member),
+                plain.links,
+                method=ladder_adapter.LOCAL_NAVIGATION_METHOD,
+                start_char=start_char,
+            )
+        text = source_presentation.source_text(sections)
+    except ValueError as error:
+        return _format_fetch_error(str(error), method="local_selection")
+    return _render_fetch_outcome(
+        url,
+        text,
+        plain.links,
+        method=ladder_adapter.LOCAL_SOURCE_METHOD,
+        start_char=start_char,
+    )
+
+
+async def _local_source_digest_outcome(
+    url: str,
+    ask: str,
+    source: ParsedSource,
+    *,
+    member: str | None,
+    sheet: str | None,
+    budget_seconds: float,
+) -> ToolOutcome:
+    deadline = monotonic() + max(0.0, budget_seconds)
+    worker_gate = pdf_parse_semaphore()
+    try:
+        await asyncio.wait_for(worker_gate.acquire(), timeout=max(0.0, deadline - monotonic()))
+    except TimeoutError:
+        return _format_fetch_error(
+            "Local source digest timed out; no model fallback was attempted.", method="local_selection"
+        )
+
+    worker = asyncio.create_task(
+        asyncio.to_thread(
+            source_presentation.digest_source,
+            source,
+            query=ask,
+            source_url=url,
+            max_chars=_FETCH_WINDOW_CHARS,
+            member=member,
+            sheet=sheet,
+        )
+    )
+    worker.add_done_callback(lambda finished: _finish_local_digest_worker(finished, worker_gate))
+    try:
+        digest = await asyncio.wait_for(asyncio.shield(worker), timeout=max(0.0, deadline - monotonic()))
+    except TimeoutError:
+        return _format_fetch_error(
+            "Local source digest timed out; no model fallback was attempted.", method="local_selection"
+        )
+    except ValueError as error:
+        return _format_fetch_error(str(error), method="local_selection")
+    return ToolOutcome(content_markdown=digest.block, method=local_document.DIGEST_LOCAL_METHOD)
+
+
+def _finish_local_digest_worker(
+    worker: asyncio.Task[document_text.DocumentDigest], worker_gate: asyncio.Semaphore
+) -> None:
+    worker_gate.release()
+    if worker.cancelled():
+        return
+    worker.exception()
+
+
+def _special_fetch_outcome(
+    url: str,
+    plain: PlainFetchResult,
+    *,
+    start_char: int,
+    member: str | None,
+    sheet: str | None,
+) -> ToolOutcome | None:
     if plain.status == "blocked":
         return _blocked_outcome(plain)
     if plain.status == "throttled":
@@ -428,11 +612,63 @@ async def fetch(
         )
     if plain.method == local_document.PDF_LOCAL_METHOD:
         return _pdf_local_outcome(url, plain, start_char=start_char)
+    if plain.local_read_refused:
+        return ToolOutcome(content_markdown=plain.text, method=plain.method, status="error")
+    if plain.local_kind in {"archive", "workbook", "word"}:
+        return _local_source_fetch_outcome(
+            url,
+            plain,
+            start_char=start_char,
+            member=member,
+            sheet=sheet,
+        )
+    if member is not None or sheet is not None:
+        return _format_fetch_error(
+            "member and sheet selectors require an archive or workbook", method="local_selection"
+        )
+    return None
+
+
+async def fetch(
+    url: str,
+    start_char: int = 0,
+    member: str | None = None,
+    sheet: str | None = None,
+    *,
+    question_topic: str = "",
+    ctx: LadderContext | None = None,
+    image_state: ImageViewState | None = None,
+) -> ToolOutcome:
+    """Read ``url`` for the driver through the shared ladder, then return its requested window.
+
+    The rungs — the impersonated retry on a host's 403, the browser on a page too thin to be the
+    page, the archive on one our address never reached — all run inside ``fetch_url`` under
+    ``GAP_FILL_FETCH_POLICY``, so what is left here is reading the outcome: refuse a blocked URL,
+    paginate a locally read document, hand a document with no text layer to ``read_document``, and
+    otherwise window and cache what was read. A page the browser could not rescue either comes back
+    ``empty`` and NEVER as a plain success, because the loop grants the ``fetched`` tier on status
+    alone (docs/agentic_gap_fill.md).
+    """
+    plain = await _fetch_via_ladder(url, query=question_topic, pol=GAP_FILL_FETCH_POLICY, ctx=ctx)
+    if image_state is not None and plain.image_leads:
+        await image_state.remember_leads(tuple(dict.fromkeys((url, plain.url))), plain.image_leads)
+    if plain.local_kind == "image":
+        return await view_acquired_image(url, plain, state=image_state or ImageViewState())
+    special = _special_fetch_outcome(url, plain, start_char=start_char, member=member, sheet=sheet)
+    if special is not None:
+        return special
     if plain.method == DOCUMENT_NEEDED_METHOD:
         # `ladder_exhausted` says the free rungs just ran, so the reader does not re-request.
         return await read_document(plain.url, _generic_document_ask(question_topic), ladder_exhausted=True, ctx=ctx)
     if plain.status == "ok":
-        return _read_content_outcome(url, plain.text, plain.links, method=plain.method, start_char=start_char)
+        return _read_content_outcome(
+            url,
+            plain.text,
+            plain.links,
+            method=plain.method,
+            start_char=start_char,
+            image_leads=render_image_leads(plain.image_leads),
+        )
     if plain.status == "empty":
         return _empty_fetch_outcome(plain.url)
     return ToolOutcome(content_markdown=plain.text, method=plain.method, status="error")
@@ -505,6 +741,8 @@ async def _free_route_outcome(
     *,
     policy: LadderPolicy,
     budget_seconds: float,
+    member: str | None,
+    sheet: str | None,
 ) -> ToolOutcome | None:
     """What the free ladder settles for ``read_document`` without a paid read; None gives the reader its turn.
 
@@ -519,6 +757,24 @@ async def _free_route_outcome(
     """
     if held.refused_landing is not None:
         return _blocked_outcome(held.refused_landing)
+    if held.local_refusal is not None:
+        message = held.local_refusal.text
+        if held.local_refusal.local_kind == "image":
+            message = f"{message} Use view_image(url, crop) to inspect its pixels."
+        return ToolOutcome(
+            content_markdown=message,
+            method=held.local_refusal.method,
+            status="error",
+        )
+    if held.source is not None:
+        return await _local_source_digest_outcome(
+            url,
+            ask,
+            held.source,
+            member=member,
+            sheet=sheet,
+            budget_seconds=budget_seconds,
+        )
     if held.oversize:
         return _format_fetch_error(local_document.oversize_message(url), method=local_document.OVERSIZE_DOCUMENT_METHOD)
     if held.has_text or local_document.exceeds_url_context_size_gate(held.text):
@@ -527,7 +783,14 @@ async def _free_route_outcome(
 
 
 async def read_document(
-    url: str, ask: str, *, ladder_exhausted: bool = False, ctx: LadderContext | None = None
+    url: str,
+    ask: str,
+    member: str | None = None,
+    sheet: str | None = None,
+    *,
+    ladder_exhausted: bool = False,
+    ctx: LadderContext | None = None,
+    image_state: ImageViewState | None = None,
 ) -> ToolOutcome:
     """Answer ``ask`` about ``url``: from the page's own text where we can get it, else Gemini.
 
@@ -549,12 +812,16 @@ async def read_document(
         return _blocked_outcome(blocked)
     started = monotonic()
     held = local_document.HeldDocument() if ladder_exhausted else await _acquire_local_document(url, ctx=ctx)
+    if held.local_refusal is not None and held.local_refusal.local_kind == "image":
+        return await view_acquired_image(url, held.local_refusal, state=image_state or ImageViewState())
     settled = await _free_route_outcome(
         url,
         ask,
         held,
         policy=GAP_FILL_DOCUMENT_POLICY,
         budget_seconds=max(0.0, _READ_DOCUMENT_TOTAL_BUDGET_S - (monotonic() - started)),
+        member=member,
+        sheet=sheet,
     )
     if settled is not None:
         return settled
@@ -611,18 +878,44 @@ def build_gap_fill_tools(question_topic: str, *, ctx: LadderContext | None = Non
     with no question in hand gets.
     """
 
-    async def _fetch_with_topic(url: str, start_char: int = 0) -> ToolOutcome:
-        """``fetch`` with the topic and the ladder context bound; the schema stays (url, start_char)."""
-        return await fetch(url, start_char, question_topic=question_topic, ctx=ctx)
+    image_state = ImageViewState()
 
-    async def _read_document_public(url: str, ask: str) -> ToolOutcome:
+    async def _fetch_with_topic(
+        url: str,
+        start_char: int = 0,
+        member: str | None = None,
+        sheet: str | None = None,
+    ) -> ToolOutcome:
+        """``fetch`` with the question-scoped ladder and image state bound."""
+        return await fetch(
+            url,
+            start_char,
+            member,
+            sheet,
+            question_topic=question_topic,
+            ctx=ctx,
+            image_state=image_state,
+        )
+
+    async def _read_document_public(
+        url: str,
+        ask: str,
+        member: str | None = None,
+        sheet: str | None = None,
+    ) -> ToolOutcome:
         """``read_document`` with (url, ask) only, so a hallucinated ``ladder_exhausted`` cannot pay.
 
         The loop binds handlers with ``**arguments`` straight off the model, so an advertised — or
         merely invented — ``ladder_exhausted: true`` would skip the free ladder. Resolves
         ``read_document`` as a module attribute at call time, so the suite's patches still land.
         """
-        return await read_document(url, ask, ctx=ctx)
+        return await read_document(url, ask, member, sheet, ctx=ctx, image_state=image_state)
+
+    async def _acquire_image(url: str) -> PlainFetchResult:
+        return await _fetch_via_ladder(url, query=question_topic, pol=GAP_FILL_FETCH_POLICY, ctx=ctx)
+
+    async def _view_image_public(url: str, crop: list[int] | None = None) -> ToolOutcome:
+        return await view_image(url, crop, state=image_state, acquire=_acquire_image)
 
     tools = [
         ToolSpec(
@@ -653,6 +946,13 @@ def build_gap_fill_tools(question_topic: str, *, ctx: LadderContext | None = Non
             parameters=_READ_DOCUMENT_PARAMETERS,
             handler=_read_document_public,
             # 70 is GAP_FILL_V2_CONCLUDE_THRESHOLD (docs/agentic_gap_fill.md, the budget arithmetic).
+            timeout_s=70,
+        ),
+        ToolSpec(
+            name="view_image",
+            description=VIEW_IMAGE_DESCRIPTION,
+            parameters=_VIEW_IMAGE_PARAMETERS,
+            handler=_view_image_public,
             timeout_s=70,
         ),
     ]

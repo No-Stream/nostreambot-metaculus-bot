@@ -81,6 +81,22 @@ def _check_url_provenance(finding: Finding, state: _LoopState) -> str | None:
     )
 
 
+def _check_image_provenance(finding: Finding, state: _LoopState) -> str | None:
+    """Require visual evidence to name pixels delivered on an earlier model turn and their real source."""
+    if finding.evidence_kind != "image":
+        return None
+    assert finding.image_id is not None
+    if finding.image_id not in state.delivered_image_ids:
+        return f"image_id {finding.image_id!r} was not delivered to the driver on a preceding model turn"
+    registered_sources = state.image_sources_by_id.get(finding.image_id, set())
+    if finding.source_url not in registered_sources:
+        return (
+            f"source_url {finding.source_url!r} is not a registered source or final URL for "
+            f"image_id {finding.image_id!r}"
+        )
+    return None
+
+
 def _coerce_pending_leads(raw_pending_leads: Any) -> tuple[list[str], list[str]]:
     if raw_pending_leads is None:
         return [], []

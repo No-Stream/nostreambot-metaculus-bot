@@ -49,12 +49,14 @@ from metaculus_bot.research.agentic.gates import (
     _actions_cite_fetch,  # noqa: F401  # re-export: tests/test_agentic_loop.py imports it from this module
     _apply_findings_telemetry,
     _bank_findings,
+    _check_image_provenance,
     _check_url_provenance,
     _coerce_pending_leads,
     _coerce_planned_gaps,
     _evaluate_conclude_gate,
     _FindingsValidation,
 )
+from metaculus_bot.research.agentic.image_messages import bind_image_materialization
 from metaculus_bot.research.agentic.llm import LlmCall, build_default_llm_call
 from metaculus_bot.research.agentic.loop_state import (
     _budget_line,
@@ -136,13 +138,18 @@ def _validate_findings_payload(
             lint_rejections += 1
             rejected.append(f"{label}[{index}] rejected: {'; '.join(violations)}")
             continue
-        provenance_reason = _check_url_provenance(finding, state)
+        image_provenance_reason = _check_image_provenance(finding, state)
+        if image_provenance_reason is not None:
+            provenance_rejections += 1
+            rejected.append(f"{label}[{index}] rejected: {image_provenance_reason}")
+            continue
+        provenance_reason = _check_url_provenance(finding, state) if finding.evidence_kind == "text" else None
         if provenance_reason is not None:
             provenance_rejections += 1
             rejected.append(f"{label}[{index}] rejected: {provenance_reason}")
             continue
         # Warn-only and deduped per run: see docs/agentic_gap_fill.md "The findings gates".
-        if not _quote_is_grounded(finding.quote, state.tool_content_normalized):
+        if finding.evidence_kind == "text" and not _quote_is_grounded(finding.quote, state.tool_content_normalized):
             warned_key = (finding.source_url, finding.quote)
             if warned_key not in state.warned_quote_keys:
                 state.warned_quote_keys.add(warned_key)
@@ -345,6 +352,7 @@ async def _execute_one_tool_call(
         provenance_urls=provenance_urls,
         provenance_text=provenance_text,
         provenance_tiers=provenance_tiers,
+        image_views=outcome.image_views,
     )
 
 
@@ -387,6 +395,9 @@ def _freeze_result(
         telemetry=state.telemetry,
         transcript=copy.deepcopy(state.messages),
         ghost_context=ghost_context,
+        image_views=list(state.image_views_by_id.values()),
+        image_sources={image_id: sorted(sources) for image_id, sources in state.image_sources_by_id.items()},
+        image_observations=copy.deepcopy(state.image_observations_by_id),
     )
 
 
@@ -649,7 +660,7 @@ async def run_agentic_loop(
     now: Callable[[], float] | None = None,
 ) -> LoopResult:
     now_fn = now or time.monotonic
-    call = llm_call or build_default_llm_call(config)
+    base_call = llm_call or build_default_llm_call(config)
     state = _LoopState(
         messages=[
             {"role": "system", "content": system_prompt},
@@ -660,6 +671,7 @@ async def run_agentic_loop(
         log_prefix=log_prefix,
     )
     state.telemetry.model = config.model
+    call = bind_image_materialization(base_call, state.image_views_by_id, state.image_sources_by_id)
     # Briefing URLs ground non-discrepancy findings only: docs/agentic_gap_fill.md "The findings gates".
     state.briefing_urls = set(_iter_normalized_urls(user_brief))
 

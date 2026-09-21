@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
+from metaculus_bot.constants import GAP_FILL_V2_TOOL_BUDGET_LINE_RESERVE_CHARS
 from metaculus_bot.research.agentic.gates import _PLAN_REQUIRED_NUDGE
+from metaculus_bot.research.agentic.image_messages import image_reference_message, image_source_urls
 from metaculus_bot.research.agentic.loop_state import (
     _LoopState,
     _ToolCall,
@@ -36,25 +38,61 @@ from metaculus_bot.research.agentic.types import LoopConfig, ToolOutcome
 def _truncate_content(content: str, max_chars: int) -> tuple[str, bool]:
     if len(content) <= max_chars:
         return content, False
-    clipped = content[:max_chars].rstrip()
-    return f"{clipped}\n[truncated at {len(content)} chars]", True
+    marker = f"\n[truncated at {len(content)} chars]"
+    clipped = content[: max(0, max_chars - len(marker))].rstrip()
+    return f"{clipped}{marker}", True
+
+
+def _tool_metadata_lines(tool_name: str, outcome: ToolOutcome, max_chars: int) -> list[str]:
+    lines = [f"tool: {tool_name}", f"status: {outcome.status}"]
+    if outcome.method:
+        lines.append(f"method: {outcome.method}")
+    if outcome.links:
+        links = [f"- {link}" for link in outcome.links]
+        candidate = [*lines, "links:"]
+        metadata_limit = max_chars // 2
+        for link in links:
+            if len("\n".join([*candidate, link])) > metadata_limit:
+                break
+            candidate.append(link)
+        if len(candidate) > len(lines) + 1:
+            lines = candidate
+    if outcome.truncated and "[truncated at " not in outcome.content_markdown:
+        lines.append("truncated: true")
+    return lines
+
+
+def tool_content_body_budget(tool_name: str, outcome: ToolOutcome, max_chars: int) -> int:
+    """Characters available for a body after the exact bounded metadata envelope."""
+    metadata = "\n".join(_tool_metadata_lines(tool_name, outcome, max_chars))
+    return max(0, max_chars - len(metadata) - 2 - GAP_FILL_V2_TOOL_BUDGET_LINE_RESERVE_CHARS)
 
 
 def _format_tool_content(tool_name: str, outcome: ToolOutcome, max_chars: int) -> str:
-    body, truncated = _truncate_content(outcome.content_markdown, max_chars)
+    body_budget = tool_content_body_budget(tool_name, outcome, max_chars)
+    body, truncated = _truncate_content(outcome.content_markdown, body_budget)
     effective = outcome.model_copy(update={"content_markdown": body, "truncated": outcome.truncated or truncated})
-    lines = [f"tool: {tool_name}", f"status: {effective.status}"]
-    if effective.method:
-        lines.append(f"method: {effective.method}")
-    if effective.links:
-        lines.append("links:")
-        lines.extend(f"- {link}" for link in effective.links)
-    if effective.truncated and "[truncated at " not in effective.content_markdown:
-        lines.append("truncated: true")
+    lines = _tool_metadata_lines(tool_name, effective, max_chars)
+    revised_budget = max(
+        0,
+        max_chars - len("\n".join(lines)) - 2 - GAP_FILL_V2_TOOL_BUDGET_LINE_RESERVE_CHARS,
+    )
+    if len(body) > revised_budget:
+        body, _ = _truncate_content(outcome.content_markdown, revised_budget)
+        effective = effective.model_copy(update={"content_markdown": body, "truncated": True})
+        lines = _tool_metadata_lines(tool_name, effective, max_chars)
     if effective.content_markdown:
         lines.append("")
         lines.append(effective.content_markdown)
-    return "\n".join(lines)
+    return "\n".join(lines)[:max_chars]
+
+
+def _with_budget_line(content: str, budget_line: str, max_chars: int) -> str:
+    """Put the bounded budget status in the header, leaving continuation markers last."""
+    budget_capacity = max(0, max_chars - len(content))
+    bounded_budget_line = budget_line[: min(GAP_FILL_V2_TOOL_BUDGET_LINE_RESERVE_CHARS, budget_capacity)]
+    header, separator, body = content.partition("\n\n")
+    return f"{header}{bounded_budget_line}\n\n{body}" if separator else f"{content}{bounded_budget_line}"
 
 
 def _parse_arguments(arguments: str) -> dict[str, Any]:
@@ -203,6 +241,18 @@ def _absorb_tool_results(state: _LoopState, results: Sequence[_ToolExecutionResu
                 state.url_best_tier[url] = tier
         if result.provenance_text:
             provenance_texts.append(result.provenance_text)
+        for image_view in result.image_views:
+            observation = image_view.metadata()
+            observations = state.image_observations_by_id.setdefault(image_view.image_id, [])
+            if observation not in observations:
+                observations.append(observation)
+            existing_view = state.image_views_by_id.get(image_view.image_id)
+            if existing_view is None:
+                state.image_views_by_id[image_view.image_id] = image_view
+            else:
+                parent_page_urls = tuple(dict.fromkeys((*existing_view.parent_page_urls, *image_view.parent_page_urls)))
+                state.image_views_by_id[image_view.image_id] = replace(existing_view, parent_page_urls=parent_page_urls)
+            state.image_sources_by_id.setdefault(image_view.image_id, set()).update(image_source_urls(image_view))
     if provenance_texts:
         state.tool_content_normalized = _normalize_quote_text(
             f"{state.tool_content_normalized} {' '.join(provenance_texts)}"
@@ -227,6 +277,7 @@ def _append_tool_messages(
     ``state.seen_tool_calls`` here (see the inline comment below).
     """
     results_by_id = {result.tool_call_id: result for result in results}
+    delivered_image_ids: list[str] = []
     for tool_call in tool_calls:
         if tool_call.id in admitted.plan_rejected_call_ids:
             content = _plan_rejected_content(tool_call.name, config)
@@ -252,6 +303,17 @@ def _append_tool_messages(
                 "role": "tool",
                 "tool_call_id": tool_call.id,
                 "name": tool_call.name,
-                "content": content + budget_line,
+                "content": _with_budget_line(content, budget_line, config.max_result_chars),
             }
         )
+        if tool_call.id not in admitted.rejected_call_ids and tool_call.id not in admitted.plan_rejected_call_ids:
+            result = results_by_id[tool_call.id]
+            for image_view in result.image_views:
+                if (
+                    image_view.image_id not in state.delivered_image_ids
+                    and image_view.image_id not in delivered_image_ids
+                ):
+                    delivered_image_ids.append(image_view.image_id)
+    if delivered_image_ids:
+        state.messages.append(image_reference_message(delivered_image_ids))
+        state.delivered_image_ids.update(delivered_image_ids)

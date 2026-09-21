@@ -30,6 +30,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from metaculus_bot.research.image_persistence import ingest_record_images
 from scripts.download_raw_research import DEFAULT_ARCHIVE_DIR as RAW_ARCHIVE_DIR
 from scripts.download_raw_research import harvest_raw_logs_from_dir
 from scripts.download_raw_research import merge_and_write as merge_raw_research
@@ -127,7 +128,10 @@ def run_sync(
         # below but no research records.
         if name.startswith(RESEARCH_ARTIFACT_PREFIX):
             for jsonl_file in research_jsonl_files(run_dir):
-                research_records.extend(load_jsonl_records(jsonl_file))
+                new_records = load_jsonl_records(jsonl_file)
+                for record in new_records:
+                    ingest_record_images(record, jsonl_file.parent, research_dir)
+                research_records.extend(new_records)
 
         # (b) Run-log telemetry markers.
         harvested = harvest_run_logs_from_dir(

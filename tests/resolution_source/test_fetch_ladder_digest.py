@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -310,11 +311,18 @@ async def test_loop_fetch_keeps_long_html_paginated_and_does_not_digest_it(
     )
 
     first = await agentic_tools.fetch(_URL, question_topic="weekly admissions")
-    second = await agentic_tools.fetch(_URL, start_char=8_000, question_topic="weekly admissions")
+    continuation = re.search(
+        r"\n\[truncated at (\d+) of \d+ chars — call again with start_char=(\d+)\]$", first.content_markdown
+    )
+    assert continuation is not None
+    next_offset = int(continuation.group(2))
+    assert next_offset == int(continuation.group(1))
+    second = await agentic_tools.fetch(_URL, start_char=next_offset, question_topic="weekly admissions")
 
     assert first.method == "plain"
     assert first.truncated is True
-    assert "start_char=8000" in first.content_markdown
+    assert next_offset < 8_000
+    assert first.content_markdown[: continuation.start()] + second.content_markdown == full_text.strip()
     assert "917 admissions" in second.content_markdown
     assert second.method == "cache"
     assert session.requested == [_URL]

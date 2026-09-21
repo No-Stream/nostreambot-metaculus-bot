@@ -127,6 +127,7 @@ async def test_explicit_market_tool_and_rung_zero_share_session_and_budget(monke
         "search_web",
         "fetch",
         "read_document",
+        "view_image",
         "fred_series",
         "yahoo_history",
         "market_snapshot",

@@ -19,6 +19,7 @@ import dataclasses
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from forecasting_tools.data_models.questions import MetaculusQuestion
@@ -52,6 +53,7 @@ from metaculus_bot.research.agentic.driver_prompt import (
 )
 from metaculus_bot.research.agentic.tools import question_ladder_context
 from metaculus_bot.research.fetch_ladder import guard
+from metaculus_bot.research.image_persistence import persist_image_views
 
 __all__ = ["run_gap_fill_v2", "run_gap_fill_v2_ghost_v1"]
 
@@ -73,6 +75,7 @@ async def run_gap_fill_v2(
     archive_sink: Callable[[dict[str, Any]], None] | None = None,
     ghost_context_sink: Callable[[GhostContext], None] | None = None,
     on_error: Callable[[BaseException], None] | None = None,
+    image_output_dir: Path | str = "research_outputs",
 ) -> str:
     """Run the agentic gap-fill v2 loop and return its findings section.
 
@@ -127,13 +130,19 @@ async def run_gap_fill_v2(
                 log_prefix=f"question={question_ref} ",
             )
         if archive_sink is not None:
-            archive_sink(
-                {
-                    "transcript": result.transcript,
-                    "telemetry": dataclasses.asdict(result.telemetry),
-                    "ghost": result.ghost.model_dump() if result.ghost is not None else None,
-                }
-            )
+            archive_payload: dict[str, Any] = {
+                "transcript": result.transcript,
+                "telemetry": dataclasses.asdict(result.telemetry),
+                "ghost": result.ghost.model_dump() if result.ghost is not None else None,
+            }
+            if result.image_views:
+                archive_payload["images"] = persist_image_views(
+                    result.image_views,
+                    result.image_sources,
+                    output_dir=image_output_dir,
+                    image_observations=result.image_observations,
+                )
+            archive_sink(archive_payload)
         if ghost_context_sink is not None and result.ghost_context is not None:
             ghost_context_sink(result.ghost_context)
         return result.findings_markdown

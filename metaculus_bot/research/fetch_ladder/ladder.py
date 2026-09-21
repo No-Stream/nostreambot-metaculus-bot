@@ -156,6 +156,8 @@ async def _escalate_unresolved(
     """
     if direct.status == "throttled":
         return direct
+    if _terminal_local_read(direct):
+        return direct
     if direct.status == "success":
         if not direct.escalate_rendered:
             return direct
@@ -197,14 +199,16 @@ async def _fetch_one(
     return context._stamped_with_route(escalated, ctx)
 
 
-def _store_successful_read(url: str, result: FetchResult, ctx: context.LadderContext) -> None:
+def _terminal_local_read(result: FetchResult) -> bool:
+    return result.local_read_refused or result.local_kind in ("archive", "workbook", "word")
+
+
+def _store_complete_read(url: str, result: FetchResult, ctx: context.LadderContext) -> None:
     capture = ctx.read_capture_for(result)
-    if (
-        result.status == "success"
-        and result.route != "url_context"
-        and capture is not None
-        and run_cache.cacheable(capture.artifact)
-    ):
+    if capture is None or result.route == "url_context":
+        return
+    complete_source = isinstance(capture.artifact, run_cache.SourceRead)
+    if (result.status == "success" or complete_source) and run_cache.cacheable(capture.artifact):
         run_cache.put(url, capture.artifact, route=capture.route)
 
 
@@ -270,12 +274,12 @@ async def fetch_url(url: str, *, policy: LadderPolicy, ctx: context.LadderContex
             async with guard._get_session() as session:
                 escalated = await _escalate_unresolved(session, url, cached, host_sems=host_sems, ctx=bound)
         result = context._stamped_with_route(escalated, bound)
-        _store_successful_read(url, result, bound)
+        _store_complete_read(url, result, bound)
         return result
     if bound.session is not None:
         result = await _fetch_one(bound.session, url, host_sems, bound)
     else:
         async with guard._get_session() as session:
             result = await _fetch_one(session, url, host_sems, replace(bound, session=session))
-    _store_successful_read(url, result, bound)
+    _store_complete_read(url, result, bound)
     return result

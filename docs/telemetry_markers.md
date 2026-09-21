@@ -25,12 +25,12 @@ incidents behind the design.
 |---|---|---|
 | `EXTRACTION_RUNG` | `value_extraction.py:_log_extraction` | Per-forecast extraction-rung outcome. `qtype` is the block type: a question type, or `pmf` for the per-bin block a Mantic enumerable grid is elicited with since 2026-09-09. The question's own type rides the `MEMBER_FORECAST` line with the same `question` and `model`. |
 | `BLOCK_FALLBACK` | `value_extraction.py:_run_ladder` | Per-forecast fallback record, only when the winning value came from a candidate other than the first the best-first walk tried. |
-| `GAP_FILL_V2` | `research/agentic/loop.py:_log_completion` | Per-question gap-fill v2 agentic loop completion counters. |
+| `GAP_FILL_V2` | `research/agentic/loop.py:_log_completion` | Per-question gap-fill v2 agentic loop completion counters, including image tool calls in `tool_calls`. |
 | `GHOST_PRE` / `GHOST_PRE_JSON` | `research/agentic/loop.py:_set_research_plan_tool` | Pre-research ghost snapshot (the counterpart to `GHOST_FORECAST` taken before research starts) and its JSON companion. |
 | `GHOST_FORECAST` / `GHOST_FORECAST_JSON` | `research/agentic/loop.py:_run_ghost_phase` | Concluding ghost-forecast summary and its full-fidelity JSON companion. |
 | `GHOST_FORECAST_V1` / `GHOST_FORECAST_V1_JSON` | `research/agentic/loop.py:run_ghost_v1`, issued from `research/gap_fill_stages.py` | The same ghost re-asked with gap-fill v1's section in its brief, once both passes have landed; the plain ghost's shapes under a `_V1` token. |
 | `AGENTIC_FETCH_THROTTLED` | `research/agentic/tools.py:_throttled_fetch_outcome` | Per-fetch: a host answered the gap-fill v2 ladder with a rate-limit interstitial under HTTP 200. |
-| `AGENTIC_FETCH_LOCAL_DOC` | `research/agentic/local_document.py:log_local_document_read` | Per-document: the gap-fill v2 ladder read a document locally instead of paying for a Gemini `url_context` call. |
+| `AGENTIC_FETCH_LOCAL_DOC` | `research/agentic/local_document.py:log_local_document_read` | Per-document: the gap-fill v2 loop served held PDF or page text locally instead of paying for a Gemini `url_context` call. |
 | `AGENTIC_URLCONTEXT_ROBOTS_SKIP` | `research/agentic/tools.py` | Per-URL: the gap-fill v2 paid document read was skipped before spending anything, because robots.txt disallows `Google-Extended`. |
 | `OPEN_BOUND_PILING` | `numeric/diagnostics.py:log_open_bound_piling_diagnostics` | Per-forecaster open-bound piling on a numeric declaration. |
 | `CLOSE_MARGIN` | `close_margin.py:format_close_margin_marker`, emitted from `forecaster.py` at submit time | Per-question submit-time close margin. |
@@ -286,13 +286,15 @@ are retuned on evidence rather than taste.
 
 ### AGENTIC_FETCH_LOCAL_DOC
 
-Per-document: the gap-fill v2 ladder read a document without paying for it
+Per-document: the gap-fill v2 loop served held PDF or page text without paying for it
 (`research/agentic/local_document.py:log_local_document_read`). Registered because it is how the
-whole local-first change gets measured: before it, every PDF the driver met went to a paid Gemini
+PDF-first local-read change is measured: before it, every PDF the driver met went to a paid Gemini
 `url_context` read, and the only trace of one was the spend. `method` separates the two local
 routes: `pdf_local` is a fetch serving a PDF's extracted text (which paginates, so it selects
-nothing); `digest_local` is a `read_document` answering an ask from BM25-selected passages of text
-already held.
+nothing); `digest_local` is a `read_document` answering an ask from BM25-selected passages of PDF
+or page text already held. The later ZIP/workbook/Word readers and image views do not emit this
+marker; their tool outcomes, selectors, and image IDs remain in the archived research transcript,
+and `GAP_FILL_V2` keeps its existing line shape.
 
 `chars` is the local text held, not the window or digest block handed to the driver, so one
 figure is comparable across both routes and against `URL_CONTEXT_SIZE_GATE_TOKENS` (`chars / 4`).

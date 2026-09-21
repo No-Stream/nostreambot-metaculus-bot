@@ -301,7 +301,10 @@ async def test_parallel_tool_calls_execute_concurrently_and_append_budget_line()
     # tool_messages[0] is the set_research_plan result; the parallel batch follows.
     tool_messages = _tool_messages(result)[1:4]
     assert [message["name"] for message in tool_messages] == ["alpha", "beta", "gamma"]
-    budget_lines = [message["content"].splitlines()[-1] for message in tool_messages]
+    budget_lines = [
+        next(line for line in message["content"].splitlines() if line.startswith("[budget: "))
+        for message in tool_messages
+    ]
     assert len(set(budget_lines)) == 1
     assert budget_lines[0].startswith("[budget: ")
     # plan (1) + alpha/beta/gamma (3) = 4 tool calls used. The default plan's gap

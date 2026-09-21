@@ -564,12 +564,30 @@ average, so this bounds pathological multi-URL questions.
 
 Response byte cap. The CISA KEV JSON is about 1.5 MB, so 5 MiB is headroom.
 
+### LOCAL_SOURCE_MAX_EXPANDED_BYTES, LOCAL_SOURCE_MAX_ENTRIES, LOCAL_SOURCE_MAX_SHEETS, LOCAL_SOURCE_MAX_CELLS, LOCAL_SOURCE_MAX_CHARS, LOCAL_SOURCE_CACHE_MAX_BYTES
+
+Bounds for local ZIP, spreadsheet, and Word extraction in `research/source_documents.py` and
+the shared ladder's process-run cache. The response still has the existing 5 MiB page-byte cap;
+after that, a source may expand to at most 20 MiB, contain at most 128 archive members, 32
+worksheets, 250,000 tabular cells, and 2 million extracted characters. Parsed
+local-source text and retained image bodies share a 64 MiB cache budget and are
+evicted in LRU order. Parsers refuse a source that crosses a limit rather than
+returning a partial parse.
+
+The parser reads ZIP members as streams and never extracts files to disk. It reads text-like
+members, CSV/TSV, `.xlsx`/`.xlsm`, `.xls`, and `.docx`; nested archives and legacy `.doc` are not
+recursively or locally read. See `docs/architecture.md` "Local source and image bodies".
+
 ### RESOLUTION_SOURCE_PER_URL_MAX_CHARS, RESOLUTION_SOURCE_TOTAL_MAX_CHARS
 
 The per-URL cap sits at the elbow of the full-extraction distribution (p50 2.2k, p75 5.2k) and cut
 truncation from 48% to 21% on the 2026-07-09 smoke run, at roughly 1.5k tokens per URL. The total
 carries headroom so the per-URL cap binds: the maximum observed section was about 11.1k at 6k per
 URL, and 18k is about 4.5k tokens worst case.
+
+The 6,000-character per-URL budget includes provenance/chart/embed leads, section labels, digest
+headers, and truncation markers. Those disclosures consume part of the allowance rather than being
+appended beyond it, including for local-source excerpts and rescued reads.
 
 ### RESOLUTION_SOURCE_MIN_SECTION_CHARS
 
@@ -1202,6 +1220,32 @@ panel's own forecasting template to identify fill, verify and resolution targets
 search, fetch and read tools. It runs concurrently with v1 during the overlap window, when both flags are on,
 and soft-fails to `""` like v1. See `scratch_docs_and_planning/agentic_gap_fill_v2_plan.md` and
 `docs/agentic_gap_fill.md`.
+
+### GAP_FILL_IMAGE_MAX_SOURCE_PIXELS, GAP_FILL_IMAGE_MAX_EDGE, GAP_FILL_IMAGE_MAX_PIXELS, GAP_FILL_IMAGE_MAX_BYTES
+
+Bounds on raster images normalized for the same gap-fill driver: at most 25 megapixels decoded from the
+source, then at most 2,048 pixels on the longest side, 2 megapixels total, and 2 MiB for the normalized PNG.
+The download still uses the shared 5 MiB response cap. An explicit crop can reduce an image to fit the output
+limits, provided its full source fits the download and decode limits. The normalizer never crops automatically
+or enlarges a small image.
+
+### GAP_FILL_IMAGE_MAX_VIEWS
+
+At most four distinct normalized PNG hashes are delivered per question, counting crops as views. Repeated URLs
+or crops that normalize to an already delivered image reuse the existing image ID and do not consume another
+slot.
+
+### GAP_FILL_IMAGE_MAX_LEADS, GAP_FILL_IMAGE_LEADS_MAX_CHARS, GAP_FILL_IMAGE_METADATA_MAX_CHARS
+
+The HTML image-lead scanner keeps at most three candidate URLs per page. Each URL is capped at 1,000 characters;
+each untrusted alt text or figure caption is capped at 160 characters. The leads are navigation metadata only;
+they do not say the pixels were fetched or inspected.
+
+### GAP_FILL_V2_TOOL_BUDGET_LINE_RESERVE_CHARS
+
+Dispatch reserves up to 512 characters inside each tool reply for its remaining-budget line. It subtracts that
+space before truncating the tool body and clips the line to the space actually available, so it remains inside
+`LoopConfig.max_result_chars`.
 
 ### GAP_FILL_V2_DRIVER_MODEL, GAP_FILL_V2_DRIVER_EFFORT
 

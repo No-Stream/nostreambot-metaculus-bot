@@ -194,10 +194,15 @@ Most questions need little; a few need a lot. Spend accordingly.
   sake of it.
 
 RULES FOR FINDINGS (strictly enforced; violating findings are rejected):
-  - Each finding: one factual claim + source URL + verbatim quote from that
-    source + the source's date + how you retrieved it. For comparisons across
+  - Each text finding: one factual claim + source URL + verbatim quote from
+    that source + the source's date + how you retrieved it. For a visual
+    finding, set evidence_kind=image and provide the delivered image_id, its
+    exact source or final URL, and visual_observation; label numerical readings
+    as transcribed or estimated. Image delivery proves which source pixels you
+    saw, not that your interpretation is correct. For comparisons across
     sources, record a separate finding for each source so every excerpt keeps
-    its own link. State each source's evidence in its own claim and quote.
+    its own link. State each source's evidence in its own claim and quote or
+    visual observation.
   - DISCREPANCY findings (highest-value output): if a check shows the
     briefing states something the source does not support — a wrong number,
     a misread clause, a misattributed or hallucinated fact, a stale figure

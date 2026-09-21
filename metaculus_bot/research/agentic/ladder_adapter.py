@@ -71,6 +71,8 @@ _OVER_CAP_MSG = "Fetch body exceeded the size limit."
 _REDIRECT_LIMIT_MSG = "Redirect limit exceeded."
 _NO_TEXT_MSG = "Plain fetch returned no extractable text."
 _UNDECODABLE_MSG = "Plain fetch could not decode the body as text."
+LOCAL_SOURCE_METHOD = "local"
+LOCAL_NAVIGATION_METHOD = "local_navigation"
 
 
 def as_plain_result(result: FetchResult, *, requested_url: str) -> PlainFetchResult:
@@ -81,15 +83,25 @@ def as_plain_result(result: FetchResult, *, requested_url: str) -> PlainFetchRes
     ``ssrf_blocked`` status, and only the URL on the result says which.
     """
     if result.status == "success":
+        if result.navigation_only:
+            method = LOCAL_NAVIGATION_METHOD
+        elif result.local_kind is not None:
+            method = LOCAL_SOURCE_METHOD
+        else:
+            method = "cache" if result.cache_hit else _LOOP_METHOD[result.route]
         return PlainFetchResult(
             status="ok",
-            method="cache" if result.cache_hit else _LOOP_METHOD[result.route],
+            method=method,
             text=result.text,
             links=list(result.links),
             url=result.url,
             content_type=result.content_type,
             escalate_rendered=result.escalate_rendered,
             http_status=result.http_status,
+            local_kind=result.local_kind,
+            navigation_only=result.navigation_only,
+            local_read_refused=result.local_read_refused,
+            image_leads=result.image_leads,
         )
     if result.status == "throttled":
         return PlainFetchResult(
@@ -115,6 +127,10 @@ def as_plain_result(result: FetchResult, *, requested_url: str) -> PlainFetchRes
         content_type=result.content_type,
         escalate_rendered=result.escalate_rendered,
         http_status=result.http_status,
+        local_kind=result.local_kind,
+        navigation_only=result.navigation_only,
+        local_read_refused=result.local_read_refused,
+        image_leads=result.image_leads,
     )
 
 
@@ -136,6 +152,8 @@ def _needs_a_reader(result: FetchResult) -> bool:
     A document whose bytes we read and could not decode (a scan, an encrypted or malformed file),
     and a declared image, whose bytes buy nothing a local rung can read.
     """
+    if result.local_read_refused:
+        return False
     if result.status == "unreadable_document":
         return True
     return result.status == "unsupported_type" and result.status_reason == "image_needs_reader"

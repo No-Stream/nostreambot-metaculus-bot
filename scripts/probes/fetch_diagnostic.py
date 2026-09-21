@@ -58,7 +58,9 @@ archive lookup, which repeats column C's request).
 
 from __future__ import annotations
 
+import argparse
 import asyncio
+import logging
 import os
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -70,8 +72,10 @@ from curl_cffi import CurlError
 from curl_cffi import requests as curl_requests
 
 from metaculus_bot.constants import RESOLUTION_SOURCE_MAX_RESPONSE_BYTES, RESOLUTION_SOURCE_URL_CONTEXT_ENABLED_ENV
+from metaculus_bot.research.fetch_ladder.context import LadderContext
 from metaculus_bot.research.fetch_ladder.digest import bm25_digest
 from metaculus_bot.research.fetch_ladder.guard import _get_session, is_public_http_url
+from metaculus_bot.research.fetch_ladder.ladder import fetch_url
 from metaculus_bot.research.fetch_ladder.policy import RESOLUTION_SOURCE_POLICY
 from metaculus_bot.research.http_fetch import read_body_capped
 from metaculus_bot.research.impersonated_fetch import reset_impersonation_memo
@@ -533,5 +537,42 @@ async def main() -> None:
     print_verdict(rows)
 
 
+async def probe_source(url: str, query: str) -> FetchResult:
+    """Read one source through production acquisition and local-only passage selection."""
+    _disable_the_paid_rung()
+    policy = replace(
+        RESOLUTION_SOURCE_POLICY,
+        digest=bm25_digest,
+        rungs_enabled=RESOLUTION_SOURCE_POLICY.rungs_enabled - {"url_context"},
+    )
+    result = await fetch_url(url, policy=policy, ctx=LadderContext(query=query))
+    logging.getLogger(__name__).info(
+        "Source probe: url=%s status=%s route=%s chars=%s local_kind=%s reason=%s\n%s",
+        result.url,
+        result.status,
+        result.route,
+        len(result.text),
+        result.local_kind,
+        result.status_reason,
+        result.text,
+    )
+    return result
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source-url", help="Probe only this URL with all paid readers disabled.")
+    parser.add_argument("--query", help="Select local passages relevant to this query.")
+    args = parser.parse_args(argv)
+    if bool(args.source_url) != bool(args.query):
+        parser.error("--source-url and --query must be supplied together")
+    return args
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    arguments = parse_args()
+    logging.basicConfig(level=logging.INFO)
+    if arguments.source_url:
+        asyncio.run(probe_source(arguments.source_url, arguments.query))
+    else:
+        asyncio.run(main())

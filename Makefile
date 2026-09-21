@@ -79,6 +79,10 @@ precommit_all:
 test:
 	$(call RUN_UNBUFFERED,-m pytest)
 
+.PHONY: test_fetch_formats
+test_fetch_formats:
+	$(call RUN_UNBUFFERED,-m pytest tests/test_source_documents.py tests/test_source_presentation.py tests/test_fetch_ladder_local_sources.py tests/test_local_source_tools.py tests/test_image_tools.py tests/test_image_assets.py tests/test_image_leads.py tests/test_agentic_images.py tests/test_image_persistence.py tests/test_fetch_formats_e2e.py tests/test_source_probe.py)
+
 # Verbose test run: shows which tests are running/failing and where, with
 # short tracebacks. Useful when debugging a regression.
 test_verbose:
