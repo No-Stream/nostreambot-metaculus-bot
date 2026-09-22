@@ -1662,7 +1662,7 @@ The paid run is the operator's last step.
   be on `main`. See "Scheduling reliability" above.
 - `make probe_resolver QUESTION=<id>`: replays the gaps the archive recorded for one
   question through the production gap-fill v1 resolver path at every model and
-  search-context cell of a grid (default: the current resolver model and `gpt-5.6-luna`,
+  search-context cell of a grid (default: the current resolver model and `gpt-6-luna`,
   each at high, medium and low) and writes the answers beside OpenRouter's per-call cost
   to `scratch/probes/`. Up to about $0.20 a call on the operator's personal OpenRouter key
   (the donated key is forced off); the script prints its ceiling first and refuses without

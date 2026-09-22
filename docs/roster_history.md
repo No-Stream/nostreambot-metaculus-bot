@@ -22,6 +22,24 @@ Last verified against the code on 2026-09-04.
 
 **All dates below are AUTHORING dates on the july15 branch; every one of them reached prod together in merge `b4e9df0` at 2026-07-21T17:07:37Z, which is the single era boundary** (see the merge-date rule under era-bucketing): 2026-07-15: Fable-5 joined the forecaster roster (was stacker-only; stacking disabled in prod made it idle) and opus-4.6 retired, keeping n=6 at a 2 Anthropic / 2 OpenAI / 1 Google / 1 xAI balance. 2026-07-20 (first change): Fable-5 PULLED from the forecaster roster and the stacker after it returned `message.content=None` on 4/4 attempts for Q14333's numeric forecast + a truncated no-JSON-block output on Q578 in the 2026-07-19 test_bot run (suspected content classifiers refusing certain question content: fast deterministic empty completions, not timeouts); opus-4.7 took the slot, keeping n=6. Reconsidering fable-5 is a tracked follow-up (FUTURE.md). 2026-07-20 (second change, current): dropped from 6 to the 3-member latest-per-vendor triple, removing gpt-5.5, opus-4.7, and grok-4.5. Two adversarially-verified analyses (`scratch/ensemble_3member_audit_2026-07-20/` + `scratch/ensemble_power_model_2026-07-20/`) found the triple non-inferior on binary/MC and only a fragile numeric lean toward the full roster (+3.24, 95% CI [-2.5, +9.1], P(loss>1pt/Q)=0.80, driven by 2 questions); accepted as a ship-and-watch bet (see FUTURE.md "Triple-era September re-read"). This second change supersedes the first as the roster in effect, but both landed in the same merge, so residual analysis sees ONE boundary at 2026-07-21T17:07:37Z. No prod run ever used the intermediate opus-4.7 roster.
 
+**2026-09-22 (GPT-6 / opus-5.5 migration):** OpenAI released GPT-6 (`openai/gpt-6-luna`, `openai/gpt-6-sol`,
+verified on a live OpenRouter model-list read the same day) and Anthropic released `anthropic/claude-opus-5.5`.
+Forecaster roster: `gpt-5.6-sol` -> `gpt-6-sol` at the same effort (`high`; an xhigh bump is pending a separate
+timing probe), `claude-opus-4.8` -> `claude-opus-5.5` at the same effort (`xhigh`) and verbosity (`high`). The
+Terra tier got no GPT-6 successor, so every Terra-tier support role (summarizer, disagreement analyzer, native
+search, gap-fill analyzer, gap-fill resolver, gap-fill v2 driver) moved to Sol 6 at the same effort it ran at
+(`low`). Every Luna-tier support role (parser, market ranker, market query author, page-digest extractor,
+financial classifier, leakage detector) moved to `gpt-6-luna` at the same effort. The backtest-only leakage
+detector additionally moved from effort `low` with a `max_tokens=500` cap to effort `max` with the cap removed
+entirely (operator: this screen is not time-sensitive, and a `max_tokens` cap crashes calls for no good reason
+since the reasoning tokens count against it). Ablation prod-mirror entries (`ablation/forecaster_lineup.py`,
+`ablation/run_stacker.py`) followed the same swaps; `opus-4.6` in the free-tier-vs-prod ablation comparison was
+left untouched. GPT-6's effort enum is documented by OpenAI as `none/low/medium/high/xhigh/max`
+(developers.openai.com/api/docs/models/gpt-6-luna) — the same `max` tier previously believed Anthropic-only —
+but a live acceptance probe of `max` against an OpenAI-served OpenRouter route is still pending; only the
+leakage detector (an Anthropic-adjacent-but-actually-OpenAI luna call, backtest-only, low blast radius) was
+moved to `max` ahead of that probe.
+
 ## Support models
 
 A support model sits in one of two places, and the boundary is who builds the client. `llm_configs.py` holds the module-level `GeneralLlm` objects and config dicts, meaning every role the forecaster pipeline constructs once at import time; those are the four bullets below. `constants.py` holds a bare model-id string for each support role whose consuming module builds its own client at call time, kept beside that role's env-var name, timeout and price note; those are the list after them. The strings cannot be moved into `llm_configs.py`. `constants.py` is a foundation leaf under the pyproject import-linter contract, importing `llm_configs.py` from it is a genuine circular import through `fallback_openrouter.py`, and `llm_configs.py` reads no environment variables, which several of these roles need. `tests/test_model_name_locations.py` pins the full set of files allowed to hold a model-id literal, so neither list can quietly grow a third home.

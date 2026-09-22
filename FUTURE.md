@@ -34,7 +34,8 @@ and planning docs named here may have moved out of the public repo. Neither is a
   Best-supported competitor lever, on weakened evidence: dissent-toward-truth 9% on misses against 21% on hits.
 - **Anchor-date discipline**: make a member state the date of the anchor it used. Weakened but not retired now that
   rendered values carry dates; do not quote q44553's +58 as an expected value.
-- **High versus xhigh reasoning effort** on the last xhigh forecaster slot, opus-4.8: paired A/B, $60 to $90.
+- **High versus xhigh reasoning effort** on the last xhigh forecaster slot, opus-5.5 (opus-4.8 -> opus-5.5,
+  2026-09-22): paired A/B, $60 to $90.
 
 ## Open, recorded and not built
 

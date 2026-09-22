@@ -478,7 +478,8 @@ the targeted search on the stacking path. Effort stays at the env default of low
 
 Changed 2026-07-17 from sol to terra per the blind research-role audit in
 `scratch/research_role_audit_2026-07-17/`: terra won the native-search role first, sol second, luna
-third, with the verdict "MARGINAL EDGE".
+third, with the verdict "MARGINAL EDGE". Changed again 2026-09-22, terra to `gpt-6-sol`: GPT-6 shipped
+with no Terra successor, so every Terra role moved to Sol 6 at the same (low) effort.
 
 ### NATIVE_SEARCH_MAX_TOKENS
 
@@ -816,7 +817,8 @@ docs/research.md "Page digest".
 
 ### PAGE_DIGEST_EXTRACTOR_MODEL, PAGE_DIGEST_EXTRACTOR_EFFORT
 
-`openrouter/openai/gpt-5.6-luna` at reasoning effort `medium`, the operator's choice on 2026-09-09:
+`openrouter/openai/gpt-6-luna` (gpt-5.6-luna -> gpt-6-luna on 2026-09-22, the GPT-6 release; effort
+stays medium pending a decision) at reasoning effort `medium`, the operator's choice on 2026-09-09:
 "luna is dirt cheap and medium will still be fast enough". `google/gemini-3.8-flash` is the noted
 alternative. The slug carries the `openrouter/` prefix because `build_llm_with_openrouter_fallback`
 routes the donated-versus-personal key off that prefix, exactly as `FINANCIAL_CLASSIFIER_MODEL` does; a
@@ -1154,9 +1156,10 @@ fails soft: the forecast proceeds with first-pass research alone if any stage er
 
 Non-grounded gap-listing. It reads the first-pass research and emits a JSON list of up to
 `GAP_FILL_MAX_GAPS` factual gaps under the tight `GAP_FILL_ANALYZER_WALL_TIMEOUT` cap, which soft-fails
-silently on breach, so terra-low is the latency-safe choice: the task is decomposition rather than deep
+silently on breach, so low effort is the latency-safe choice: the task is decomposition rather than deep
 judgment. Grounded search resolution still uses google-genai directly via `gemini_search_provider`, because
-that path needs the search index.
+that path needs the search index. Changed 2026-09-22, terra to `gpt-6-sol`: GPT-6 shipped with no Terra
+successor, so every Terra role moved to Sol 6 at the same (low) effort.
 
 ### GAP_FILL_MAX_GAPS
 
@@ -1211,7 +1214,8 @@ Changed from sol to terra on 2026-07-20. Terra was preferred or within noise aga
 2026-07 blind role audits at roughly 40 to 50% lower cost, and these searches are about 44% of research spend
 (17 calls in the 2026-07-19 run), the single biggest research line item, so the cost cut is the dominant
 consideration. The 2026-07-09 bench had sol-low matching terra-low coverage 24 of 25; the blind audits plus the
-cost weight flip it.
+cost weight flip it. Changed again 2026-09-22, terra to `gpt-6-sol`: GPT-6 shipped with no Terra successor, so
+every Terra role moved to Sol 6 at the same (low) effort.
 
 ## Agentic gap-fill v2 (bounded research loop)
 
@@ -1253,7 +1257,9 @@ Driver model and effort picked by the blind five-arm replay eval on 2026-07-17,
 `scratch/driver_replay_2026-07-17/blind_judge_report.md`: terra-low ranked first (fetch-verified grounding,
 best source mix, 30 s wall, $0.36 per question), terra-medium second; sol-low burned budget on near-duplicate
 searches and came fifth; sonnet-5 cited unfetched URLs, which is disqualifying for a researcher. All candidates
-were openai or anthropic, so the loop's litellm binding routes via the donated OpenRouter key.
+were openai or anthropic, so the loop's litellm binding routes via the donated OpenRouter key. Changed
+2026-09-22, terra to `gpt-6-sol`: GPT-6 shipped with no Terra successor, so every Terra role moved to Sol 6 at
+the same (low) effort default.
 
 ### GAP_FILL_V2_READER_MODEL
 
@@ -1308,7 +1314,8 @@ decision-relevance, so the cap drops the least forecast-moving gaps.
 
 Binary-ish routing classification, asking whether this is a financial or economic question, under a 30 s
 timeout. The task is capability-saturated, so it rides the cheapest capable tier: mini to luna on 2026-08-03,
-when luna's markdown made it cheaper than mini.
+when luna's markdown made it cheaper than mini. luna -> GPT-6 luna on 2026-09-22 (the GPT-6 release), same tier
+logic.
 
 ### FINANCIAL_YFINANCE_LOOKBACK_DAYS, FINANCIAL_YFINANCE_RECENT_DAYS
 
@@ -1557,7 +1564,9 @@ The distribution mix over question types, ordered as (binary, numeric, multiple_
 ### LEAKAGE_DETECTOR_MODEL
 
 A mechanical leakage screen over research text, backtest-only. The task is saturated, so luna is the cheapest
-capable tier: mini to luna on 2026-08-03.
+capable tier: mini to luna on 2026-08-03; luna -> GPT-6 luna on 2026-09-22. Same day, the detector's `max_tokens=500`
+cap was removed and its effort raised to `max`: this backtest-only screen is not time-sensitive, and a max_tokens
+cap crashes calls for no good reason since reasoning tokens count against it (see `metaculus_bot/backtest/leakage.py`).
 
 ## Per-type stacking gates
 

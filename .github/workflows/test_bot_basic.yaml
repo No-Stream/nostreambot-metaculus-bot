@@ -126,7 +126,7 @@ jobs:
           # this default in metaculus_bot/__init__.py; pinned here for parity.
           DISABLE_AIOHTTP_TRANSPORT: 'true'
           # Native search runs in parallel with AskNews; model defaults to
-          # openai/gpt-5.6-terra (low effort, verbosity=low, 360s) per constants.py.
+          # openai/gpt-6-sol (low effort, verbosity=low, 360s) per constants.py.
           NATIVE_SEARCH_ENABLED: 'true'
           FINANCIAL_DATA_ENABLED: 'true'
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
