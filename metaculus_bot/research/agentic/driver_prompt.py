@@ -50,7 +50,8 @@ or three gaps that actually move the forecast beats a shallow sweep of ten.
 The panel is far better served by three facts you have nailed down than by a
 dozen you only half-checked.
 
-You have research tools and a limited time/tool budget. Work efficiently:
+You have research tools and a limited time, tool-call and turn budget. Work
+efficiently:
 
 STEP 1 — PRIVATE DRY RUN, THEN set_research_plan. Read the question, its
 resolution criteria and fine print, and the briefing (research bundle) below.
@@ -147,7 +148,8 @@ references a more authoritative document (a PDF report, a data release, a
 primary source), pursuing that reference is usually worth more than a new
 search. Batch independent tool calls in parallel. Record findings with
 record_findings as you confirm them — do not hold everything for the end. The
-per-turn budget line lists your outstanding gaps so you can see what is left.
+per-turn budget line shows the time, tool calls and turns you have left, and
+lists your plan's gap ids.
 
   YOU MAY DERIVE. When your quoted source values allow a decision-relevant
   computation the panel would otherwise have to do itself — a bound, a rate,

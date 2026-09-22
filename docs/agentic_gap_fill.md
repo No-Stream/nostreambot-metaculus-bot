@@ -708,7 +708,11 @@ out of budget. Three limits bound it:
   are where latency lives, so batching is encouraged.
 - **Max steps** `LoopConfig.max_steps`, which the seam doesn't override, so
   this one lives on the dataclass rather than in `constants.py` and takes no env
-  var. A step is one driver turn.
+  var. A step is one driver turn, and the last one is reserved for `conclude`
+  (below). Before 2026-09-22 the step cap was invisible to the driver: the budget
+  line showed only time and tool calls, so a driver that had both to spare was cut
+  off mid-research at step 20 with no conclude, no gap accounting and no ghost
+  (Q14333 smoke, GPT-6-Sol driver, 26/30 calls, 428 s left).
 - **The gate caps**, also on the dataclass. `max_gaps` is how many ranked gaps
   `set_research_plan` keeps (the driver ranks them, so the dropped tail is the
   least valuable; `GAP_FILL_V2_MAX_GAPS` feeds it). `max_plan_nudges` is how many
@@ -719,11 +723,13 @@ out of budget. Three limits bound it:
   budget-exhaustion conclusion bypasses the gate and never counts.
 
 There is also a **conclude threshold** `GAP_FILL_V2_CONCLUDE_THRESHOLD`. Once
-fewer than that many seconds remain, or the tool-call cap is hit, `_tool_schemas`
-stops offering the research tools and exposes only the internal ones
-(`_INTERNAL_TOOL_NAMES`), which forces the driver to wrap up inside the wall
-deadline. A budget line is appended to every tool result so the driver always
-knows how much room it has left.
+fewer than that many seconds remain, the tool-call cap is hit, or only the final
+turn of `max_steps` is left, `_tool_schemas` stops offering the research tools
+and exposes only the internal ones (`_INTERNAL_TOOL_NAMES`), which forces the
+driver to wrap up inside all three budgets. A budget line is appended to every
+tool result so the driver always knows how much room it has left: seconds, tool
+calls and turns used, plus the plan's gap ids (`plan_gaps=[...]`, a static list;
+findings carry no gap id, so the loop cannot tell which gaps are done).
 
 The loop also does light stuck-detection: an exact-duplicate tool call (same
 tool, same normalized arguments) bumps a `dup_tool_calls` counter and gets a

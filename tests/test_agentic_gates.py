@@ -1653,9 +1653,9 @@ class TestResearchPlanGate:
         assert "plan_gaps=0" in marker
 
     @pytest.mark.asyncio
-    async def test_unaddressed_gaps_appear_in_budget_line(self) -> None:
-        """After a plan is set, the per-turn budget line lists the plan's gap ids
-        as the driver's outstanding work-list (W1 coarse accounting)."""
+    async def test_plan_gaps_appear_in_budget_line(self) -> None:
+        """After a plan is set, the per-turn budget line lists the plan's gap ids,
+        the work-list conclude's gap_accounting must cover (W1)."""
 
         async def search_web(**_: Any) -> ToolOutcome:
             return ToolOutcome(content_markdown="ran", method="search")
@@ -1684,7 +1684,8 @@ class TestResearchPlanGate:
         # The search result's budget line carries both gap ids.
         search_message = _tool_messages(result)[1]
         budget_line = next(line for line in search_message["content"].splitlines() if line.startswith("[budget: "))
-        assert "unaddressed_gaps=[gap-a, gap-b]" in budget_line
+        assert "plan_gaps=[gap-a, gap-b]" in budget_line
+        assert "unaddressed_gaps" not in budget_line
 
     @pytest.mark.asyncio
     async def test_gap_list_capped_at_max_gaps(self) -> None:

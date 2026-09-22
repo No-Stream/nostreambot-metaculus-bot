@@ -405,7 +405,10 @@ class TestDriverSystemPromptResearchPlan:
     def test_step2_references_the_ranked_gaps(self) -> None:
         collapsed = " ".join(build_system_prompt("2026-07-21").split())
         assert "Work your ranked gaps in order" in collapsed
-        assert "per-turn budget line lists your outstanding gaps" in collapsed
+        assert "per-turn budget line shows the time, tool calls and turns you have left" in collapsed
+        assert "lists your plan's gap ids" in collapsed
+        # The old label claimed a live "outstanding" list the loop cannot compute (findings carry no gap id).
+        assert "outstanding gaps" not in collapsed
 
     def test_step2_carries_derivation_license(self) -> None:
         """W3: STEP 2 grants a narrow synthesis license — the driver may put

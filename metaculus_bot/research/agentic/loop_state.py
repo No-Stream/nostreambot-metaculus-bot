@@ -181,30 +181,38 @@ def _remaining_s(state: _LoopState, now: Callable[[], float]) -> float:
 
 
 def _must_conclude(state: _LoopState, config: LoopConfig, now: Callable[[], float]) -> bool:
-    return _remaining_s(state, now) < config.conclude_threshold_s or state.telemetry.tool_calls >= config.max_tool_calls
+    """True once any of the three budgets leaves only the concluding turn.
+
+    The step cap counts too: the final turn is reserved for ``conclude``, so a driver that
+    researches until told to stop still concludes explicitly (gap accounting, ghost phase)
+    rather than being cut off mid-research (Q14333 smoke, 2026-09-22).
+    """
+    return (
+        _remaining_s(state, now) < config.conclude_threshold_s
+        or state.telemetry.tool_calls >= config.max_tool_calls
+        or state.telemetry.steps >= config.max_steps - 1
+    )
 
 
-def _unaddressed_gaps_suffix(state: _LoopState) -> str:
-    """Render the driver's outstanding gap work-list for the budget line (W1).
+def _plan_gaps_suffix(state: _LoopState) -> str:
+    """The plan's gap ids for the budget line (W1), the work-list conclude's gap_accounting must cover (W2).
 
-    W1 accounting is deliberately coarse: it lists EVERY plan gap id until W2's
-    conclude-time gap_accounting lands (the plan's W2 section explicitly says to
-    build strict per-call attribution there, not here — a per-call gap_id param
-    would mean touching every external tool's schema). So the suffix shows the
-    full work-list debt as a standing reminder, not a live-shrinking count.
+    A static list of every plan gap, not a live-shrinking count: findings carry no gap id,
+    so the loop cannot know which gaps are done, and the driver tracks that itself.
     """
     if state.research_plan is None or not state.research_plan.gaps:
         return ""
     gap_ids = ", ".join(gap.id for gap in state.research_plan.gaps)
-    return f" unaddressed_gaps=[{gap_ids}]"
+    return f" plan_gaps=[{gap_ids}]"
 
 
 def _budget_line(state: _LoopState, config: LoopConfig, now: Callable[[], float]) -> str:
     remaining = int(_remaining_s(state, now))
-    gaps = _unaddressed_gaps_suffix(state)
+    gaps = _plan_gaps_suffix(state)
     if _must_conclude(state, config, now):
         return f"\n[budget: {remaining}s remaining — you must conclude now{gaps}]"
     return (
         f"\n[budget: {remaining}s remaining, "
-        f"{state.telemetry.tool_calls}/{config.max_tool_calls} tool calls used{gaps}]"
+        f"{state.telemetry.tool_calls}/{config.max_tool_calls} tool calls used, "
+        f"{state.telemetry.steps}/{config.max_steps} turns used{gaps}]"
     )
