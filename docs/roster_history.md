@@ -37,9 +37,12 @@ since the reasoning tokens count against it). The same reasoning dropped the sma
 `UTILITY_MODEL_CONFIG` / `REASONING_MODEL_CONFIG` stay: they sit far above any measured completion. Ablation prod-mirror entries (`ablation/forecaster_lineup.py`,
 `ablation/run_stacker.py`) followed the same swaps; `opus-4.6` in the free-tier-vs-prod ablation comparison was
 left untouched. GPT-6's effort enum is documented by OpenAI as `none/low/medium/high/xhigh/max`
-(developers.openai.com/api/docs/models/gpt-6-luna) — the same `max` tier previously believed Anthropic-only —
-but a live acceptance probe of `max` against an OpenAI-served OpenRouter route is still pending; only the
-backtest-only leakage detector was moved to `max` ahead of that probe.
+(developers.openai.com/api/docs/models/gpt-6-luna), and a live probe on 2026-09-22 confirmed OpenRouter's OpenAI
+route now accepts `max` on gpt-6-luna and gpt-6-sol (reasoning tokens rose with each tier; a bogus value 400s). The
+same day's probes timed one prod numeric forecaster prompt at xhigh (gpt-6-sol 72.5 s, opus-5.5 25.5 s, both well
+inside `FORECASTER_SOFT_DEADLINE`) and found gpt-6-luna at `max` unusable for open-ended synthesis: on native search
+and the AskNews summarizer it spent the entire 16k / 32k output budget on reasoning (finish_reason `length`, ~260 s)
+and returned nothing. Receipts: `scratch/model_migration_2026-09-22/`.
 
 ## Support models
 
