@@ -128,11 +128,14 @@ FORECASTER_LLMS: list[GeneralLlm] = [
     # held back deliberately for latency: unbounded adaptive thinking caused silent
     # FORECASTER_SOFT_DEADLINE stalls on the retired opus-4.6 slot, e.g. Q14333 on
     # 2026-05-07.
-    # 2026-09-22: opus-4.8 -> opus-5.5 (Anthropic release). Effort and verbosity unchanged.
+    # 2026-09-22: opus-4.8 -> opus-5.5 (Anthropic release), and extra_body={"verbosity": "high"}
+    # REMOVED. On Anthropic, OpenRouter maps BOTH verbosity and reasoning.effort onto the one
+    # output_config.effort knob and "verbosity wins if both are passed" (OpenRouter Claude 4.7
+    # migration guide), so this slot had been running at effort HIGH, not the xhigh declared here,
+    # since at least 2026-02. Never send verbosity alongside reasoning.effort on an Anthropic slot.
     _forecaster_slot(
         "openrouter/anthropic/claude-opus-5.5",
         reasoning={"effort": "xhigh"},
-        extra_body={"verbosity": "high"},
     ),
     # Google slot. No explicit reasoning-effort kwarg — gemini-3.1-pro-preview has
     # no xhigh tier and uses provider defaults. PINNED to the personal
@@ -215,7 +218,8 @@ STACKER_LLM: GeneralLlm = build_llm_with_openrouter_fallback(
     # content=None failures in the 2026-07-19 test_bot run — see the forecaster-slot
     # comment above + FUTURE.md). Stacking is prod-disabled, so this is
     # backtest/ablation-only exposure today. 2026-09-22: opus-4.8 -> opus-5.5
-    # (Anthropic release), effort and verbosity unchanged. Anthropic uses
+    # (Anthropic release); verbosity removed, since it overrode reasoning.effort (see the
+    # forecaster slot above). Anthropic uses
     # effort-based adaptive thinking, not a max_tokens budget. Live-verified
     # OpenRouter effort enum: none/minimal/low/medium/high/xhigh/max.
     # effort=xhigh matches the forecaster slot; "max" (one tier above xhigh) is
@@ -223,7 +227,6 @@ STACKER_LLM: GeneralLlm = build_llm_with_openrouter_fallback(
     "openrouter/anthropic/claude-opus-5.5",
     role="stacker",
     reasoning={"effort": "xhigh"},
-    extra_body={"verbosity": "high"},
     **{**REASONING_MODEL_CONFIG, "allowed_tries": 1},
 )
 

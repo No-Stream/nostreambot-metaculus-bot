@@ -25,7 +25,13 @@ Last verified against the code on 2026-09-04.
 **2026-09-22 (GPT-6 / opus-5.5 migration):** OpenAI released GPT-6 (`openai/gpt-6-luna`, `openai/gpt-6-sol`,
 verified on a live OpenRouter model-list read the same day) and Anthropic released `anthropic/claude-opus-5.5`.
 Forecaster roster: `gpt-5.6-sol` -> `gpt-6-sol` with effort `high` -> `xhigh` (operator; checked against
-`FORECASTER_SOFT_DEADLINE` by a single prod-prompt timing probe), `claude-opus-4.8` -> `claude-opus-5.5` at the same effort (`xhigh`) and verbosity (`high`). The
+`FORECASTER_SOFT_DEADLINE` by a single prod-prompt timing probe), `claude-opus-4.8` -> `claude-opus-5.5` at declared effort `xhigh`, with `extra_body={"verbosity": "high"}`
+REMOVED from both Anthropic slots (forecaster and stacker). On Anthropic models OpenRouter maps both `verbosity` and
+`reasoning.effort` onto the single `output_config.effort`, and "`verbosity` wins if both are passed" (OpenRouter's
+Claude 4.7 migration guide). `verbosity: "high"` had been on the Anthropic slots since at least 2026-02, so the
+2026-07-15 "xhigh" bump on the Anthropic forecaster and stacker most likely never took effect: **for era and effort
+analysis, read every Anthropic slot before this merge as running at effort `high`**, and this merge as its first
+real `xhigh`. A test now forbids sending `verbosity` beside `reasoning` on any forecaster or stacker. The
 Terra tier got no GPT-6 successor, so every Terra-tier support role (summarizer, disagreement analyzer, native
 search, gap-fill analyzer, gap-fill resolver, gap-fill v2 driver) moved to Sol 6 at the same effort it ran at
 (`low`). Every Luna-tier support role (parser, market ranker, market query author, page-digest extractor,

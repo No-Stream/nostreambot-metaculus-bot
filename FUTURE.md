@@ -39,8 +39,9 @@ and planning docs named here may have moved out of the public repo. Neither is a
   Best-supported competitor lever, on weakened evidence: dissent-toward-truth 9% on misses against 21% on hits.
 - **Anchor-date discipline**: make a member state the date of the anchor it used. Weakened but not retired now that
   rendered values carry dates; do not quote q44553's +58 as an expected value.
-- **High versus xhigh reasoning effort** on the forecaster slots, both xhigh since 2026-09-22 (gpt-6-sol high ->
-  xhigh, opus-4.8 -> opus-5.5 at xhigh): paired A/B, $60 to $90.
+- **High versus xhigh reasoning effort** on the forecaster slots, both really xhigh only since 2026-09-22 (gpt-6-sol
+  high -> xhigh; the Anthropic slot's declared xhigh had been overridden to high by `verbosity: "high"` until then, see
+  docs/roster_history.md): paired A/B, $60 to $90.
 
 ## Open, recorded and not built
 
