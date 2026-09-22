@@ -117,11 +117,11 @@ FORECASTER_LLMS: list[GeneralLlm] = [
     # max|xhigh|high|medium|low|minimal|none and this model accepts high (bogus
     # values 400). NOTE: "max" is Anthropic-only — OpenAI's ceiling is xhigh and
     # OpenAI rejects max upstream even though OpenRouter's enum validation admits it.
-    # 2026-09-22: sol -> gpt-6-sol (GPT-6 release). Effort stays high for now; an
-    # xhigh bump is pending a timing probe.
+    # 2026-09-22: sol -> gpt-6-sol (GPT-6 release) and high -> xhigh (operator), matching the
+    # Anthropic slot; a single prod-prompt timing probe checked it against FORECASTER_SOFT_DEADLINE.
     _forecaster_slot(
         "openrouter/openai/gpt-6-sol",
-        reasoning={"effort": "high"},
+        reasoning={"effort": "xhigh"},
     ),
     # Anthropic slot. 2026-07-15: enabled:True (provider-default adaptive thinking)
     # -> explicit effort=xhigh. Anthropic also exposes "max" one tier above xhigh —
@@ -280,13 +280,12 @@ STACKER_FALLBACK_LLM: GeneralLlm = build_llm_with_openrouter_fallback(
 # Prediction-market RANKER: one call per question over the whole ~380-440-candidate pool,
 # emitting up to 8 ranked rows with a relation tier and a one-phrase label. Measured completion
 # averages 589 tokens including reasoning, max 1,042 (scratch/bakeoff_run_2026-08-03/results/
-# RANKED_ARM_RESULTS.md). max_tokens sits ~3x above that max because a TRUNCATED ranking is a
-# fail-open — the whole ranking is lost, not just its tail — and luna's output tokens are cheap.
+# RANKED_ARM_RESULTS.md). No max_tokens since 2026-09-22 (operator): a TRUNCATED ranking is a
+# fail-open that loses the whole ranking, and MARKET_RANKER_WALL_TIMEOUT already bounds a runaway.
 MARKET_RANKER_LLM_CONFIG: dict = {
     "model": "openrouter/openai/gpt-6-luna",
     "role": "market_ranker",
     "temperature": None,
-    "max_tokens": 3000,
     "reasoning_effort": "low",
     "timeout": 90,
     "allowed_tries": 1,
@@ -295,12 +294,11 @@ MARKET_RANKER_LLM_CONFIG: dict = {
 # Prediction-market QUERY AUTHOR: one call per question emitting the domain vocabulary the
 # question's own tokens cannot reach (up to 8 synonyms + 3 framings). Its output is ADDITIVE to
 # a deterministic query set, so its failure costs recall nothing. Measured completion max 588
-# tokens including reasoning; max_tokens sits ~2.5x above that.
+# tokens including reasoning. No max_tokens since 2026-09-22: MARKET_QUERY_AUTHOR_WALL_TIMEOUT bounds it.
 MARKET_QUERY_AUTHOR_LLM_CONFIG: dict = {
     "model": "openrouter/openai/gpt-6-luna",
     "role": "market_query_author",
     "temperature": None,
-    "max_tokens": 1500,
     "reasoning_effort": "low",
     "timeout": 45,
     "allowed_tries": 1,

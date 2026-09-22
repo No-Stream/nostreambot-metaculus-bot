@@ -24,21 +24,22 @@ Last verified against the code on 2026-09-04.
 
 **2026-09-22 (GPT-6 / opus-5.5 migration):** OpenAI released GPT-6 (`openai/gpt-6-luna`, `openai/gpt-6-sol`,
 verified on a live OpenRouter model-list read the same day) and Anthropic released `anthropic/claude-opus-5.5`.
-Forecaster roster: `gpt-5.6-sol` -> `gpt-6-sol` at the same effort (`high`; an xhigh bump is pending a separate
-timing probe), `claude-opus-4.8` -> `claude-opus-5.5` at the same effort (`xhigh`) and verbosity (`high`). The
+Forecaster roster: `gpt-5.6-sol` -> `gpt-6-sol` with effort `high` -> `xhigh` (operator; checked against
+`FORECASTER_SOFT_DEADLINE` by a single prod-prompt timing probe), `claude-opus-4.8` -> `claude-opus-5.5` at the same effort (`xhigh`) and verbosity (`high`). The
 Terra tier got no GPT-6 successor, so every Terra-tier support role (summarizer, disagreement analyzer, native
 search, gap-fill analyzer, gap-fill resolver, gap-fill v2 driver) moved to Sol 6 at the same effort it ran at
 (`low`). Every Luna-tier support role (parser, market ranker, market query author, page-digest extractor,
 financial classifier, leakage detector) moved to `gpt-6-luna` at the same effort. The backtest-only leakage
 detector additionally moved from effort `low` with a `max_tokens=500` cap to effort `max` with the cap removed
 entirely (operator: this screen is not time-sensitive, and a `max_tokens` cap crashes calls for no good reason
-since the reasoning tokens count against it). Ablation prod-mirror entries (`ablation/forecaster_lineup.py`,
+since the reasoning tokens count against it). The same reasoning dropped the small caps on the financial classifier
+(500) and both prediction-market stages (3,000 / 1,500); their timeouts bound a runaway. The 32k/64k caps in
+`UTILITY_MODEL_CONFIG` / `REASONING_MODEL_CONFIG` stay: they sit far above any measured completion. Ablation prod-mirror entries (`ablation/forecaster_lineup.py`,
 `ablation/run_stacker.py`) followed the same swaps; `opus-4.6` in the free-tier-vs-prod ablation comparison was
 left untouched. GPT-6's effort enum is documented by OpenAI as `none/low/medium/high/xhigh/max`
 (developers.openai.com/api/docs/models/gpt-6-luna) — the same `max` tier previously believed Anthropic-only —
 but a live acceptance probe of `max` against an OpenAI-served OpenRouter route is still pending; only the
-leakage detector (an Anthropic-adjacent-but-actually-OpenAI luna call, backtest-only, low blast radius) was
-moved to `max` ahead of that probe.
+backtest-only leakage detector was moved to `max` ahead of that probe.
 
 ## Support models
 
