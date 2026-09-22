@@ -441,10 +441,10 @@ class TestAcceptedPath:
         markdown = md_path.read_text(encoding="utf-8")
         assert "# Gap-fill resolver probe: question 44267 (post 44256)" in markdown
         assert (
-            "| current:high | openai/gpt-5.6-terra | high | low | 3 | 0 | $0.3000 | $0.1000 | 240000 | 1800 | 0 | 600 |"
+            "| current:high | openai/gpt-6-sol | high | low | 3 | 0 | $0.3000 | $0.1000 | 240000 | 1800 | 0 | 600 |"
             in markdown
         )
-        assert "| luna:low | openai/gpt-5.6-luna | low | low | 0 | 3 | n/a | n/a | 0 | 0 | 0 | 0 |" in markdown
+        assert "| luna:low | openai/gpt-6-luna | low | low | 0 | 3 | n/a | n/a | 0 | 0 | 0 | 0 |" in markdown
         assert "- luna/current at high: 0.10x" in markdown
         assert "- luna low/high: n/a" in markdown
         assert "## Gap 2: Clarify whether the question resolves on the headline total or the ADIZ subset." in markdown
@@ -518,7 +518,7 @@ class TestRenderMarkdown:
         ]
         assert len(cell_headings) == len(gaps) * len(cells)
         assert (
-            "### luna:medium (openai/gpt-5.6-luna, context medium, effort low): $0.0200, 85000 prompt / 700 completion tokens (1000 cached, 300 reasoning), 12.5 s, 1 billed call(s)"
+            "### luna:medium (openai/gpt-6-luna, context medium, effort low): $0.0200, 85000 prompt / 700 completion tokens (1000 cached, 300 reasoning), 12.5 s, 1 billed call(s)"
             in markdown
         )
         assert "luna:medium says 26" in markdown

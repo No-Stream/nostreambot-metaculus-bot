@@ -14,6 +14,7 @@ from metaculus_bot.backtest.leakage import (
     screen_research_for_leakage,
 )
 from metaculus_bot.backtest.scoring import GroundTruth
+from metaculus_bot.constants import LEAKAGE_DETECTOR_MODEL
 
 
 def _as_questions(questions: list[MagicMock]) -> list[MetaculusQuestion]:
@@ -336,6 +337,30 @@ class TestScreenResearchForLeakage:
         await screen_research_for_leakage(_as_questions(questions), ground_truths)
 
         mock_choose_provider_with_name.assert_called_once_with(is_benchmarking=True)
+
+    @pytest.mark.asyncio
+    @patch("metaculus_bot.backtest.leakage.GeneralLlm")
+    @patch("metaculus_bot.backtest.leakage.choose_provider_with_name")
+    async def test_detector_llm_built_at_max_effort_with_no_max_tokens(
+        self, mock_choose_provider_with_name, mock_llm_class
+    ):
+        """2026-09-22: the backtest-only leakage screen is not time-sensitive, so it runs at
+        effort=max with no max_tokens cap (a cap crashes calls for no good reason since the
+        reasoning tokens count against it)."""
+        mock_choose_provider_with_name.return_value = (AsyncMock(return_value="research"), "mock")
+        mock_detector = AsyncMock()
+        mock_detector.invoke.return_value = "NO"
+        mock_llm_class.return_value = mock_detector
+
+        questions = [_make_question(1)]
+        questions[0].id_of_question = 1
+        ground_truths = {1: _make_ground_truth(1)}
+
+        await screen_research_for_leakage(_as_questions(questions), ground_truths)
+
+        mock_llm_class.assert_called_once_with(
+            model=LEAKAGE_DETECTOR_MODEL, temperature=None, reasoning={"effort": "max"}
+        )
 
     @pytest.mark.asyncio
     @patch("metaculus_bot.backtest.leakage.GeneralLlm")

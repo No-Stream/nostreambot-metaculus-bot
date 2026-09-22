@@ -360,7 +360,7 @@ cost_report:
 # One-question probe of gap-fill v1's per-gap resolver: replays the gaps the archive recorded
 # for question QUESTION=<question id> through the production resolver path
 # (gap_fill_search_prompt + build_native_search_llm) at every model x search_context_size cell
-# of a grid (default: the current resolver model and gpt-5.6-luna, each at high/medium/low),
+# of a grid (default: the current resolver model and gpt-6-luna, each at high/medium/low),
 # and writes the answers side by side with OpenRouter's per-call cost and tokens to
 # scratch/probes/. PAID (ask-first gate, see AGENTS.md): gaps x cells resolver calls at up to
 # ~$0.20 each on the operator's PERSONAL OpenRouter key (the donated key is forced off); the

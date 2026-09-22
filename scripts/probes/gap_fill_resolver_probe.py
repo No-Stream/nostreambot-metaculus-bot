@@ -55,7 +55,7 @@ from metaculus_bot.prompts import gap_fill_search_prompt
 from metaculus_bot.research.providers import build_native_search_llm
 
 # A literal like gemini_verify.CANDIDATE_MODEL: the repo has not adopted this model, so no constant carries it.
-CANDIDATE_MODEL = "openai/gpt-5.6-luna"
+CANDIDATE_MODEL = "openai/gpt-6-luna"
 CURRENT_MODEL_ALIAS = "current"
 CANDIDATE_MODEL_ALIAS = "luna"
 MODEL_ALIASES: dict[str, str] = {CURRENT_MODEL_ALIAS: GAP_FILL_RESOLVER_MODEL, CANDIDATE_MODEL_ALIAS: CANDIDATE_MODEL}
