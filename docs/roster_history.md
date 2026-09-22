@@ -46,7 +46,9 @@ left untouched. GPT-6's effort enum is documented by OpenAI as `none/low/medium/
 (developers.openai.com/api/docs/models/gpt-6-luna), and a live probe on 2026-09-22 confirmed OpenRouter's OpenAI
 route now accepts `max` on gpt-6-luna and gpt-6-sol (reasoning tokens rose with each tier; a bogus value 400s). The
 same day's probes timed one prod numeric forecaster prompt at xhigh (gpt-6-sol 72.5 s, opus-5.5 25.5 s, both well
-inside `FORECASTER_SOFT_DEADLINE`; the opus figure predates removing `verbosity`, so it ran at effective `high`).
+inside `FORECASTER_SOFT_DEADLINE`; that opus figure was taken with `verbosity: "high"` still sent, i.e. at effective
+`high`. Rerun without it at true `xhigh`: 48.7 s and 2,770 reasoning tokens against 798 before, the direct evidence that
+verbosity had been overriding the declared effort).
 gpt-6-luna at `max` against gpt-6-sol at `low` on one question: with prod's 16k / 32k caps luna spent the whole
 budget on reasoning and returned nothing, and uncapped it finished native search in 278 s (sol 30 s) and the AskNews
 summarizer in 438 s (sol 15 s, over the summarizer's 300 s wall). A blind Opus judge preferred luna's native-search
