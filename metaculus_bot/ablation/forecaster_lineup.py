@@ -7,7 +7,7 @@ Two lineups are available:
   same N forecasters run once per question, and their rationales feed BOTH stacker
   arms — so per-forecaster cost is amortized across arms.
 * **Prod-ish** (``PROD_FORECASTER_MODELS``): 3 paid frontier models (Claude
-  Opus 4.6, Claude Opus 4.8, GPT-5.6-sol), all at medium reasoning effort, for the
+  Opus 4.6, Claude Opus 5.5, GPT-6-sol), all at medium reasoning effort, for the
   paid ablation re-run on a quality-representative ensemble. Sampling params
   follow the repo-wide convention (``temperature=None``, no ``top_p`` /
   ``max_tokens``) — see ``llm_configs.REASONING_MODEL_CONFIG``.
@@ -67,9 +67,10 @@ __all__ = [
 
 PROD_FORECASTER_SPECS: list[tuple[str, dict]] = [
     ("openrouter/anthropic/claude-opus-4.6", {"reasoning": {"effort": "medium"}}),
-    ("openrouter/anthropic/claude-opus-4.8", {"reasoning": {"effort": "medium"}}),
-    # Mirrors prod forecaster slot 1 post the 2026-07-09 gpt-5.6 migration (identity, not effort).
-    ("openrouter/openai/gpt-5.6-sol", {"reasoning": {"effort": "medium"}}),
+    # Mirrors prod forecaster slot 2 post the 2026-09-22 GPT-6/opus-5.5 migration (identity, not effort).
+    ("openrouter/anthropic/claude-opus-5.5", {"reasoning": {"effort": "medium"}}),
+    # Mirrors prod forecaster slot 1 post the 2026-09-22 GPT-6 migration (identity, not effort).
+    ("openrouter/openai/gpt-6-sol", {"reasoning": {"effort": "medium"}}),
 ]
 PROD_FORECASTER_MODELS: list[str] = [m for m, _ in PROD_FORECASTER_SPECS]
 

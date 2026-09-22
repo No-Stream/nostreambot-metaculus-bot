@@ -344,7 +344,7 @@ class TestConcurrentStackerLock:
 
 class TestDefaultStackerWiredViaDonatedKey:
     """When callers pass ``stacker_llm=None`` we construct claude-opus-4.5
-    (primary) and gpt-5.6-sol (fallback) routed via ``build_llm_with_openrouter_fallback``
+    (primary) and gpt-6-sol (fallback) routed via ``build_llm_with_openrouter_fallback``
     so the Metaculus-donated key is tried before the operator's paid key.
 
     This mirrors production STACKER_LLM / STACKER_FALLBACK_LLM in
@@ -370,10 +370,10 @@ class TestDefaultStackerWiredViaDonatedKey:
         monkeypatch.setenv("OPENROUTER_API_KEY", "fake_paid")
 
         # Pin the new defaults at the constant level — primary is opus-4.5,
-        # fallback is gpt-5.6-sol (different provider for independent failure
-        # mode; matches prod STACKER_FALLBACK_LLM post the 2026-07-09 migration).
+        # fallback is gpt-6-sol (different provider for independent failure
+        # mode; matches prod STACKER_FALLBACK_LLM post the 2026-09-22 migration).
         assert DEFAULT_STACKER_MODEL == "openrouter/anthropic/claude-opus-4.5"
-        assert DEFAULT_STACKER_FALLBACK_MODEL == "openrouter/openai/gpt-5.6-sol"
+        assert DEFAULT_STACKER_FALLBACK_MODEL == "openrouter/openai/gpt-6-sol"
 
         captured_llms: list[Any] = []
 

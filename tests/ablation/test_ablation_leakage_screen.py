@@ -590,9 +590,10 @@ class TestScreenBatch:
         # keeps litellm from injecting temperature=0 (see _build_detector_llm).
         assert call_kwargs["temperature"] is None
         # max_tokens=32_000 is the combined reasoning+content budget for the
-        # default reasoning model (glm-4.5-air:free). Production leakage.py uses
-        # 500 against gpt-5.6-luna, but 500 starves the reasoning budget on long
-        # blobs and yields content=None. See _build_detector_llm docstring.
+        # default reasoning model (glm-4.5-air:free). Production leakage.py used
+        # to cap at 500 against gpt-5.6-luna, but 500 starves the reasoning budget
+        # on long blobs and yields content=None; prod now runs uncapped at
+        # effort=max against gpt-6-luna (2026-09-22). See _build_detector_llm docstring.
         assert call_kwargs["max_tokens"] == 32_000
         # response_format=json_object asks providers to honor JSON-mode. Replaces
         # the YES/NO-prefix parser, which mis-parsed markdown-decorated outputs

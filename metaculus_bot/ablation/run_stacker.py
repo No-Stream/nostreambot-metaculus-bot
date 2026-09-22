@@ -10,11 +10,12 @@ sets it to ``"1"`` so both produce real markdown for the stacker prompt. Results
 when both fail it caches a ``success=False`` payload so the batch wrapper continues.
 
 Stacker choice. The default primary is ``openrouter/anthropic/claude-opus-4.5`` rather than prod's
-opus-4.8 (``STACKER_LLM`` in ``llm_configs.py`` since 2026-07-20, when fable-5 left both roles),
-because a gpt-5.5 primary 404ed ("no endpoints available", a data-policy guardrail) on every
-request from the operator's local donated key while the GitHub-secret key worked; Anthropic models
-clear it. The ``gpt-5.6-sol`` fallback matches prod ``STACKER_FALLBACK_LLM`` (the 2026-07-09
-gpt-5.6 migration) and sits on a different provider so an Anthropic stall cannot take both
+opus-5.5 (``STACKER_LLM`` in ``llm_configs.py``, opus-4.8 -> opus-5.5 on the 2026-09-22 GPT-6/opus-5.5
+migration; the slot has been Anthropic since 2026-07-20, when fable-5 left both roles), because a
+gpt-5.5 primary 404ed ("no endpoints available", a data-policy guardrail) on every request from the
+operator's local donated key while the GitHub-secret key worked; Anthropic models clear it. The
+``gpt-6-sol`` fallback matches prod ``STACKER_FALLBACK_LLM`` (gpt-5.6-sol -> gpt-6-sol on the
+2026-09-22 migration) and sits on a different provider so an Anthropic stall cannot take both
 attempts down. Both go through ``build_llm_with_openrouter_fallback`` so the Metaculus-donated
 OpenRouter key absorbs cost ahead of the operator's paid key; that wrapper handles the
 donated-to-paid fallback on credit/auth/data-policy errors itself, so the outer
@@ -75,14 +76,16 @@ ARM_PDF_MIN2 = "pdf_min2"  # pdf arm with min_forecasters=2 (proper aggregation)
 ARM_MEDIAN = "median"  # deterministic median over base predictions, no LLM (see metaculus_bot.ablation.run_simple_agg)
 ARM_MEAN = "mean"  # deterministic mean over base predictions, no LLM (see metaculus_bot.ablation.run_simple_agg)
 
-# Not prod's opus-4.8: a gpt-5.5 primary 404ed on the operator's local donated key; see the module docstring.
+# Not prod's opus-5.5: a gpt-5.5 primary 404ed on the operator's local donated key; see the module docstring.
 DEFAULT_STACKER_MODEL = "openrouter/anthropic/claude-opus-4.5"
-# Matches prod STACKER_FALLBACK_LLM (2026-07-09 gpt-5.6 migration); a different provider than the primary on purpose.
-DEFAULT_STACKER_FALLBACK_MODEL = "openrouter/openai/gpt-5.6-sol"
+# Matches prod STACKER_FALLBACK_LLM (gpt-5.6-sol -> gpt-6-sol on the 2026-09-22 migration); a different
+# provider than the primary on purpose.
+DEFAULT_STACKER_FALLBACK_MODEL = "openrouter/openai/gpt-6-sol"
 DEFAULT_PARSER_MODEL = "openrouter/openai/gpt-oss-120b:free"
 
 # The --lineup prod stacker, a plain GeneralLlm with no donated-key wrapper; its posture mirrors the prod forecasters.
-PROD_STACKER_MODEL = "openrouter/anthropic/claude-opus-4.8"
+# opus-4.8 -> opus-5.5 on the 2026-09-22 migration.
+PROD_STACKER_MODEL = "openrouter/anthropic/claude-opus-5.5"
 # Medium effort, no sampling params: ``temperature=None`` stops litellm injecting one, top_p and max_tokens stay unset.
 _PROD_STACKER_KWARGS: dict[str, Any] = {
     "reasoning": {"effort": "medium"},
@@ -124,7 +127,7 @@ def _build_default_stacker_llm() -> GeneralLlm:
 
 
 def _build_default_fallback_stacker_llm() -> GeneralLlm:
-    """Fallback ablation stacker (gpt-5.6-sol).
+    """Fallback ablation stacker (gpt-6-sol).
 
     Mirrors production STACKER_FALLBACK_LLM. Different provider on purpose —
     if Anthropic is thrashing, retrying against Anthropic rarely recovers.
@@ -668,7 +671,7 @@ async def run_stacker_for_arm(
     """Run the stacker for one arm of one question, cached per ``(qid, arm, stacker_slug)``.
 
     ``stacker_slug`` keys the cache filename to the active stacker so a swap (opus-4.5 free-tier
-    versus opus-4.8 prod) never overwrites another stacker's results; callers derive it with
+    versus opus-5.5 prod) never overwrites another stacker's results; callers derive it with
     ``model_slug_to_filename(<stacker model>)``, and ``None`` keeps the legacy ``arm_<arm>.json``
     name the tests rely on. The slug applies to every read and write here, the median-fallback
     payload included, since that is still this stacker arm's cell.
