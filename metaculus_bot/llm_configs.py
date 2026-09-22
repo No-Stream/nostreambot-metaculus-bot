@@ -229,16 +229,15 @@ STACKER_LLM: GeneralLlm = build_llm_with_openrouter_fallback(
 
 # Fallback stacker used when the primary stacker times out or errors.
 # Reasoning slot → strongest OpenAI tier (gpt-6-sol, gpt-5.6-sol -> gpt-6-sol on
-# the 2026-09-22 GPT-6 migration) at high effort; deliberately cross-provider
-# from the Anthropic primary so an Anthropic stall doesn't take both attempts
-# down. Tighter timeout and single try since we're already running late on the
-# critical path by the time this fires. Stays at high (not xhigh) for that same
-# reason — the 2026-07-15 xhigh bump covers the primary stacker and forecaster
-# slots, not this tighter-budget path.
+# the 2026-09-22 GPT-6 migration) at xhigh (high -> xhigh 2026-09-22, operator:
+# both stackers at xhigh; gpt-6-sol@xhigh took 72.5 s on a prod numeric forecaster
+# prompt that day); deliberately cross-provider from the Anthropic primary so an
+# Anthropic stall doesn't take both attempts down. Tighter timeout and single try
+# since we're already running late on the critical path by the time this fires.
 STACKER_FALLBACK_LLM: GeneralLlm = build_llm_with_openrouter_fallback(
     "openrouter/openai/gpt-6-sol",
     role="stacker_fallback",
-    reasoning={"effort": "high"},
+    reasoning={"effort": "xhigh"},
     **{**REASONING_MODEL_CONFIG, "allowed_tries": 1, "timeout": 300},
 )
 

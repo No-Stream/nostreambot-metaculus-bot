@@ -845,6 +845,14 @@ digest on an unmeasured hunch. The call is bounded by `min(PAGE_DIGEST_EXTRACTOR
 budget_seconds - elapsed - PAGE_DIGEST_WALL_MARGIN_S)`, where `elapsed` is the BM25 thread hop's own
 time, so a caller with less wall left than this gets a shorter call and never a longer one.
 
+2026-09-22: 20 -> 30 s (operator). By then the live record was 2 of 5 gpt-5.6-luna digest calls timing out
+(2026-09-11), and the 45 s wall no longer looked like the real constraint: `resolution_source` runs concurrently
+with AskNews (research-archive latency median 61 s, 10th percentile 44 s) and native search (median 69 s), so its
+own wall rarely lengthens the research phase, and the `min(...)` above still clips the call to whatever that wall
+leaves. The same day gpt-6-luna ran real digest calls in 1.4 to 4.8 s at low and medium effort, with no
+fallbacks (on archived pages cut to 6,000 chars, so shorter than prod's pre-filtered prompt); the OpenRouter
+`openai/fast` priority tier made no visible difference. Receipts: `scratch/model_migration_2026-09-22/`.
+
 ### PAGE_DIGEST_WALL_MARGIN_S
 
 Left to the caller's outer `wait_for` so the digest returns first and the BM25 fallback, the
@@ -1565,7 +1573,7 @@ The distribution mix over question types, ordered as (binary, numeric, multiple_
 
 A mechanical leakage screen over research text, backtest-only. The task is saturated, so luna is the cheapest
 capable tier: mini to luna on 2026-08-03; luna -> GPT-6 luna on 2026-09-22. Same day, the detector's `max_tokens=500`
-cap was removed and its effort raised to `max`: this backtest-only screen is not time-sensitive, and a max_tokens
+cap was removed and its effort raised to `high` (briefly `max` the same day): this backtest-only screen is not time-sensitive, and a max_tokens
 cap crashes calls for no good reason since reasoning tokens count against it (see `metaculus_bot/backtest/leakage.py`).
 
 ## Per-type stacking gates

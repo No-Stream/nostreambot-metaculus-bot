@@ -30,7 +30,7 @@ Terra tier got no GPT-6 successor, so every Terra-tier support role (summarizer,
 search, gap-fill analyzer, gap-fill resolver, gap-fill v2 driver) moved to Sol 6 at the same effort it ran at
 (`low`). Every Luna-tier support role (parser, market ranker, market query author, page-digest extractor,
 financial classifier, leakage detector) moved to `gpt-6-luna` at the same effort. The backtest-only leakage
-detector additionally moved from effort `low` with a `max_tokens=500` cap to effort `max` with the cap removed
+detector additionally moved from effort `low` with a `max_tokens=500` cap to effort `high` (first `max`, lowered the same day by the operator) with the cap removed
 entirely (operator: this screen is not time-sensitive, and a `max_tokens` cap crashes calls for no good reason
 since the reasoning tokens count against it). The same reasoning dropped the small caps on the financial classifier
 (500) and both prediction-market stages (3,000 / 1,500); their timeouts bound a runaway. The 32k/64k caps in

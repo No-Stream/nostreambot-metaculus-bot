@@ -28,10 +28,10 @@ async def screen_research_for_leakage(
     research_provider, _ = choose_provider_with_name(is_benchmarking=True)
     # temperature=None defers reasoning models to provider defaults; redundant on
     # ft 0.2.92 (GeneralLlm ctor default is already None). No top_p. 2026-09-22: effort
-    # low->max and max_tokens=500 removed (operator: this backtest-only screen is not
+    # low->high and max_tokens=500 removed (operator: this backtest-only screen is not
     # time-sensitive, and a max_tokens cap crashes calls for no good reason since the
     # reasoning tokens count against it).
-    detector_llm = GeneralLlm(model=LEAKAGE_DETECTOR_MODEL, temperature=None, reasoning={"effort": "max"})
+    detector_llm = GeneralLlm(model=LEAKAGE_DETECTOR_MODEL, temperature=None, reasoning={"effort": "high"})
     semaphore = asyncio.Semaphore(concurrency)
 
     tasks = [

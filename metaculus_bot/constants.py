@@ -469,8 +469,8 @@ URL_CONTEXT_SIZE_GATE_TOKENS: int = 100_000
 # effort unchanged pending a decision. Receipt: docs/constants.md "PAGE_DIGEST_EXTRACTOR_MODEL".
 PAGE_DIGEST_EXTRACTOR_MODEL: str = "openrouter/openai/gpt-6-luna"
 PAGE_DIGEST_EXTRACTOR_EFFORT: str = "medium"
-# Luna-medium probed 13-76 s on 20-84k-token SEARCH prompts. Receipt: docs/constants.md "PAGE_DIGEST_EXTRACTOR_TIMEOUT_S".
-PAGE_DIGEST_EXTRACTOR_TIMEOUT_S: float = 20.0
+# 20 -> 30 s 2026-09-22; gpt-6-luna digests measured 1.4-4.8 s. Receipt: docs/constants.md "PAGE_DIGEST_EXTRACTOR_TIMEOUT_S".
+PAGE_DIGEST_EXTRACTOR_TIMEOUT_S: float = 30.0
 # Left to the caller's outer wait_for so the digest returns first. Receipt: docs/constants.md "PAGE_DIGEST_WALL_MARGIN_S".
 PAGE_DIGEST_WALL_MARGIN_S: float = 2.0
 # Under this a paid call cannot finish, so none is made. Receipt: docs/constants.md "PAGE_DIGEST_MIN_CALL_BUDGET_S".

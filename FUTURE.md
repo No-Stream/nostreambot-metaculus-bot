@@ -25,6 +25,11 @@ and planning docs named here may have moved out of the public repo. Neither is a
 
 ## Open, priced levers not yet built
 
+- **HIGH PRIORITY: gap-fill v2 driver on gpt-6-luna at max instead of gpt-6-sol at low.** One-question replay on
+  2026-09-22 (Q44229, `scratch/model_migration_2026-09-22/`): both finished inside the 540 s loop (luna 146 s, sol
+  85 s, 31-32 tool calls), and a blind Opus judge called it a tie leaning luna, low confidence. Luna read 882k prompt
+  tokens against sol's 711k at a twentieth of the input price, so the driver's spend drops by roughly an order of
+  magnitude. Needs a multi-question replay before switching; Sol stays for the season start.
 - **Tail-consistency check on the numeric block**: when a rationale derives a sigma then declares a tighter left tail,
   widen it deterministically. +11.93 baseline points on the q44453 cohort, from arithmetic the models already did.
 - **Gap-fill v2 office-holder precedent rule**: on "will X assume office", retrieve how the current holder got the seat.
@@ -34,8 +39,8 @@ and planning docs named here may have moved out of the public repo. Neither is a
   Best-supported competitor lever, on weakened evidence: dissent-toward-truth 9% on misses against 21% on hits.
 - **Anchor-date discipline**: make a member state the date of the anchor it used. Weakened but not retired now that
   rendered values carry dates; do not quote q44553's +58 as an expected value.
-- **High versus xhigh reasoning effort** on the last xhigh forecaster slot, opus-5.5 (opus-4.8 -> opus-5.5,
-  2026-09-22): paired A/B, $60 to $90.
+- **High versus xhigh reasoning effort** on the forecaster slots, both xhigh since 2026-09-22 (gpt-6-sol high ->
+  xhigh, opus-4.8 -> opus-5.5 at xhigh): paired A/B, $60 to $90.
 
 ## Open, recorded and not built
 
