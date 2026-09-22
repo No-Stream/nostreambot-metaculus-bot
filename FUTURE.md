@@ -31,6 +31,8 @@ and planning docs named here may have moved out of the public repo. Neither is a
   85 s, 31-32 tool calls), and a blind Opus judge called it a tie leaning luna, low confidence. Luna read 882k prompt
   tokens against sol's 711k at a twentieth of the input price, so the driver's spend drops by roughly an order of
   magnitude. Needs a multi-question replay before switching; Sol stays for the season start.
+  Same-day native-search probe: luna at true `max` gave the brief a blind judge preferred, but took 278 s against
+  sol-low's 30 s; luna at `high` or `xhigh` there is the untested middle.
 - **Tail-consistency check on the numeric block**: when a rationale derives a sigma then declares a tighter left tail,
   widen it deterministically. +11.93 baseline points on the q44453 cohort, from arithmetic the models already did.
 - **Gap-fill v2 office-holder precedent rule**: on "will X assume office", retrieve how the current holder got the seat.
