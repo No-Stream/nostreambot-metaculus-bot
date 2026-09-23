@@ -78,6 +78,7 @@ incidents behind the design.
 | `QUESTION_CAP_FORFEIT` | `forecaster.py:forecast_questions` | The `max_questions_per_run` cap. |
 | `SKIP_GUARD_UNREADABLE` | `forecaster.py:_drop_questions_with_unreadable_forecast_history` | Per-question WARNING: the re-spend guard could not read `my_forecasts`, so the question was dropped rather than treated as never forecast. |
 | `GEMINI_UNGROUNDED_SUPPRESSED` | `research/gemini_search.py:_format_grounded_response` | Gemini grounded-search suppression. |
+| `GEMINI_GROUNDING_RETRY` | `research/gemini_search.py:invoke_gemini_grounded` | The second grounded call made when the first carried no grounding, and how it came out. |
 | `GEMINI_GROUNDING_DENSITY` | `research/gemini_search.py:_format_grounded_response` | The floor's complement: one row per response that passed the grounded-chunk floor. |
 | `GEMINI_UNSUPPORTED_ATTRIBUTION` | `research/gemini_search.py:_check_attributions` | The embellishment channel, per response. |
 | `GEMINI_USAGE` | `research/gemini_search.py`, `research/agentic/tool_backends.py`, `research/resolution_source.py` | Per-call google-genai token and grounded-query accounting for all three Gemini surfaces. |
@@ -1191,6 +1192,17 @@ is dropped as ungrounded parametric output. The orchestrator then records `statu
 is NOT alertable and bumps no counter, so this WARN is the only signal, and without a spec the
 suppression rate was unmeasurable from the archive. `qid_kind` is `question_id`
 (`gemini_search.py` passes `question.id_of_question`).
+
+### GEMINI_GROUNDING_RETRY
+
+One INFO line per retried grounded call (`research/gemini_search.py:invoke_gemini_grounded`):
+the first response carried no grounding evidence, so a second call was made inside what was
+left of the same `GEMINI_SEARCH_TIMEOUT` wall. `outcome` is `grounded` (the retry's text is
+used), `ungrounded` (the floor then suppresses, and `GEMINI_UNGROUNDED_SUPPRESSED` follows),
+or `timeout` (the wall ran out mid-retry; the first response is suppressed). Recovery rate is
+`grounded / all rows`; the pre-retry loss rate is `rows / GeminiSearch calls`. `qid_kind` is
+`question_id`. Added 2026-09-22 after gemini-3.8-flash was measured dropping grounding
+metadata on about half of calls (docs/research.md "Grounding retry").
 
 ### GEMINI_GROUNDING_DENSITY
 

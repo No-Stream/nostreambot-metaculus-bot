@@ -579,6 +579,26 @@ ungrounded Gemini text is a demonstrated fabrication vector (Q38195, 2026-07-19:
 fake `[primary]` tags reached forecasters). "No grounding evidence" includes a
 response carrying no candidates at all; that case used to return its text via an
 early exit that walked straight past this floor. There is now no path around it.
+A `url_context` read of a `vertexaisearch.cloud.google.com/grounding-api-redirect/`
+URL does not count as a successful read: that URL is a search hit whose metadata
+was dropped, and before 2026-09-22 one such read let 6 kB of self-tagged
+`[A: official]` text through on the Q14333 smoke.
+
+**Grounding retry.** gemini-3.8-flash (adopted 2026-09-03) returns no
+`groundingMetadata` on about half of grounded calls. A 2026-09-22 probe (22 calls,
+production prompt, Q14333 and Q45571) showed it is random per call (the same prompt
+grounds on one rep and not the next), happens with `google_search` alone as well
+as with `url_context`, and happens even when the model searched: with
+`include_server_side_tool_invocations` the ungrounded responses carry `toolCall`
+parts with 11-14 real queries. Those parts do not replace the metadata, since a
+search `toolResponse` holds only the search-suggestions widget, no URLs or text,
+and `toolUsePromptTokenCount` is absent on some calls that searched, so it cannot
+tell "never searched" from "metadata dropped" either. Thinking level `low` grounded
+3 of 4 but searched and wrote less; `minimal` is rejected by the model. So
+`invoke_gemini_grounded` makes one more call when a response has no grounding
+evidence (`GEMINI_SEARCH_GROUNDING_ATTEMPTS`), inside the same wall, and logs
+`GEMINI_GROUNDING_RETRY` with the outcome. Both attempts are billed and each logs
+its own `GEMINI_USAGE` line and raw record.
 
 This provider uses the operator's personal `GOOGLE_API_KEY` (a paid-tier Google
 AI Studio key). There is no Metaculus-donated key on the google-genai side: the

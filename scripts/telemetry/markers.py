@@ -630,6 +630,15 @@ MARKER_SPECS: list[MarkerSpec] = [
         qid_kind=QID_KIND_QUESTION_ID,  # gemini_search.py passes question.id_of_question
     ),
     MarkerSpec(
+        "gemini_grounding_retry",
+        # Why: the retry's outcome is its only trace. Receipt: docs/telemetry_markers.md "GEMINI_GROUNDING_RETRY".
+        re.compile(
+            r"GEMINI_GROUNDING_RETRY:\s*question=(?P<question>\S+)\s+model=(?P<model>\S+)"
+            r"\s+outcome=(?P<outcome>grounded|ungrounded|timeout)"
+        ),
+        qid_kind=QID_KIND_QUESTION_ID,  # gemini_search.py passes question.id_of_question
+    ),
+    MarkerSpec(
         "gemini_grounding_density",
         # Why: telemetry only, never a gate. Receipt: docs/telemetry_markers.md "GEMINI_GROUNDING_DENSITY".
         re.compile(

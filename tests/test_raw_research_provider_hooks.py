@@ -114,10 +114,12 @@ async def test_gemini_search_emits_raw_response_with_qid(monkeypatch: pytest.Mon
     ):
         await gemini_search_provider()(_make_q())
 
-    rec.assert_called_once()
-    assert rec.call_args.kwargs["provider"] == "gemini_search"
-    assert rec.call_args.kwargs["qid"] == 555
-    assert rec.call_args.kwargs["payload"] is response
+    # The response carries no grounding, so the provider retries once; each billed attempt is archived.
+    assert rec.call_count == 2
+    for call in rec.call_args_list:
+        assert call.kwargs["provider"] == "gemini_search"
+        assert call.kwargs["qid"] == 555
+        assert call.kwargs["payload"] is response
 
 
 @pytest.mark.asyncio

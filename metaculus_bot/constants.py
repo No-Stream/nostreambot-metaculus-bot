@@ -540,6 +540,9 @@ GEMINI_SEARCH_DEFAULT_MODEL: str = "gemini-3.8-flash"
 GEMINI_SEARCH_TIMEOUT: int = 360
 # Explicit (operator, 2026-09-03); the default is HIGH. Receipt: docs/constants.md "GEMINI_SEARCH_THINKING_LEVEL".
 GEMINI_SEARCH_THINKING_LEVEL: str = "medium"
+# One retry when a response carries no grounding (3.8-flash drops the metadata on ~half of calls), inside
+# the same GEMINI_SEARCH_TIMEOUT wall. Receipt: docs/constants.md "GEMINI_SEARCH_GROUNDING_ATTEMPTS".
+GEMINI_SEARCH_GROUNDING_ATTEMPTS: int = 2
 # Per-attempt cap just under the outer wall. Receipt: docs/constants.md "GEMINI_SEARCH_HTTP_TIMEOUT_MS".
 GEMINI_SEARCH_HTTP_TIMEOUT_MS: int = 350_000
 GEMINI_SEARCH_HTTP_ATTEMPTS: int = 2

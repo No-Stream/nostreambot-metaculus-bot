@@ -3759,3 +3759,22 @@ class TestMarkerNotInsideNoqaDirective:
             "into its own trailing comment (`# noqa: <codes>  # HARNESS-SCAN-EXEMPT-<kind>  # <reason>`):\n"
             + "\n".join(offenders)
         )
+
+
+# Verbatim from research/gemini_search.py; see docs/telemetry_markers.md "GEMINI_GROUNDING_RETRY".
+GEMINI_GROUNDING_RETRY_LINE = PFX + "GEMINI_GROUNDING_RETRY: question=45571 model=gemini-3.8-flash outcome=grounded"
+
+
+class TestGeminiGroundingRetry:
+    def test_fields(self):
+        rec = _parse_one(GEMINI_GROUNDING_RETRY_LINE)
+        assert rec["marker"] == "gemini_grounding_retry"
+        assert rec["model"] == "gemini-3.8-flash"
+        assert rec["outcome"] == "grounded"
+        assert rec["qid"] == 45571
+        assert rec["qid_kind"] == "question_id"
+
+    @pytest.mark.parametrize("outcome", ["ungrounded", "timeout"])
+    def test_every_outcome_parses(self, outcome: str):
+        rec = _parse_one(PFX + f"GEMINI_GROUNDING_RETRY: question=1 model=gemini-3.8-flash outcome={outcome}")
+        assert rec["outcome"] == outcome

@@ -1124,6 +1124,17 @@ means editing the `gemini_thinking_config(...)` call in `research/gemini_search.
 `thinking_budget` (1 to 24,576 on 2.5 Flash) or no `thinking_config` at all; there is deliberately no
 model-family gate in code.
 
+### GEMINI_SEARCH_GROUNDING_ATTEMPTS
+
+Grounded-search calls per question, counting the first: 2, so one retry when the first response carries
+no grounding evidence. Both attempts share one `GEMINI_SEARCH_TIMEOUT` wall, so the provider's worst-case
+latency is unchanged; the typical cost is one more flash call (about 30 s, a few cents, ~12 search queries
+against the free 5,000-query monthly pool) on the roughly half of questions whose first response is
+ungrounded. Measured 2026-09-22: gemini-3.8-flash dropped `groundingMetadata` on 10 of 22 probe calls at
+random per call, including calls whose server-side tool parts show 11-14 real queries, so a second
+draw is close to independent. Receipt: docs/research.md "Grounding retry". Backtests go through the
+same path, so a large backtest draws up to 2x the grounded queries it used to.
+
 ### GEMINI_SEARCH_HTTP_TIMEOUT_MS, GEMINI_SEARCH_HTTP_ATTEMPTS
 
 The client-side per-attempt HTTP timeout in milliseconds, and the attempt count including the first, for the

@@ -4,6 +4,7 @@ These tests mock the google-genai SDK at the module level; no live API calls.
 Patterns mirror ``tests/test_native_search_provider.py``.
 """
 
+import asyncio
 import logging
 from collections.abc import Sequence
 from types import SimpleNamespace
@@ -150,7 +151,10 @@ async def test_provider_uses_default_model(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
     monkeypatch.delenv("GEMINI_SEARCH_MODEL", raising=False)
 
-    response = _make_response("some research text")
+    # Grounded, so the one call is the whole exchange (an ungrounded response earns a retry).
+    response = _make_response(
+        "some research text", chunks=[CannedWebChunk(uri="https://src.example/a", title="A", domain="src.example")]
+    )
     fake_client = _make_client_with_response(response)
 
     with patch("metaculus_bot.research.gemini_search.genai.Client", return_value=fake_client):
@@ -1449,3 +1453,153 @@ class TestGeminiClientConfigAndUsage:
         assert "total_tokens=9000" in caplog.text
         assert "search_queries=30" in caplog.text
         assert "question=38195" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Grounding retry and the search-redirect loophole
+# ---------------------------------------------------------------------------
+
+_SEARCH_REDIRECT = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGsgBp9B9QB"
+
+
+def _grounded_response(text: str = "Grounded body.") -> SimpleNamespace:
+    return _make_response(text, chunks=[CannedWebChunk(uri=_SEARCH_REDIRECT, title="Src", domain="src.example")])
+
+
+def _ungrounded_response(text: str = "Parametric body.") -> SimpleNamespace:
+    """The gemini-3.8-flash shape: search ran (queries were billed) but no grounding metadata came back."""
+    response = _make_response(text)
+    response.candidates[0].grounding_metadata = None
+    return response
+
+
+def _client_with_responses(*responses: object) -> MagicMock:
+    client = _make_client_with_response(responses[0])
+    client.aio.models.generate_content = AsyncMock(side_effect=list(responses))
+    return client
+
+
+class TestGroundingRetry:
+    """gemini-3.8-flash drops grounding metadata on about half of calls, at random per call, even when
+    it searched (2026-09-22 probe: 10 of 22 calls, toolCall parts show 11-14 real queries on responses with no
+    groundingMetadata). One retry recovers most of those; the second attempt shares the first's wall."""
+
+    async def test_ungrounded_first_attempt_is_retried_and_the_grounded_retry_is_used(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+        client = _client_with_responses(_ungrounded_response(), _grounded_response("Retry body."))
+
+        with (
+            patch("metaculus_bot.research.gemini_search.genai.Client", return_value=client),
+            caplog.at_level(logging.INFO),
+        ):
+            from metaculus_bot.research.gemini_search import invoke_gemini_grounded
+
+            out = await invoke_gemini_grounded("prompt", qid=45571)
+
+        assert client.aio.models.generate_content.await_count == 2
+        assert "Retry body." in out
+        assert "Parametric body." not in out
+        assert "### Sources" in out
+        assert "GEMINI_GROUNDING_RETRY: question=45571 model=gemini-3.8-flash outcome=grounded" in caplog.text
+        assert "GEMINI_UNGROUNDED_SUPPRESSED" not in caplog.text
+
+    async def test_a_grounded_first_attempt_is_not_retried(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+        client = _client_with_responses(_grounded_response())
+
+        with (
+            patch("metaculus_bot.research.gemini_search.genai.Client", return_value=client),
+            caplog.at_level(logging.INFO),
+        ):
+            from metaculus_bot.research.gemini_search import invoke_gemini_grounded
+
+            out = await invoke_gemini_grounded("prompt", qid=1)
+
+        assert client.aio.models.generate_content.await_count == 1
+        assert "Grounded body." in out
+        assert "GEMINI_GROUNDING_RETRY" not in caplog.text
+
+    async def test_retries_once_then_suppresses(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+        client = _client_with_responses(_ungrounded_response(), _ungrounded_response(), _grounded_response())
+
+        with (
+            patch("metaculus_bot.research.gemini_search.genai.Client", return_value=client),
+            caplog.at_level(logging.INFO),
+        ):
+            from metaculus_bot.research.gemini_search import invoke_gemini_grounded
+
+            out = await invoke_gemini_grounded("prompt", qid=2)
+
+        assert client.aio.models.generate_content.await_count == 2
+        assert out == ""
+        assert "outcome=ungrounded" in caplog.text
+        assert caplog.text.count("GEMINI_UNGROUNDED_SUPPRESSED") == 1
+        # Both attempts were billed, so both carry a spend line.
+        assert caplog.text.count("GEMINI_USAGE: role=grounded_search") == 2
+
+    async def test_a_retry_that_outlives_the_shared_wall_suppresses_instead_of_raising(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The retry spends what is left of GEMINI_SEARCH_TIMEOUT, never a fresh one, so the provider's
+        worst-case wall is unchanged; a retry that runs out of it leaves the first answer's suppression."""
+        monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+        monkeypatch.setattr("metaculus_bot.research.gemini_search.GEMINI_SEARCH_TIMEOUT", 0.2)
+
+        attempts: list[int] = []
+
+        async def ungrounded_then_slow(**_: object) -> SimpleNamespace:
+            attempts.append(1)
+            if len(attempts) == 1:
+                return _ungrounded_response()
+            await asyncio.sleep(5)
+            return _grounded_response()
+
+        client = _client_with_responses(_ungrounded_response())
+        client.aio.models.generate_content = AsyncMock(side_effect=ungrounded_then_slow)
+
+        with (
+            patch("metaculus_bot.research.gemini_search.genai.Client", return_value=client),
+            caplog.at_level(logging.INFO),
+        ):
+            from metaculus_bot.research.gemini_search import invoke_gemini_grounded
+
+            out = await invoke_gemini_grounded("prompt", qid=3)
+
+        assert len(attempts) == 2
+        assert out == ""
+        assert "outcome=timeout" in caplog.text
+        assert "GEMINI_UNGROUNDED_SUPPRESSED" in caplog.text
+
+
+class TestSearchRedirectIsNotGrounding:
+    async def test_a_url_context_read_of_a_search_redirect_does_not_pass_the_floor(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Regression for the Q14333 smoke: no grounding metadata, one url_context read of a
+        grounding-api-redirect URL, and 6 kB of self-tagged ``[A: official]`` text reached the panel.
+        A redirect is a search hit whose metadata was dropped, the Q38195 shape, not a page the
+        question pointed at, so it must not satisfy the url_context escape."""
+        monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+        redirect_read = _ungrounded_response("Self-tagged claim [A: official].")
+        redirect_read.candidates[0].url_context_metadata = SimpleNamespace(
+            url_metadata=[CannedUrlMeta(_SEARCH_REDIRECT, CannedStatus("URL_RETRIEVAL_STATUS_SUCCESS"))]
+        )
+        client = _client_with_responses(redirect_read, redirect_read)
+
+        with (
+            patch("metaculus_bot.research.gemini_search.genai.Client", return_value=client),
+            caplog.at_level(logging.INFO),
+        ):
+            from metaculus_bot.research.gemini_search import invoke_gemini_grounded
+
+            out = await invoke_gemini_grounded("prompt", qid=14333)
+
+        assert out == ""
+        assert "GEMINI_UNGROUNDED_SUPPRESSED" in caplog.text

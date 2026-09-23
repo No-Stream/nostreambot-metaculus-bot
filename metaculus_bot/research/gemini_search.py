@@ -16,6 +16,7 @@ import os
 import re
 from collections.abc import Sequence
 from typing import Any
+from urllib.parse import urlsplit
 
 from forecasting_tools.data_models.questions import MetaculusQuestion
 from google import genai
@@ -23,6 +24,7 @@ from google.genai import types as genai_types
 
 from metaculus_bot.constants import (
     GEMINI_SEARCH_DEFAULT_MODEL,
+    GEMINI_SEARCH_GROUNDING_ATTEMPTS,
     GEMINI_SEARCH_HTTP_ATTEMPTS,
     GEMINI_SEARCH_HTTP_TIMEOUT_MS,
     GEMINI_SEARCH_MODEL_ENV,
@@ -101,6 +103,31 @@ def build_gemini_client() -> genai.Client:
 
 def _resolve_model(model_slug: str | None) -> str:
     return model_slug or os.getenv(GEMINI_SEARCH_MODEL_ENV, GEMINI_SEARCH_DEFAULT_MODEL)
+
+
+_SEARCH_REDIRECT_HOST = "vertexaisearch.cloud.google.com"
+_SEARCH_REDIRECT_PATH_PREFIX = "/grounding-api-redirect/"
+
+
+def _is_search_redirect(url: str) -> bool:
+    """A Google Search result link, which only a search can have produced, not a page the prompt named."""
+    parts = urlsplit(url)
+    return parts.hostname == _SEARCH_REDIRECT_HOST and parts.path.startswith(_SEARCH_REDIRECT_PATH_PREFIX)
+
+
+def _has_grounding_evidence(response: genai_types.GenerateContentResponse) -> bool:
+    """Google Search grounding chunks, or a successful url_context read of a page other than a search redirect.
+
+    A url_context read of a ``grounding-api-redirect`` URL does not count: it is a search hit whose
+    grounding metadata was dropped (the Q14333 smoke, 2026-09-22), the same unattributable shape as
+    Q38195's searched-but-chunkless fabrication, and it would otherwise whitelist the whole response.
+    """
+    candidates = response.candidates
+    metadata = candidates[0].grounding_metadata if candidates else None
+    if metadata is not None and metadata.grounding_chunks:
+        return True
+    _, _, _, url_entries = extract_url_context_telemetry(response)
+    return any(status == URL_RETRIEVAL_SUCCESS and url and not _is_search_redirect(url) for status, url in url_entries)
 
 
 _URL_CONTEXT_NONE_MARKER = "_url_context: none_"
@@ -378,12 +405,11 @@ def _format_grounded_response(
         # Grounded-chunk floor. No google_search grounding chunks reached us:
         # either the search tool never fired (metadata is None) or it fired and
         # grounded nothing (chunks empty, the Q38195 case). The only reason to
-        # still pass the text through is a successful url_context read — that is
-        # genuine retrieval, so it counts as grounding. Absent both, the text is
+        # still pass the text through is a successful url_context read of a real
+        # page (not a search redirect; see _has_grounding_evidence). Absent both, the text is
         # ungrounded parametric output; suppress the section (the orchestrator
         # then omits it) and leave a greppable WARN.
-        _, _, n_url_success, _ = extract_url_context_telemetry(response)
-        if n_url_success == 0:
+        if not _has_grounding_evidence(response):
             n_queries = len(metadata.web_search_queries or []) if metadata is not None else 0
             logger.warning(f"GEMINI_UNGROUNDED_SUPPRESSED: question={qid} model={model} queries={n_queries}")
             # Record the loss so the Provider Diagnostics line and the schema-v2 archive
@@ -420,6 +446,46 @@ def _format_grounded_response(
     )
 
 
+async def _generate_grounded(
+    client: genai.Client,
+    model: str,
+    prompt: str,
+    config: genai_types.GenerateContentConfig,
+    *,
+    deadline: float,
+    qid: int | None,
+) -> genai_types.GenerateContentResponse:
+    """One grounded call inside what is left of the shared wall, with its spend line and raw record."""
+    remaining_s = deadline - asyncio.get_running_loop().time()
+    try:
+        response = await asyncio.wait_for(
+            client.aio.models.generate_content(model=model, contents=prompt, config=config),
+            timeout=remaining_s,
+        )
+    except TimeoutError:
+        logger.warning(
+            f"GeminiSearch: {model} timed out after {max(remaining_s, 0.0):.0f}s "
+            f"(what remained of the {GEMINI_SEARCH_TIMEOUT}s wall)"
+        )
+        raise
+
+    # Before any formatting branch, so the tokens are recorded on the suppressed-response
+    # paths too: an ungrounded response we refuse to publish was billed exactly like a
+    # useful one, and a spend line that only covers the responses we kept would understate
+    # the bill by precisely the wasted calls.
+    log_gemini_usage(
+        response,
+        role="grounded_search",
+        model=model,
+        question=str(qid) if qid is not None else None,
+    )
+
+    # Capture the raw SDK response (text + grounding metadata: the actual Google
+    # queries and sources) before formatting drops most of it.
+    record_raw_research(qid=qid, provider="gemini_search", payload=response)
+    return response
+
+
 async def invoke_gemini_grounded(
     prompt: str,
     *,
@@ -454,29 +520,21 @@ async def invoke_gemini_grounded(
     )
 
     logger.info(f"GeminiSearch: calling {model} with grounding")
-    try:
-        response = await asyncio.wait_for(
-            client.aio.models.generate_content(model=model, contents=prompt, config=config),
-            timeout=GEMINI_SEARCH_TIMEOUT,
-        )
-    except TimeoutError:
-        logger.warning(f"GeminiSearch: {model} timed out after {GEMINI_SEARCH_TIMEOUT}s")
-        raise
-
-    # Before any formatting branch, so the tokens are recorded on the suppressed-response
-    # paths too: an ungrounded response we refuse to publish was billed exactly like a
-    # useful one, and a spend line that only covers the responses we kept would understate
-    # the bill by precisely the wasted calls.
-    log_gemini_usage(
-        response,
-        role="grounded_search",
-        model=model,
-        question=str(qid) if qid is not None else None,
-    )
-
-    # Capture the raw SDK response (text + grounding metadata: the actual Google
-    # queries and sources) before formatting drops most of it.
-    record_raw_research(qid=qid, provider="gemini_search", payload=response)
+    # Every attempt shares one wall, so the retry never extends the provider's worst case.
+    deadline = asyncio.get_running_loop().time() + GEMINI_SEARCH_TIMEOUT
+    response = await _generate_grounded(client, model, prompt, config, deadline=deadline, qid=qid)
+    for _ in range(GEMINI_SEARCH_GROUNDING_ATTEMPTS - 1):
+        if _has_grounding_evidence(response):
+            break
+        # gemini-3.8-flash drops grounding metadata on about half of calls, at random per call and even
+        # when it searched; one more call recovers most of them (docs/research.md "Grounding retry").
+        try:
+            response = await _generate_grounded(client, model, prompt, config, deadline=deadline, qid=qid)
+        except TimeoutError:
+            logger.info(f"GEMINI_GROUNDING_RETRY: question={qid} model={model} outcome=timeout")
+            break
+        outcome = "grounded" if _has_grounding_evidence(response) else "ungrounded"
+        logger.info(f"GEMINI_GROUNDING_RETRY: question={qid} model={model} outcome={outcome}")
 
     formatted = _format_grounded_response(response, qid=qid, model=model)
     n_chunks = 0
