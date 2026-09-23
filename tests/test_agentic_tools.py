@@ -1953,7 +1953,7 @@ class TestReadDocumentRequiresRealRetrieval:
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("_no_local_document")
     async def test_one_success_among_failures_still_counts_as_read(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # The guard is "did ANY retrieval land", matching gemini_search's grounded-chunk
+        # The guard is "did ANY retrieval land", matching gemini_search's cited-link
         # floor. A partially-failed multi-URL read still rests on real retrieved content.
         monkeypatch.setenv("GOOGLE_API_KEY", "key")
         monkeypatch.setattr(

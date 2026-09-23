@@ -78,8 +78,8 @@ incidents behind the design.
 | `QUESTION_CAP_FORFEIT` | `forecaster.py:forecast_questions` | The `max_questions_per_run` cap. |
 | `SKIP_GUARD_UNREADABLE` | `forecaster.py:_drop_questions_with_unreadable_forecast_history` | Per-question WARNING: the re-spend guard could not read `my_forecasts`, so the question was dropped rather than treated as never forecast. |
 | `GEMINI_UNGROUNDED_SUPPRESSED` | `research/gemini_search.py:_format_grounded_response` | Gemini grounded-search suppression. |
-| `GEMINI_GROUNDING_RETRY` | `research/gemini_search.py:invoke_gemini_grounded` | The second grounded call made when the first carried no grounding, and how it came out. |
-| `GEMINI_GROUNDING_DENSITY` | `research/gemini_search.py:_format_grounded_response` | The floor's complement: one row per response that passed the grounded-chunk floor. |
+| `GEMINI_SELF_CITATION` | `research/gemini_search.py:_format_grounded_response` | Per-response self-citation verification counts, emitted before the grounded-search floor decision. |
+| `GEMINI_GROUNDING_DENSITY` | Retired parse-only spec (historical production logs; 2026-09-22) | Historical grounded-chunk density; no longer emitted after the self-citation migration. |
 | `GEMINI_UNSUPPORTED_ATTRIBUTION` | `research/gemini_search.py:_check_attributions` | The embellishment channel, per response. |
 | `GEMINI_USAGE` | `research/gemini_search.py`, `research/agentic/tool_backends.py`, `research/resolution_source.py` | Per-call google-genai token and grounded-query accounting for all three Gemini surfaces. |
 | `AGENTIC_DOCUMENT_UNGROUNDED_SUPPRESSED` | `research/agentic/tools.py:read_document` | The `read_document` twin of `GEMINI_UNGROUNDED_SUPPRESSED`. |
@@ -1187,45 +1187,47 @@ dropped post can be named without a join. What to do when it fires is in `docs/o
 ### GEMINI_UNGROUNDED_SUPPRESSED
 
 Gemini grounded-search suppression (`research/gemini_search.py:_format_grounded_response`):
-`google_search` returned no grounding chunks and no `url_context` read succeeded, so the section
-is dropped as ungrounded parametric output. The orchestrator then records `status="empty"`, which
-is NOT alertable and bumps no counter, so this WARN is the only signal, and without a spec the
-suppression rate was unmeasurable from the archive. `qid_kind` is `question_id`
-(`gemini_search.py` passes `question.id_of_question`).
+the response contained no cited link that resolved to a real search target or to a URL successfully
+read by `url_context`, so the section is dropped as ungrounded parametric output. The orchestrator
+then records `status="empty"`, which is NOT alertable and bumps no counter, so this WARN is the
+only signal. `qid_kind` is `question_id` (`gemini_search.py` passes `question.id_of_question`).
 
-### GEMINI_GROUNDING_RETRY
+### GEMINI_SELF_CITATION
 
-One INFO line per retried grounded call (`research/gemini_search.py:invoke_gemini_grounded`):
-the first response carried no grounding evidence, so a second call was made inside what was
-left of the same `GEMINI_SEARCH_TIMEOUT` wall. `outcome` is `grounded` (the retry's text is
-used), `ungrounded` (the floor then suppresses, and `GEMINI_UNGROUNDED_SUPPRESSED` follows),
-or `timeout` (the wall ran out mid-retry; the first response is suppressed). Recovery rate is
-`grounded / all rows`; the pre-retry loss rate is `rows / GeminiSearch calls`. `qid_kind` is
-`question_id`. Added 2026-09-22 after gemini-3.8-flash was measured dropping grounding
-metadata on about half of calls (docs/research.md "Grounding retry").
+One INFO line for every grounded-search response that reaches formatting
+(`research/gemini_search.py:_format_grounded_response`), emitted before the floor decision. The
+marker records `links` (all extracted markdown-link occurrences), `unique` (distinct cited URLs),
+`resolved` (distinct cited URLs verified against a resolved search redirect or a successful
+`url_context` read), `unverified` (distinct cited URLs that did not verify), and `sources` (the
+number of distinct verified target URLs assigned source numbers). `qid_kind` is `question_id`.
+
+The self-citation path was validated in the 2026-09-22 probe receipt at
+`scratch/gemini_grounding_2026-09-22/README.md`: the model wrote search-redirect links in 10/10
+calls, and 135 of 136 unique links resolved to real pages with one no-follow GET. This marker
+is the durable record of whether each formatted response supplied verifiable links; it does not
+record Google's omitted `groundingMetadata`.
 
 ### GEMINI_GROUNDING_DENSITY
 
-The floor's complement (`research/gemini_search.py:_format_grounded_response`): one row per
-response that passed the grounded-chunk floor, carrying how thinly the passing text is
-attributed. Post-floor the median response has one grounding support per ~872 chars and 41% of
-passers carry <=3 supports, which is the surface the floor cannot see and where the embellishment
-rate lives. Deliberately telemetry and never a gate: a decisive true figure once came out of a
-1-support response, so nothing keys on these values; they exist so "did embellishment move" is a
-query over the archive. `chars` is the raw model text, so `supports / chars` reproduces the
-audit's density denominator. `qid_kind` is `question_id`.
+Historical production telemetry retained as a parse-only spec after the 2026-09-22 self-citation
+migration. It was emitted by `research/gemini_search.py:_format_grounded_response` for responses
+that passed the old grounded-chunk floor, carrying how thinly the passing text was attributed.
+Post-floor the median response had one grounding support per ~872 chars and 41% of passers carried
+<=3 supports, which was the surface the old floor could not see. `chars` is the raw model text, so
+`supports / chars` reproduces the audit's density denominator. No current emitter writes this
+marker; retaining its spec keeps historical logs parseable. `qid_kind` is `question_id`.
 
 ### GEMINI_UNSUPPORTED_ATTRIBUTION
 
 The embellishment channel, per response (`research/gemini_search.py:_check_attributions`):
 outlet-named source-tier tags (`[A: NASA]`, `[B: Reuters]`) that the same response's own
-grounded-domain list does not name, rewritten to `[unverified attribution]` at format time. 70%
+verified-domain list does not name, rewritten to `[unverified attribution]` at format time. 70%
 (478 of 681) of the outlet-named tier attributions in the 323 archived Gemini sections are that
 shape under the shipped keep-biased matcher (86% under the audit's looser rule; receipts in
-`scratch/next_season_bundle_2026-09/item4_attribution_check/VALIDATION.md`), and the zero-chunk
-floor cannot see any of them (it fires only when nothing grounded at all), so before this the rate
+`scratch/next_season_bundle_2026-09/item4_attribution_check/VALIDATION.md`), and the cited-link
+floor cannot see any of them (it fires before attribution only when no cited link verifies), so before this the rate
 was a hand audit. `labels` is load-bearing context, not decoration: the same `unsupported` count
-reads completely differently against it (q38195 named 21 outlets over one grounded domain), and
+reads completely differently against it (q38195 named 21 outlets over one verified domain), and
 `groups` is the render footprint, below `unsupported` because several unsupported names in one
 bracket collapse to a single marker. Emitted only when `unsupported` > 0; a checked response with
 none logs nothing and carries its zero in the research archive's provider details instead. Not
@@ -1263,7 +1265,7 @@ bound, biased toward undercounting the largest calls; the denominator is
 this marker's row count.
 
 `question` is optional and last: the grounded-search call site has the question in scope and
-passes `question.id_of_question` (hence `qid_kind`, matching its `GEMINI_GROUNDING_DENSITY`
+passes `question.id_of_question` (hence `qid_kind`, matching its `GEMINI_SELF_CITATION`
 sibling), while `read_document` runs as a per-URL tool below the loop's log prefix with no
 question at all, and the resolution-source rung runs per cited URL inside its provider with none
 either. A keyed tail group is what lets one spec serve all three without recording None for a

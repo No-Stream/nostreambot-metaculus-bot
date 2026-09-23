@@ -238,8 +238,18 @@ def _install_llm_router(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     real_acompletion = litellm.acompletion
 
+    def _mock_completion_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+        """Use a model LiteLLM can resolve before its mock-response branch.
+
+        The repository roster contains future OpenRouter model IDs that the installed
+        LiteLLM release does not know how to route locally. Keeping the original model
+        in the outgoing call to this router still exercises the bot's model selection;
+        the forwarding-only model substitution lets LiteLLM reach its offline mock path.
+        """
+        return {**kwargs, "model": "gpt-3.5-turbo"}
+
     async def general_llm_router(**kwargs: Any) -> Any:
-        return await real_acompletion(**kwargs, mock_response=_route_general_llm(kwargs))
+        return await real_acompletion(**_mock_completion_kwargs(kwargs), mock_response=_route_general_llm(kwargs))
 
     # The scripted driver turns: set_research_plan first, then conclude.
     agentic_state = {"step": 0}
@@ -283,10 +293,12 @@ def _install_llm_router(monkeypatch: pytest.MonkeyPatch) -> None:
                     }
                 ]
             return await real_acompletion(
-                **kwargs, mock_response="driving the agentic loop", mock_tool_calls=mock_tool_calls
+                **_mock_completion_kwargs(kwargs),
+                mock_response="driving the agentic loop",
+                mock_tool_calls=mock_tool_calls,
             )
         # The ghost phase calls with tools=None, and _summarize_ghost parses a plain block.
-        return await real_acompletion(**kwargs, mock_response=_CANNED_BINARY)
+        return await real_acompletion(**_mock_completion_kwargs(kwargs), mock_response=_CANNED_BINARY)
 
     monkeypatch.setattr(ft_general_llm, "acompletion", general_llm_router)
     monkeypatch.setattr(agentic_llm, "acompletion", agentic_router)
@@ -334,18 +346,15 @@ class _FakeAskNewsSDK:
 
 
 def _make_gemini_response() -> Any:
-    """Minimal google-genai GenerateContentResponse shape with one grounding chunk.
+    """Minimal response with a self-cited redirect link for the offline e2e path."""
 
-    Passes the grounded-chunk floor (>=1 chunk) so _format_grounded_response
-    returns non-empty text with a Sources section.
-    """
-
-    web = SimpleNamespace(uri="https://vertex-redirect/blob", title="BLS Employment Situation", domain="bls.gov")
-    chunk = SimpleNamespace(web=web)
-    metadata = SimpleNamespace(grounding_chunks=[chunk], grounding_supports=None, web_search_queries=["unemployment"])
+    metadata = SimpleNamespace(grounding_chunks=None, grounding_supports=None, web_search_queries=["unemployment"])
     candidate = SimpleNamespace(grounding_metadata=metadata, url_context_metadata=None)
     return SimpleNamespace(
-        text="Google Search grounding: the April 2026 unemployment rate was 4.1%.",
+        text=(
+            "Google Search found an April 2026 unemployment rate of 4.1% "
+            "[BLS Employment Situation](https://vertexaisearch.cloud.google.com/grounding-api-redirect/offline-e2e-token)."
+        ),
         candidates=[candidate],
     )
 
@@ -582,6 +591,15 @@ def _install_provider_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(research_providers.asyncio, "sleep", _fast_sleep)
 
     monkeypatch.setattr(gemini_search, "build_gemini_client", _fake_gemini_client)
+    monkeypatch.setattr(
+        gemini_search,
+        "resolve_search_redirects",
+        AsyncMock(
+            return_value={
+                "https://vertexaisearch.cloud.google.com/grounding-api-redirect/offline-e2e-token": "https://bls.gov/report",
+            }
+        ),
+    )
 
     # Prediction-market + resolution-source aiohttp sessions.
     monkeypatch.setattr(prediction_market, "_get_session", _FakeHttpSession)

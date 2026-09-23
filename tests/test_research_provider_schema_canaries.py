@@ -162,37 +162,52 @@ class TestGeminiGroundedFormatterAgainstRealTypes:
     ) -> None:
         monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
 
-        text = "Apple announced new product. Tesla recalled vehicles."
+        apple_url = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/apple"
+        tesla_url = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/tesla"
+        text = (
+            f"Apple announced new product. [Apple source]({apple_url}) "
+            f"Tesla recalled vehicles. [Tesla source]({tesla_url})"
+        )
         end_apple = text.index("Apple announced new product.") + len("Apple announced new product.")
         end_tesla = text.index("Tesla recalled vehicles.") + len("Tesla recalled vehicles.")
 
         # Real Gemini web.uri is an opaque vertexaisearch redirect; web.domain carries
         # the real source domain, which is what the formatter must render.
-        blob = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/"
         response = _make_real_grounding_response(
             text=text,
             chunks=[
-                (blob + "apple", "Apple announces new product", "reuters.com"),
-                (blob + "tesla", "Tesla recall", "reuters.com"),
+                (apple_url, "Apple announces new product", "reuters.com"),
+                (tesla_url, "Tesla recall", "reuters.com"),
             ],
             supports=[(end_apple, [0]), (end_tesla, [1])],
         )
         client = _make_async_client(response)
 
-        with patch("metaculus_bot.research.gemini_search.genai.Client", return_value=client):
+        with (
+            patch("metaculus_bot.research.gemini_search.genai.Client", return_value=client),
+            patch(
+                "metaculus_bot.research.gemini_search.resolve_search_redirects",
+                new=AsyncMock(
+                    return_value={
+                        apple_url: "https://reuters.com/apple",
+                        tesla_url: "https://reuters.com/tesla",
+                    }
+                ),
+            ),
+        ):
             from metaculus_bot.research.gemini_search import invoke_gemini_grounded
 
             out = await invoke_gemini_grounded("prompt about apple and tesla")
 
-        # Inline citations — proves the supports → marker reverse-iteration path works
-        # against real pydantic Segment / GroundingSupport instances.
-        assert "Apple announced new product.[1]" in out
-        assert "Tesla recalled vehicles.[2]" in out
+        # Self-cited links are resolved and numbered while the real pydantic
+        # Segment / GroundingSupport instances still exercise SDK schema construction.
+        assert "Apple source [1]" in out
+        assert "Tesla source [2]" in out
 
-        # Sources block cites title + domain, never the redirect blob.
+        # Sources block cites resolved domains and URLs, never the redirect blob.
         assert "### Sources" in out
-        assert "Apple announces new product — reuters.com" in out
-        assert "Tesla recall — reuters.com" in out
+        assert "[1] reuters.com — https://reuters.com/apple" in out
+        assert "[2] reuters.com — https://reuters.com/tesla" in out
         assert "vertexaisearch" not in out
         assert "grounding-api-redirect" not in out
 
@@ -204,26 +219,41 @@ class TestGeminiGroundedFormatterAgainstRealTypes:
         """Chunks present, supports None — sources block appended, no inline markers."""
         monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
 
-        blob = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/"
+        source_a_url = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/a"
+        source_b_url = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/b"
         response = _make_real_grounding_response(
-            text="Some research finding without explicit segment mapping.",
-            chunks=[(blob + "a", "Source A", "example.com"), (blob + "b", None, "b.example.com")],
+            text=(
+                f"Some research finding [Source A]({source_a_url}) "
+                f"without explicit segment mapping [Source B]({source_b_url})."
+            ),
+            chunks=[(source_a_url, "Source A", "example.com"), (source_b_url, None, "b.example.com")],
             supports=None,
         )
         client = _make_async_client(response)
 
-        with patch("metaculus_bot.research.gemini_search.genai.Client", return_value=client):
+        with (
+            patch("metaculus_bot.research.gemini_search.genai.Client", return_value=client),
+            patch(
+                "metaculus_bot.research.gemini_search.resolve_search_redirects",
+                new=AsyncMock(
+                    return_value={
+                        source_a_url: "https://example.com/a",
+                        source_b_url: "https://b.example.com/b",
+                    }
+                ),
+            ),
+        ):
             from metaculus_bot.research.gemini_search import invoke_gemini_grounded
 
             out = await invoke_gemini_grounded("prompt")
 
-        # No inline markers were inserted because supports was None.
-        assert "[1]" not in out.split("### Sources")[0]
-        # But the Sources section is still appended for both chunks (title + domain).
+        # The self-cited links are numbered even though supports was None.
+        assert "Source A [1]" in out
+        assert "Source B [2]" in out
+        # The Sources section is appended for both resolved targets.
         assert "### Sources" in out
-        assert "Source A — example.com" in out
-        # When title is None, the formatter falls back to a domain-only line.
-        assert "b.example.com" in out
+        assert "[1] example.com — https://example.com/a" in out
+        assert "[2] b.example.com — https://b.example.com/b" in out
         assert "vertexaisearch" not in out
 
     @pytest.mark.asyncio
@@ -231,7 +261,7 @@ class TestGeminiGroundedFormatterAgainstRealTypes:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Grounding metadata present but chunks=[] — grounded-chunk floor suppresses the section.
+        """Grounding metadata present but chunks=[] — the cited-link floor suppresses the section.
 
         This is the Q38195 shape against real SDK types: grounding fired (metadata present) but
         returned no chunks, so the model text is ungrounded and must not reach forecasters.
@@ -257,7 +287,7 @@ class TestGeminiGroundedFormatterAgainstRealTypes:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Candidate with grounding_metadata=None — grounded-chunk floor suppresses the section.
+        """Candidate with grounding_metadata=None — the cited-link floor suppresses the section.
 
         Grounding never fired, so the answer is pure parametric text; the floor drops it.
         """
@@ -287,27 +317,33 @@ class TestGeminiGroundedFormatterAgainstRealTypes:
         If a future SDK changes that derivation (e.g. `parts[0].text` → `parts[0].text_value`),
         our formatter — which reads ``response.text or ""`` — would silently produce the empty
         string and we'd ship "no research" payloads to the LLM. Pin the property contract here
-        so an SDK regression fails this test loudly. A grounding chunk clears the grounded-chunk
-        floor so the body text (which is what this test asserts on) actually flows through.
+        so an SDK regression fails this test loudly. A cited link clears the cited-link floor so
+        the body text (which is what this test asserts on) actually flows through.
         """
         monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
 
         blob = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/x"
         response = _make_real_grounding_response(
-            text="The actual response body.",
+            text=f"The actual response body. [Source]({blob})",
             chunks=[(blob, "Source", "example.com")],
             supports=None,
         )
         # Guard the property contract directly:
-        assert response.text == "The actual response body."
+        assert response.text == f"The actual response body. [Source]({blob})"
 
         client = _make_async_client(response)
-        with patch("metaculus_bot.research.gemini_search.genai.Client", return_value=client):
+        with (
+            patch("metaculus_bot.research.gemini_search.genai.Client", return_value=client),
+            patch(
+                "metaculus_bot.research.gemini_search.resolve_search_redirects",
+                new=AsyncMock(return_value={blob: "https://example.com/source"}),
+            ),
+        ):
             from metaculus_bot.research.gemini_search import invoke_gemini_grounded
 
             out = await invoke_gemini_grounded("prompt")
 
-        assert out.startswith("The actual response body.")
+        assert out.startswith("The actual response body. Source [1]")
 
 
 class TestGeminiToolWiringAgainstRealTypes:

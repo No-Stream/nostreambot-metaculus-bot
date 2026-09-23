@@ -538,11 +538,10 @@ GEMINI_USE_DONATED_OPENROUTER_KEY_ENV: str = "GEMINI_USE_DONATED_OPENROUTER_KEY"
 GEMINI_SEARCH_DEFAULT_MODEL: str = "gemini-3.8-flash"
 # 6 min: a 10-round AFC chain takes 150-200 s. Receipt: docs/constants.md "GEMINI_SEARCH_TIMEOUT".
 GEMINI_SEARCH_TIMEOUT: int = 360
+# Per-call wall for resolving all cited search links; use the remaining search wall. Receipt: docs/constants.md "GEMINI_SEARCH_LINK_RESOLVE_TIMEOUT_S".
+GEMINI_SEARCH_LINK_RESOLVE_TIMEOUT_S: float = 10.0
 # Explicit (operator, 2026-09-03); the default is HIGH. Receipt: docs/constants.md "GEMINI_SEARCH_THINKING_LEVEL".
 GEMINI_SEARCH_THINKING_LEVEL: str = "medium"
-# One retry when a response carries no grounding (3.8-flash drops the metadata on ~half of calls), inside
-# the same GEMINI_SEARCH_TIMEOUT wall. Receipt: docs/constants.md "GEMINI_SEARCH_GROUNDING_ATTEMPTS".
-GEMINI_SEARCH_GROUNDING_ATTEMPTS: int = 2
 # Per-attempt cap just under the outer wall. Receipt: docs/constants.md "GEMINI_SEARCH_HTTP_TIMEOUT_MS".
 GEMINI_SEARCH_HTTP_TIMEOUT_MS: int = 350_000
 GEMINI_SEARCH_HTTP_ATTEMPTS: int = 2

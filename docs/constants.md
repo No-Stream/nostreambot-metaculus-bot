@@ -1087,7 +1087,7 @@ blocklist, with no donated attempt and no 429, pending the Metaculus-side BYOK f
 
 The grounded-search model, verified live on the native google-genai SDK on 2026-09-03 with three calls
 from `scripts/probes/gemini_verify.py`: the response reported `model_version` gemini-3.8-flash, the
-`google_search` tool returned grounding chunks with a web search query, `thinking_level` was accepted,
+`google_search` tool returned a web search query, `thinking_level` was accepted,
 and `url_context` retrieved a robots-allowed host. Grounding still needs billing enabled on the Google AI
 Studio project.
 
@@ -1111,6 +1111,14 @@ tight and produced observed timeouts on legitimate deep-research calls; 360 s gi
 the worst-case AFC chain. Gap-fill runs overlap with forecaster LLM calls, so a higher timeout adds zero
 wall-clock cost. The observed p99 of non-AFC calls is about 52 s.
 
+### GEMINI_SEARCH_LINK_RESOLVE_TIMEOUT_S
+
+Ten seconds is the per-call wall for resolving all cited Google search redirect links after the Gemini
+response arrives. The resolver runs all unique links concurrently through the existing HTTP transport,
+with a session total timeout. The provider uses `min(GEMINI_SEARCH_LINK_RESOLVE_TIMEOUT_S, remaining)`
+where `remaining` is what is left of `GEMINI_SEARCH_TIMEOUT`; if no wall remains, it skips resolution
+and treats every cited link as unverified.
+
 ### GEMINI_SEARCH_THINKING_LEVEL
 
 The thinking level for the grounded-search call, set explicitly by operator decision on 2026-09-03 rather
@@ -1123,17 +1131,6 @@ is what caused the silent truncations. Re-pointing `GEMINI_SEARCH_MODEL` at the 
 means editing the `gemini_thinking_config(...)` call in `research/gemini_search.py` to send a
 `thinking_budget` (1 to 24,576 on 2.5 Flash) or no `thinking_config` at all; there is deliberately no
 model-family gate in code.
-
-### GEMINI_SEARCH_GROUNDING_ATTEMPTS
-
-Grounded-search calls per question, counting the first: 2, so one retry when the first response carries
-no grounding evidence. Both attempts share one `GEMINI_SEARCH_TIMEOUT` wall, so the provider's worst-case
-latency is unchanged; the typical cost is one more flash call (about 30 s, a few cents, ~12 search queries
-against the free 5,000-query monthly pool) on the roughly half of questions whose first response is
-ungrounded. Measured 2026-09-22: gemini-3.8-flash dropped `groundingMetadata` on 10 of 22 probe calls at
-random per call, including calls whose server-side tool parts show 11-14 real queries, so a second
-draw is close to independent. Receipt: docs/research.md "Grounding retry". Backtests go through the
-same path, so a large backtest draws up to 2x the grounded queries it used to.
 
 ### GEMINI_SEARCH_HTTP_TIMEOUT_MS, GEMINI_SEARCH_HTTP_ATTEMPTS
 

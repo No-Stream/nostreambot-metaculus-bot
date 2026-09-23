@@ -1,20 +1,20 @@
-"""Flag the source attributions Gemini's own grounding record cannot support.
+"""Flag source attributions Gemini's verified search-link record cannot support.
 
-Gemini writes self-invented source-tier tags into its grounded-search output —
+Gemini writes self-invented source-tier tags into its search-link output —
 ``[A: NASA]``, ``[B: Reuters]``, ``[C: Time and Date]`` — while the only provenance we
-hold is the ``### Sources`` list our formatter renders from the real google_search
-grounding-chunk domains. Across the 323 archived Gemini sections, 681 outlet-named tier
+hold is the ``### Sources`` list our formatter renders from resolved, cited-link domains.
+Across the 323 archived Gemini sections, 681 outlet-named tier
 attributions reach this check and **70% of them name an outlet absent from that same
-response's own grounded-domain list** (q44953 claims ``[A: NASA]`` for the eclipse path
+response's own verified-domain list** (q44953 claims ``[A: NASA]`` for the eclipse path
 over a source list of perlan.is / guidetoiceland.is / timeanddate.com; q45401 names 19
-institutions over one grounded domain). The zero-chunk floor cannot
-see this — it fires only when nothing grounded at all — and the forecaster prompts
+institutions over one verified domain). The cited-link floor cannot
+see this — it fires only when no cited link verifies — and the forecaster prompts
 instruct weighting by source tier, so an unbacked tier tag is an authority claim we
 manufactured. Receipts: ``scratch/residual_2026-08-31/gemini_search_audit/cutB_pattern.md``
 §3.2 and ``VERDICT.md`` §2 (the embellishment channel).
 
 What this module does NOT claim: that the FACT is wrong. An outlet missing from the
-grounded domains can still be the true origin — Google's chunk attribution names an
+verified domains can still be the true origin — a search redirect may name an
 aggregator while the text names the original wire. So the rewrite replaces only the
 attribution decoration, never a word of the sentence, and it says exactly what we know:
 ``unverified attribution``. Matching is deliberately loose in the KEEP direction (six

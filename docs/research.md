@@ -312,7 +312,7 @@ briefing rendered under the AskNews header as though it were research. The
 formatter now logs `ASKNEWS_NO_ARTICLES`, records an `articles: empty(no_articles)`
 source loss so the diagnostics line reads `empty | 0 chars | lost=articles:...`
 rather than a bare `empty`, and the orchestrator skips the summarizer call
-entirely. Gemini's grounded-chunk floor is the same pattern one provider over.
+entirely. Gemini's cited-link floor is the same pattern one provider over.
 
 `_format_asknews_dual_sections` stays pure and does none of that reporting itself. The
 `ASKNEWS_NO_ARTICLES` WARN and the `lost=articles:...` registry token belong to
@@ -435,59 +435,56 @@ search index to the ensemble. Model and request timeout come from
 enables both the `google_search` tool and the `url_context` tool, so the model
 can read specific URLs named in a question's fine print directly.
 
-Output is stitched together with real `[N]` citation markers spliced in from the
-response's grounding metadata, plus a matching `### Sources` domain list
-(`_format_grounded_response`). url_context fetches are logged and only
-*successful* fetches are surfaced to forecasters (a "fired but fetched nothing"
-run collapses to a terse `_url_context: none_` marker rather than pushing dead
-URLs at the model).
+Output is now built from the model's own markdown links rather than Google's
+grounding metadata. Google drops that metadata on a substantial share of
+gemini-3.8-flash responses, including responses that did search. The 2026-09-22
+probe showed the model wrote Google's search redirect links in 10/10 calls,
+while metadata appeared in only 1/10; 135/136 unique links resolved to a real
+page with one no-follow GET (HTTP 302 plus `Location`), and no non-redirect links
+were written. Receipt: `scratch/gemini_grounding_2026-09-22/README.md` and
+`scratch/gemini_grounding_2026-09-22/selfcite_raw/selfcite_*.json`.
 
-**Two citation systems, one of them ours.** Gemini also writes its own
-hierarchical `[2.4.1]` / `[1.1.1, 1.1.2]` / `[A: NASA, 1.1.2]` indices, pointing
-at a source list nobody outside the model holds. 173 of 323 archived sections
-carried them and 163 carried both families at once, so half the corpus handed a
-forecaster a bracket field where some brackets resolve against the rendered
-`### Sources` list and some are decoration, with nothing to tell them apart.
-`_strip_model_citation_indices` (shipped 2026-09-01) removes them. It MUST run
-after `_splice_inline_citations`, because that splice indexes the ORIGINAL
-response text by grounding-support byte offsets: rewrite the text first and our
-real markers land mid-word, a bug class this repo has already shipped and fixed.
-It only removes a dotted run that is delimited the way a citation is AND whose
-every dot-separated component is at most two digits, so bracketed quantities,
-currency, versions, years and IP-like tokens survive. Both bounds were measured on
-the archive: across 2,609 dotted bracket groups the largest component anywhere is
-39. The plan's alternative (require at least three components) was NOT adopted,
-because all 165 two-component groups read in context are genuine indices, so the
-stricter rule would have left 318 fake markers standing for no safety gain. The
-strip runs on both forecaster-facing branches (the grounded path and the
-url_context-only escape) and never on the rendered `### Sources` block, which is
-appended afterwards and whose labels are page titles that legitimately carry
-version numbers. Validated over all 323 archived sections at zero false positives
-(`scratch/next_season_bundle_2026-09/item3_citation_strip/`).
-The Gemini-only prompt clause also asks the model not to write the indices in the
-first place, and it carves the source-tier tags back out by name, because the
-same prompt orders bracketed `[A: official]` tags 26 lines further down: a
-literal reader that over-complies stops tagging, which costs the forecaster
-prompts the tier signal they weight on and leaves the attribution check below
-nothing to check.
+### Self-cited search links
 
-**Attributions the response's own grounding record cannot back.** Gemini also
+`_SEARCH_LINK_CITATION_CLAUSE` requires the model to copy each tool-returned
+`vertexaisearch.cloud.google.com/grounding-api-redirect/...` URL exactly and
+inline beside the factual claim. `research/search_redirects.py` resolves each
+distinct redirect concurrently through the existing HTTP transport. A cited
+redirect is verified only when it resolves to an absolute HTTP(S) target. A
+non-redirect link is verified only when the response's `url_context` telemetry
+records a successful read of that exact URL. The formatter rewrites verified
+links to `<label> [N]`, shares a number when distinct redirect tokens resolve to
+the same target, and rewrites every other link to `<label> [unverified link]`.
+The `### Sources` block lists each numbered target as its resolved hostname and
+URL, never the model's label or a raw Google redirect token.
+
+The floor now asks whether the response cites at least one verified search hit.
+Successful `url_context` reads that the response does not cite do not pass the
+floor, and text with no verified cited links is suppressed with
+`GEMINI_UNGROUNDED_SUPPRESSED`. This blocks the Q38195 shape: confident prose
+with fake tier tags and no links. The provider still strips old numeric citation
+indices and runs `_check_attributions` / `rewrite_unsupported_attributions`
+against the verified source domains. Google's per-sentence `groundingSupports`
+alignment is gone; self-attribution is checked only for whether a cited link is
+a real search hit, using the same standard as the OpenRouter native-search
+provider's markdown citations. The resolved-link counts are recorded by
+`GEMINI_SELF_CITATION`.
+
+**Attributions the response's verified source record cannot back.** Gemini also
 writes self-invented source-tier tags (`[A: NASA]`, `[B: Reuters]`,
 `[C: Time and Date]`), and across the 323 archived sections, 478 of the 681
 outlet-named tier attributions (70%) name an outlet absent from that same
-response's grounded-domain list. q44953 claimed `[A: NASA]` for the eclipse path
+response's verified-domain list. q44953 claimed `[A: NASA]` for the eclipse path
 over a source list of perlan.is / guidetoiceland.is / timeanddate.com; q45401
 named 19 institutions (Bloomberg, FactSet, Goldman Sachs, Kalshi, AP, …) over a
-single grounded domain. The zero-chunk floor cannot see any of this, because it
-fires only when nothing grounded at all, and the forecaster prompts instruct
-weighting by source tier, so an unbacked tier tag is an authority claim we
+single verified domain. The forecaster prompts instruct weighting by source tier,
+so an unbacked tier tag is an authority claim we
 manufactured. `_check_attributions` → `rewrite_unsupported_attributions`
 (`research/gemini_attribution.py`, shipped 2026-09-01)
-replaces each one with `[unverified attribution]` at format time. It runs on the
-grounded path ONLY (the url_context-only escape gets the citation strip and
-returns), after that strip and before the `### Sources` block is appended, with
-`_grounded_source_labels` the single derivation of both the check's evidence base
-and the rendered block, so the two can never disagree about what our record says.
+replaces each one with `[unverified attribution]` at format time, after link
+rewriting and before the `### Sources` block is appended. The verified source
+labels are the single evidence base for both the check and the rendered block,
+so the two can never disagree about what our record says.
 A supported outlet in the same bracket survives verbatim with its own separator:
 `[A: FDA, B: Food Safety Magazine]` on a record holding fda.gov renders
 `[A: FDA, unverified attribution]`. Several unsupported names in one bracket
@@ -511,9 +508,10 @@ lse.ac.uk); the domain's registrable core sits inside the name, the sub-brand
 shape (`Chosunbiz` / chosun.com); a single-token name is a subsequence of the
 label (`WaPo` / washingtonpost.com: single-token only, since a subsequence test
 over a multiword name credits almost anything); or the domain core abbreviates the
-name (`Times of Central Asia` / timesca.com). A response whose chunks carry no
-renderable label is skipped rather than blanket-marked (q44802): with no evidence
-base, a rewrite would dress our own render failure as the model's embellishment.
+name (`Times of Central Asia` / timesca.com). A response with no renderable
+verified source label is skipped rather than blanket-marked (q44802): with no
+evidence base, a rewrite would dress our own render failure as the model's
+embellishment.
 That skip is what makes the count's ABSENCE meaningful: on a schema-v2 record an
 absent `unsupported_attributions` means the check had no evidence base or the
 record predates the change, while a recorded 0 means it ran and found nothing.
@@ -558,47 +556,6 @@ distinct names (2.9%), all short acronyms or shared tokens. Rules, counts, both
 review sets and the similarity screen behind the false-strip review:
 `scratch/next_season_bundle_2026-09/item4_attribution_check/VALIDATION.md`; the 87%
 receipt is `scratch/residual_2026-08-31/gemini_search_audit/cutB_pattern.md` §3.2.
-
-**Grounding density, as telemetry only.** Every response that passes the floor
-below logs `GEMINI_GROUNDING_DENSITY: question=... chunks=... supports=...
-chars=...`, where `chars` is the raw model text (which is the density the audit
-measured); it is harvested as `gemini_grounding_density`. Post-floor the median
-response carries one grounding support per ~872 chars and 41% of passers carry
-three or fewer, which is the surface the floor cannot see. Nothing keys on these
-values and there is deliberately no density gate: q44944's decisive, later-verified
-ICE figure came out of a one-support response, so a gate would have suppressed the
-round's best find. The marker exists so "did embellishment move" is a query over the telemetry
-archive rather than a hand audit.
-
-**Grounded-chunk floor.** A response with no grounding evidence at all (zero
-`google_search` chunks AND no successful `url_context` read) is suppressed
-(returns `""`, logs `GEMINI_UNGROUNDED_SUPPRESSED`, records a
-`grounding: error(ungrounded_suppressed)` loss token) rather than passed through:
-ungrounded Gemini text is a demonstrated fabrication vector (Q38195, 2026-07-19:
-30 search queries, 0 grounding chunks, a confident fabricated contract table with
-fake `[primary]` tags reached forecasters). "No grounding evidence" includes a
-response carrying no candidates at all; that case used to return its text via an
-early exit that walked straight past this floor. There is now no path around it.
-A `url_context` read of a `vertexaisearch.cloud.google.com/grounding-api-redirect/`
-URL does not count as a successful read: that URL is a search hit whose metadata
-was dropped, and before 2026-09-22 one such read let 6 kB of self-tagged
-`[A: official]` text through on the Q14333 smoke.
-
-**Grounding retry.** gemini-3.8-flash (adopted 2026-09-03) returns no
-`groundingMetadata` on about half of grounded calls. A 2026-09-22 probe (22 calls,
-production prompt, Q14333 and Q45571) showed it is random per call (the same prompt
-grounds on one rep and not the next), happens with `google_search` alone as well
-as with `url_context`, and happens even when the model searched: with
-`include_server_side_tool_invocations` the ungrounded responses carry `toolCall`
-parts with 11-14 real queries. Those parts do not replace the metadata, since a
-search `toolResponse` holds only the search-suggestions widget, no URLs or text,
-and `toolUsePromptTokenCount` is absent on some calls that searched, so it cannot
-tell "never searched" from "metadata dropped" either. Thinking level `low` grounded
-3 of 4 but searched and wrote less; `minimal` is rejected by the model. So
-`invoke_gemini_grounded` makes one more call when a response has no grounding
-evidence (`GEMINI_SEARCH_GROUNDING_ATTEMPTS`), inside the same wall, and logs
-`GEMINI_GROUNDING_RETRY` with the outcome. Both attempts are billed and each logs
-its own `GEMINI_USAGE` line and raw record.
 
 This provider uses the operator's personal `GOOGLE_API_KEY` (a paid-tier Google
 AI Studio key). There is no Metaculus-donated key on the google-genai side: the

@@ -630,17 +630,18 @@ MARKER_SPECS: list[MarkerSpec] = [
         qid_kind=QID_KIND_QUESTION_ID,  # gemini_search.py passes question.id_of_question
     ),
     MarkerSpec(
-        "gemini_grounding_retry",
-        # Why: the retry's outcome is its only trace. Receipt: docs/telemetry_markers.md "GEMINI_GROUNDING_RETRY".
+        "gemini_self_citation",
+        # Why: records the self-citation verification counts before the floor. Receipt: docs/telemetry_markers.md "GEMINI_SELF_CITATION".
         re.compile(
-            r"GEMINI_GROUNDING_RETRY:\s*question=(?P<question>\S+)\s+model=(?P<model>\S+)"
-            r"\s+outcome=(?P<outcome>grounded|ungrounded|timeout)"
+            r"GEMINI_SELF_CITATION:\s*question=(?P<question>\S+)\s+model=(?P<model>\S+)"
+            r"\s+links=(?P<links>\S+)\s+unique=(?P<unique>\S+)\s+resolved=(?P<resolved>\S+)"
+            r"\s+unverified=(?P<unverified>\S+)\s+sources=(?P<sources>\S+)"
         ),
         qid_kind=QID_KIND_QUESTION_ID,  # gemini_search.py passes question.id_of_question
     ),
     MarkerSpec(
         "gemini_grounding_density",
-        # Why: telemetry only, never a gate. Receipt: docs/telemetry_markers.md "GEMINI_GROUNDING_DENSITY".
+        # Why: historical production telemetry remains parseable. Receipt: docs/telemetry_markers.md "GEMINI_GROUNDING_DENSITY".
         re.compile(
             r"GEMINI_GROUNDING_DENSITY:\s*question=(?P<question>\S+)\s+chunks=(?P<chunks>\S+)"
             r"\s+supports=(?P<supports>\S+)\s+chars=(?P<chars>\S+)"

@@ -1,0 +1,7 @@
+### Historical baseline
+* Jeanne Calment set the verified longevity record at 122 years and 164 days [[A: official]](https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHUQAyVQ-abnnoImmTBrN9GLRlN3oZc1jKzDnDIwJH0A_vTj5tw2w-vzZTLbSsQlm-Fp3CjnxUN1BpO2lhQTyToWWym2m9VYVY7SfkkaUNHq_OYpP5PIhXvg65kuU0da4E2EQ==).
+* Recent record-holders reached 118 years [[A: official]](https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGWItAoQ2LbtXMDe5yBojJLFCZ80khCV3p2Xf_Kg6udAyjYZXSNoCqfjqKohu7vq4mhoeh1wNYKeIP6OCUT6cjyJg96K6eZbHK1skZQNzrqXclZT6ZJP_vbwv7FPpzb4yIsT_A8F3CAFA==).
+* A demographic study projects the 122-year record will be broken [[C: aggregator]](https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFIvd1aZeZsqIhMaHYMGTRMTgLFgibVECtXNR6ZZgBcpsnab7mhOi-c19x7YNwkJebtwsxhmiZ6sNETERmNDHQLksR2ty6XMCGI7kBFeFLPkmfLJ_Q_4NZ7tZON1h_ntx3QQZbIurcnGSU7Jl6XnU9Rjg==).
+
+### A second real response shape
+The projected maximum age was estimated with Bayesian population projections [*Demographic Research*](https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFIvd1aZeZsqIhMaHYMGTRMTgLFgibVECtXNR6ZZgBcpsnab7mhOi-c19x7YNwkJebtwsxhmiZ6sNETERmNDHQLksR2ty6XMCGI7kBFeFLPkmfLJ_Q_4NZ7tZON1h_ntx3QQZbIurcnGSU7Jl6XnU9Rjg==).

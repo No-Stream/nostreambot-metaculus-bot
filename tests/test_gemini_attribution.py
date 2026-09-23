@@ -81,8 +81,9 @@ class TestSupportedAttributionsAreKept:
             assert _rewrite(text, [label]) == text, name
 
     def test_title_side_of_a_label_counts(self) -> None:
-        # Every archived label is a bare domain, but ``_format_source_label`` renders
-        # ``<title> — <domain>`` when a chunk carries both, and a title routinely names
+        # Every archived label is a bare domain, matching the formatter's source-domain labels.
+        # The formatter previously rendered ``<title> — <domain>`` when a chunk carried both,
+        # and a title routinely names
         # the outlet the domain hides.
         text = "Coverage began Tuesday [C: Golf Channel]."
         assert _rewrite(text, ["Golf Channel highlights — sports.example.com"]) == text

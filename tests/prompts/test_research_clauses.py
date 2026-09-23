@@ -12,8 +12,8 @@ from typing import ClassVar
 import pytest
 
 from metaculus_bot.prompts import (
-    _AUTO_ANNOTATED_CITATION_CLAUSE,
     _OUTSIDE_VENUE_MARKET_ODDS_BULLET,
+    _SEARCH_LINK_CITATION_CLAUSE,
     _SOURCE_TIER_TAG_INSTRUCTION,
     MARKET_SNAPSHOT_SECTION_HEADER,
     TS_ANCHOR_SECTION_HEADER,
@@ -417,45 +417,37 @@ class TestWebResearchPromptPrimarySources:
         assert "always name the market and the date you observed the price" in collapsed
         assert "usually days stale" in collapsed
 
-    def test_auto_annotated_style_bans_model_authored_citation_indices(self) -> None:
-        """Half of all archived gemini sections (173 of 323) carry the model's own
-        hierarchical [1.2.3] indices alongside the [N] markers our formatter splices
-        from real grounding metadata, so a forecaster cannot tell which brackets are
-        checkable. The formatter strips them; this tells the model not to write them.
-        Gemini-only: the markdown branch (native search) is untouched."""
-        auto = web_research_prompt("Q?", citation_style="auto_annotated")
+    def test_search_link_style_requires_verbatim_tool_urls(self) -> None:
+        """Gemini must emit the exact redirect URLs that the formatter resolves."""
+        search_links = web_research_prompt("Q?", citation_style="search_links")
         markdown = web_research_prompt("Q?", citation_style="markdown")
 
-        lowered = " ".join(auto.lower().split())
-        assert "do not write your own citation markers" in lowered
-        assert "[1.2.3]" in auto
+        expected_clause = (
+            "Cite every factual claim inline as a markdown link [source name](url), copying the url EXACTLY and in "
+            "full as the search tool gave it to you (search results come as vertexaisearch.cloud.google.com/"
+            "grounding-api-redirect/... links; copy those verbatim, never shorten, rewrite, or reconstruct them). "
+            "Only cite urls a tool returned. Do not write numeric citation markers like [1] or [1.2.3]. The SOURCE "
+            "TIER TAGS instruction below still applies alongside each link"
+        )
+
+        assert expected_clause == _SEARCH_LINK_CITATION_CLAUSE
+        assert expected_clause in search_links
+        assert "the tool will auto-annotate" not in search_links
         assert "[1.2.3]" not in markdown
-        assert "do not write your own citation markers" not in " ".join(markdown.lower().split())
+        assert "the tool will auto-annotate" not in markdown
 
-    def test_citation_index_ban_carves_out_the_source_tier_tags_it_ships_with(self) -> None:
-        """The ban and the SOURCE TIER TAGS block ride the SAME rendered prompt, 26 lines
-        apart, and the tier block orders exactly what the ban's second half appears to
-        forbid: a bracketed, model-authored source annotation. A literal reader that
-        over-complies stops tagging, which costs the forecaster prompts the tier signal
-        they weight on and leaves gemini_attribution's unsupported-attribution check
-        nothing to check — the direction nothing downstream guards, unlike the dotted
-        indices _strip_model_citation_indices removes. So the carve-out ships in the same
-        clause, and it says "still applies" rather than "required", because the tier
-        block's own closing line licenses leaving an unclear claim untagged."""
-        auto = web_research_prompt("Q?", citation_style="auto_annotated")
-        collapsed = " ".join(auto.split())
+    def test_search_link_clause_keeps_source_tier_tags(self) -> None:
+        """The search-link clause and tier-tag block are both present in Gemini's prompt."""
+        search_links = web_research_prompt("Q?", citation_style="search_links")
+        collapsed = " ".join(search_links.split())
 
-        assert "do NOT write your own citation markers" in collapsed
-        assert "This bans invented CITATION indices only" in collapsed
-        assert "the SOURCE TIER TAGS instruction below still applies" in collapsed
-        # The instruction the carve-out names, in the same prompt and BELOW the ban.
+        assert "The SOURCE TIER TAGS instruction below still applies alongside each link" in collapsed
         assert collapsed.index("SOURCE TIER TAGS instruction below") < collapsed.index(
             "SOURCE TIER TAGS: annotate each factual claim"
         )
         assert '"[A: official]"' in collapsed
-        # Not phrased as a requirement, which would contradict the tier block's softener.
-        assert "requir" not in _AUTO_ANNOTATED_CITATION_CLAUSE.lower()
         assert "leave a claim untagged if unsure" in collapsed
+        assert "the tool will auto-annotate" not in collapsed
 
     def test_vintage_clause_present_for_both_citation_styles(self) -> None:
         """qid 44872: gemini searched correctly, Google attached no grounding, and it
@@ -463,7 +455,7 @@ class TestWebResearchPromptPrimarySources:
         plans. The prompt had "say so explicitly" and "DO NOT hallucinate sources"
         and no date discipline at all, so nothing in it made an undated recollection
         look wrong. Shared by both consumers (native search + gemini) on purpose."""
-        for citation_style in ("markdown", "auto_annotated"):
+        for citation_style in ("markdown", "search_links"):
             for is_benchmarking in (False, True):
                 result = web_research_prompt(
                     "Will X happen?",

@@ -192,7 +192,7 @@ def _option_probs_example(options: list[str]) -> str:
     return body[1:-1]
 
 
-CitationStyle = Literal["markdown", "auto_annotated"]
+CitationStyle = Literal["markdown", "search_links"]
 
 
 # Zero-indent so ``clean_indents`` leaves it verbatim; the A-D tier definitions live here only. Receipt: docs/prompts.md "_SOURCE_TIER_TAG_INSTRUCTION".
@@ -233,12 +233,13 @@ OUTSIDE_VENUE_MARKET_ODDS_POLICY = (
 _OUTSIDE_VENUE_MARKET_ODDS_BULLET = f"- {OUTSIDE_VENUE_MARKET_ODDS_POLICY}"
 
 
-# Gemini only; the closing carve-out answers the tier-tag block below. Receipt: docs/prompts.md "_AUTO_ANNOTATED_CITATION_CLAUSE".
-_AUTO_ANNOTATED_CITATION_CLAUSE = (
-    "Include inline citations for all factual claims (the tool will auto-annotate) — do NOT write your own "
-    "citation markers or index numbers: no hierarchical tokens like [1.2.3], no self-invented bracketed "
-    "source numbering. The tool attaches the real markers. This bans invented CITATION indices only: the "
-    "SOURCE TIER TAGS instruction below still applies, and its [A: ...] tags are not citation markers"
+# Gemini only. Receipt: docs/prompts.md "_SEARCH_LINK_CITATION_CLAUSE".
+_SEARCH_LINK_CITATION_CLAUSE = (
+    "Cite every factual claim inline as a markdown link [source name](url), copying the url EXACTLY and in full "
+    "as the search tool gave it to you (search results come as vertexaisearch.cloud.google.com/grounding-api-redirect/"
+    "... links; copy those verbatim, never shorten, rewrite, or reconstruct them). Only cite urls a tool returned. "
+    "Do not write numeric citation markers like [1] or [1.2.3]. The SOURCE TIER TAGS instruction below still "
+    "applies alongside each link"
 )
 
 
@@ -253,13 +254,13 @@ def web_research_prompt(
     """Canonical web-research prompt for first-pass providers.
 
     Shared by the OpenRouter native-search provider (markdown citations) and
-    the Gemini grounding provider (SDK auto-annotates via grounding metadata).
+    the Gemini grounding provider (self-cited search links).
     ``options`` is the MC ballot (see ``_mc_options_line``); None on other types.
     """
     citation_clause = (
         "Include inline citations [source name](url) for all factual claims"
         if citation_style == "markdown"
-        else _AUTO_ANNOTATED_CITATION_CLAUSE
+        else _SEARCH_LINK_CITATION_CLAUSE
     )
     footer = (
         "Provide a factual research summary with citations:"
