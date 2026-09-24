@@ -240,21 +240,29 @@ def _check_attributions(text: str, sources: Sequence[tuple[int, str, str]], *, q
     # ``tier_tags`` rides alongside because the count this check exists to report is not
     # readable without it: the marker below is gated on ``unsupported``, so a response that
     # carried no tier tags at all and one whose every tag was backed both archive as
-    # ``unsupported_attributions=0`` and log nothing. It counts OUTLET-NAMED tier items only
-    # (generic tier words like "official" — 307 of the corpus's 790 items — are excluded
-    # before matching), so a 0 reads as "no outlet-named tags", not "no tier tags"; the
-    # definitive check for the latter is a grep for "[A: " over the archived section.
+    # ``unsupported_attributions=0`` and log nothing. It counts OUTLET-NAMED tier items only;
+    # tags naming a class of source rather than an outlet ("official", "peer-reviewed
+    # journal") are rewritten too but counted apart as ``generic_tier_tags``, so the two
+    # together are every checked tier item.
     record_provider_detail(
         qid,
         "gemini_search",
-        {"counts": {"tier_tags": checked.tagged, "unsupported_attributions": checked.unsupported}},
+        {
+            "counts": {
+                "tier_tags": checked.tagged,
+                "generic_tier_tags": checked.generic,
+                "unsupported_attributions": checked.unsupported,
+            }
+        },
     )
     if checked.unsupported:
         # ``labels`` rides the line because the same count reads completely differently
-        # against it: q38195 named 21 outlets over ONE verified domain.
+        # against it: q38195 named 21 outlets over ONE verified domain. ``generic`` is
+        # appended last (2026-09-24) so the fields before it keep their positions.
         logger.info(
             f"GEMINI_UNSUPPORTED_ATTRIBUTION: question={qid} tagged={checked.tagged} "
-            f"unsupported={checked.unsupported} groups={checked.groups_rewritten} labels={len(labels)}"
+            f"unsupported={checked.unsupported} groups={checked.groups_rewritten} labels={len(labels)} "
+            f"generic={checked.generic}"
         )
     return checked.text
 

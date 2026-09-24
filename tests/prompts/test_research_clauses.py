@@ -445,8 +445,8 @@ class TestWebResearchPromptPrimarySources:
         assert collapsed.index("SOURCE TIER TAGS instruction below") < collapsed.index(
             "SOURCE TIER TAGS: annotate each factual claim"
         )
-        assert '"[A: official]"' in collapsed
-        assert "leave a claim untagged if unsure" in collapsed
+        assert '"[B: Reuters]"' in collapsed
+        assert "otherwise leave the claim untagged" in collapsed
         assert "the tool will auto-annotate" not in collapsed
 
     def test_vintage_clause_present_for_both_citation_styles(self) -> None:
@@ -803,17 +803,32 @@ class TestSourceTierTagging:
         """Assert the shared source-tier instruction, whitespace collapsed so wrapping cannot matter."""
         collapsed = " ".join(prompt.split())
         assert "SOURCE TIER TAGS" in collapsed
-        # Inline tag examples using the shared vocabulary.
-        for example in ('"[A: official]"', '"[B: Reuters]"', '"[C: aggregator]"', '"[D: social]"'):
+        # Named-outlet examples: the old category examples ("[A: official]", "[C: aggregator]")
+        # taught class tags the attribution check cannot verify (Q14333 smoke, 2026-09-24:
+        # 10 of 12 Gemini tags were class descriptions).
+        for example in (
+            '"[A: BLS]"',
+            '"[A: Guinness World Records]"',
+            '"[B: Reuters]"',
+            '"[C: Wikipedia]"',
+            '"[D: Reddit]"',
+        ):
             assert example in collapsed, f"missing tag example {example}"
-        # The condensed A-D definitions mirror the forecaster ladder's vocabulary.
+        for category_example in ('"[A: official]"', '"[C: aggregator]"', '"[D: social]"'):
+            assert category_example not in collapsed, f"category example {category_example} is back"
         lowered = collapsed.lower()
+        assert "the specific outlet or publisher" in lowered
+        assert "a category is not a name" in lowered
+        assert "for a d-tier claim, name the platform or account where it appeared" in lowered
+        # The condensed A-D definitions mirror the forecaster ladder's vocabulary.
         assert "official / primary" in lowered
         assert "wire services and papers of record" in lowered
         assert "aggregators, advocacy or partisan outlets" in lowered
         assert "anonymous, social, rumor" in lowered
-        # Tag only when clear; never drop a low-tier fact.
-        assert "tag only when the tier is reasonably clear" in lowered
+        # Tag only when the outlet is nameable and the tier clear; never drop a low-tier fact.
+        assert "tag only when you can name the outlet and the tier is reasonably clear" in lowered
+        assert "otherwise leave the claim untagged" in lowered
+        assert "tag only when the tier is reasonably clear" not in lowered
         assert "never discard a fact because its tier is low" in lowered
 
     def test_web_research_prompt_carries_tier_tag_instruction(self) -> None:
@@ -822,6 +837,10 @@ class TestSourceTierTagging:
     def test_web_research_prompt_carries_tier_tag_instruction_when_benchmarking(self) -> None:
         """The tier-tag steer is orthogonal to the benchmarking carve-out."""
         self._assert_tier_tag_instruction(web_research_prompt("Will X happen?", is_benchmarking=True))
+
+    def test_search_link_prompt_carries_tier_tag_instruction(self) -> None:
+        """Gemini's self-cited search-link prompt is the one whose tags get checked."""
+        self._assert_tier_tag_instruction(web_research_prompt("Will X happen?", citation_style="search_links"))
 
     def test_summarizer_prompt_carries_tier_tag_instruction(self) -> None:
         self._assert_tier_tag_instruction(_summarizer_prompt())

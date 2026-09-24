@@ -197,7 +197,7 @@ test_live:
 	$(call RUN_UNBUFFERED,-m pytest -m live -v --tb=short --timeout=300)
 
 test_fast:
-	$(call RUN_UNBUFFERED,-m pytest -m "not live and not e2e" --tb=short)
+	$(call RUN_UNBUFFERED,-m pytest -m 'not live and not e2e' --tb=short)
 
 # --- Research persistence (backtest replay) ---
 

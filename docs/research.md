@@ -494,17 +494,27 @@ FACT is not what is being disputed (an aggregator domain can carry another
 outlet's copy), only the provenance claim, which is why the marker says
 *unverified* and not *false*.
 
-Generic tier words that name a CLASS rather than an outlet are skipped before
-matching (`official` alone is 243 of the corpus's 790 tier items, and the skip
-list starts from the audit's own). This includes `academic` and `peer-reviewed`:
-the single-question smoke on 2026-09-11 otherwise counted all 23 occurrences of
-`[B: academic / peer-reviewed]` as unsupported publisher names. Matching is then biased
+Tags that name a CLASS of source rather than an outlet (`[A: official]`,
+`[A: peer-reviewed journal]`, `[C: prediction platform]`) are rewritten to the same
+marker since 2026-09-24, and counted apart as `generic`. Until then they passed
+through untouched, and the prompt's own examples (`"[A: official]"`,
+`"[C: aggregator]"`) taught them: in the 2026-09-24 Q14333 smoke (run 36008672128)
+10 of Gemini's 12 tags were class descriptions, and the 2026-09-22 probe's
+old-prompt calls show 85% of tags in that style. A class tag lets the model claim
+tier A with nothing to check it against, so it is read as not following the prompt,
+which now asks for the outlet (`prompts._SOURCE_TIER_TAG_INSTRUCTION`). A name is
+generic when every identity token is in `_DESCRIPTOR_TOKENS`, a vocabulary built
+from the archive's and the probes' descriptive tags; a slash-joined tag keeps its
+named half (`[A: official / GRG]` is checked as GRG). Replayed over the archive,
+420 generic tags flip to rewritten and no named tag changes verdict
+(`scratch/attribution_named_tags_2026-09-24/`). Matching of named tags is biased
 hard toward KEEPING, because a false
 strip discards real provenance while a false keep merely leaves one tag standing.
 Any one of six rules credits a name: it concatenates into the domain
 (`Golf Channel` / golfchannel.com); all of its identity tokens appear in the
-domain (`The Guardian` / guardian.co.uk); the token sets intersect (`LSE Blogs` /
-lse.ac.uk); the domain's registrable core sits inside the name, the sub-brand
+domain (`The Guardian` / guardian.co.uk); the token sets intersect on a token
+that is not a class word (`LSE Blogs` / lse.ac.uk, while a shared "research" alone
+cannot credit `Research Institute of Foo` against demographic-research.org); the domain's registrable core sits inside the name, the sub-brand
 shape (`Chosunbiz` / chosun.com); a single-token name is a subsequence of the
 label (`WaPo` / washingtonpost.com: single-token only, since a subsequence test
 over a multiword name credits almost anything); or the domain core abbreviates the
@@ -516,30 +526,31 @@ That skip is what makes the count's ABSENCE meaningful: on a schema-v2 record an
 absent `unsupported_attributions` means the check had no evidence base or the
 record predates the change, while a recorded 0 means it ran and found nothing.
 The token is defined where the forecaster reads it: `prompts._SOURCE_PROVENANCE_LADDER`
-carries one bullet saying the pipeline could not match the named outlet against its
-own retrieval record, that the claim itself may still be correct, and that the
+carries one bullet saying the tag named no outlet, or one the pipeline could not
+match against its own retrieval record, that the claim itself may still be correct, and that the
 evidence is untiered rather than low-tier. Without that, the ladder tells the model
 to weight by tier while a token it has never seen stands where the tier was.
 Per-response counts ride
 `GEMINI_UNSUPPORTED_ATTRIBUTION: question=... tagged=N unsupported=N groups=N
-labels=N` (INFO, emitted only when `unsupported` > 0, harvested as
+labels=N generic=N` (INFO; `generic` appended 2026-09-24, emitted only when `unsupported` > 0, harvested as
 `gemini_unsupported_attribution`, and deliberately NOT alertable: the habit is the
 model's, not a bot defect) and the provider-diagnostics
 `unsupported_attributions` count (always, so a zero is a measurement); nothing
 keys on either. `labels` rides the line because the same `unsupported` count reads
 completely differently against it: q38195 named 21 outlets over ONE grounded
 domain, aft.org. `groups` is the render footprint, which sits below `unsupported`
-because of the collapse. There is no `rewritten` or `stripped` field, because under
-this design `rewritten` always equals `unsupported` and the check never removes a
-bracket outright. The diagnostics line carries its
+because of the collapse, and since 2026-09-24 also counts groups rewritten only for
+a generic tag. There is no `rewritten` or `stripped` field, because rewritten items
+are always `unsupported` plus `generic` and the check never removes a bracket
+outright. The diagnostics line carries its
 denominator, `tier_tags`, next to it, because the marker is gated on
 `unsupported`: without the denominator a response that carried no outlet-named
 tier tag at all and one whose every tag was backed both archive as
 `unsupported_attributions=0`, so a model that quietly stopped tagging would read
-as a model that tagged accurately. `tier_tags` counts outlet-named items only
-(the generic tier words are excluded before matching), so a zero there means "no
-outlet-named tags"; the definitive check for whether any tag was written is a
-grep for `[A: ` over the archived section.
+as a model that tagged accurately. `tier_tags` counts outlet-named items only and
+`generic_tier_tags` the class-description items, so the two together are every
+checked tier item (both always recorded; the diagnostics line shows the nonzero
+ones).
 
 Measured over all 323 sections: 48 sections rewritten, 203 attributions kept, 478
 marked, 0 idempotency failures, and 0 sections where any text outside a bracket
@@ -2276,7 +2287,7 @@ A provider's `details` dict carries two conventions, and they answer different
 questions. `details["sources"]` is the per-source outcome map, rendered into the
 `lost=` suffix. `details["counts"]` (`provider_diagnostics._counts_suffix`) is the
 second: an ordered `{name: number}` map of provider-INTERNAL quantities that are
-neither a source outcome nor a failure: Gemini's `tier_tags` /
+neither a source outcome nor a failure: Gemini's `tier_tags` / `generic_tier_tags` /
 `unsupported_attributions`, financial-data's `fx_identifiers_empty`, and the
 resolution-source rung counts. **A zero renders nothing**, so every healthy provider's
 `## Provider Diagnostics` line stays byte-identical to what it was before the map

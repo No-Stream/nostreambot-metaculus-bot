@@ -149,13 +149,17 @@ class TestSourceProvenanceLadder:
 
     def _assert_unverified_attribution_defined(self, prompt: str) -> None:
         """`[unverified attribution]` reaches the forecaster in gemini research sections
-        (`research/gemini_attribution.py` writes it over a tier tag whose named outlet the
-        grounding record cannot back), and it lands on a bundle whose ladder tells the model to
+        (`research/gemini_attribution.py` writes it over a tier tag that names no outlet, or
+        names one the grounding record cannot back), and it lands on a bundle whose ladder tells the model to
         weight by tier. Undefined, it is a token the forecaster has to guess at, on exactly the
         claims where the guess matters."""
         lowered = " ".join(prompt.lower().split())
         assert "[unverified attribution]" in lowered
+        # Two causes since 2026-09-24: a tag naming no outlet (a class description such as
+        # "official") is rewritten as well as a named outlet the record cannot back.
+        assert "whose tag named no outlet, or one the research pipeline could not match" in lowered
         assert "could not match against its own retrieval record" in lowered
+        assert "whose named outlet the research pipeline could not match" not in lowered
         # The two halves that keep it from reading as "this fact is false" or as a tier grade.
         assert "the claim itself may still be correct" in lowered
         assert "untiered, unattributed evidence rather than as a named outlet's authority" in lowered

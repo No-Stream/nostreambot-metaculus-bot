@@ -1233,6 +1233,13 @@ bracket collapse to a single marker. Emitted only when `unsupported` > 0; a chec
 none logs nothing and carries its zero in the research archive's provider details instead. Not
 alertable: an absent outlet is the model's habit, not a bot defect. `qid_kind` is `question_id`.
 
+`generic` (appended 2026-09-24, optional in the spec so earlier lines still parse) counts tier tags
+that name no outlet at all (`[A: official]`, `[A: peer-reviewed journal]`), which are rewritten to
+the same marker since that date; `groups` includes the groups rewritten only for such a tag. The
+emission gate is unchanged, so a response whose only rewrites are generic logs no line, and its
+count lives in the provider details as `generic_tier_tags` beside `tier_tags` and
+`unsupported_attributions`.
+
 ### GEMINI_USAGE
 
 Per-call google-genai accounting for all three Gemini surfaces: grounded search

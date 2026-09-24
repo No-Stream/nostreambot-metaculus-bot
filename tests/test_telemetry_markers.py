@@ -3517,6 +3517,10 @@ class TestGeminiGroundingDensity:
 
 # Verbatim from gemini_search.py:_check_attributions; see docs/telemetry_markers.md "GEMINI_UNSUPPORTED_ATTRIBUTION".
 GEMINI_UNSUPPORTED_ATTRIBUTION_LINE = (
+    PFX + "GEMINI_UNSUPPORTED_ATTRIBUTION: question=44953 tagged=2 unsupported=1 groups=2 labels=7 generic=3"
+)
+# The shape emitted before 2026-09-24, when generic tier tags passed through uncounted.
+GEMINI_UNSUPPORTED_ATTRIBUTION_PRE_GENERIC_LINE = (
     PFX + "GEMINI_UNSUPPORTED_ATTRIBUTION: question=44953 tagged=2 unsupported=1 groups=1 labels=7"
 )
 
@@ -3527,9 +3531,17 @@ class TestGeminiUnsupportedAttribution:
         assert rec["marker"] == "gemini_unsupported_attribution"
         assert rec["tagged"] == 2
         assert rec["unsupported"] == 1
-        assert rec["groups"] == 1
+        assert rec["groups"] == 2
         # The denominator: without it a bare ``unsupported=21`` cannot be told from a thin grounding record.
         assert rec["labels"] == 7
+        assert rec["generic"] == 3
+
+    def test_pre_generic_lines_still_parse(self):
+        """``generic`` was appended as an optional trailing field, so archived lines keep parsing."""
+        rec = _parse_one(GEMINI_UNSUPPORTED_ATTRIBUTION_PRE_GENERIC_LINE)
+        assert rec["marker"] == "gemini_unsupported_attribution"
+        assert (rec["tagged"], rec["unsupported"], rec["groups"], rec["labels"]) == (2, 1, 1, 7)
+        assert rec["generic"] is None
 
     def test_question_ref_is_a_question_id(self):
         rec = _parse_one(GEMINI_UNSUPPORTED_ATTRIBUTION_LINE)

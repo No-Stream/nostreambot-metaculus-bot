@@ -28,6 +28,12 @@ the bare-bracket surface is ~5% the size of the tier surface and shares its synt
 markdown link text and editorial insertions (``[the states]``), where a rewrite would
 corrupt content. Validation, counts and the false-strip review:
 ``scratch/next_season_bundle_2026-09/item4_attribution_check/VALIDATION.md``.
+
+A tier tag that names no outlet at all (``[A: official]``, ``[A: peer-reviewed journal]``)
+is rewritten to the same marker. The research prompts ask for the outlet name, and a
+class description lets the model claim tier A with nothing to check it against (Q14333
+smoke, 2026-09-24: 10 of 12 tags were descriptions). Replay over the archive:
+``scratch/attribution_named_tags_2026-09-24/``.
 """
 
 import re
@@ -47,36 +53,85 @@ __all__ = ["AttributionCheck", "rewrite_unsupported_attributions"]
 # load-bearing: "unverified" is what we can defend, "false" is not.
 UNVERIFIED_ATTRIBUTION_MARKER = "unverified attribution"
 
-# Tier words naming a CLASS of source rather than an outlet, so there is nothing in the
-# grounding record to check them against. ``official`` (243), ``aggregator`` (54),
-# ``social`` (5), ``wire service`` (3), ``wire`` and ``wire services`` are the ones the
-# archived corpus actually contains — 307 of its 790 tier items. The initial set came
-# from the audit's skip list; academic/peer-reviewed were added after the 2026-09-11
-# smoke. A class such as ``primary`` must not be read as a publisher name.
-_GENERIC_TIER_WORDS = frozenset(
+# Words that describe a CLASS of source rather than name an outlet. A tag whose every
+# identity token is one of these (``official``, ``peer-reviewed journal``, ``aggregator /
+# crowd platform``) names nothing the grounding record could back, so it is rewritten to
+# the marker like an unmatched name. Seeded from the archived corpus's descriptive tags
+# (``official`` 443, ``aggregator`` 217, ``primary`` 46 of its 790 tier items), the
+# 2026-09-22 probe controls and the 2026-09-24 Q14333 smoke (10 of 12 tags descriptive).
+# Census: ``scratch/attribution_named_tags_2026-09-24/tag_census.txt``. ``site`` stays out
+# because "The News Site" is a real outlet in that corpus. The token-intersection support
+# rule ignores these too, so a shared "research" cannot credit a name on its own.
+_DESCRIPTOR_TOKENS = frozenset(
     {
-        "official",
-        "wire",
-        "wire service",
-        "wire services",
-        "aggregator",
-        "social",
-        "primary",
-        "secondary",
-        "tertiary",
-        "government",
-        "gov",
-        "news",
-        "media",
-        "expert",
+        "a",
         "academic",
-        "peer-reviewed",
+        "aggregated",
+        "aggregator",
+        "aggregators",
+        "analysis",
         "analyst",
+        "analysts",
+        "attributed",
+        "authority",
+        "crowd",
+        "data",
+        "database",
+        "expert",
+        "experts",
+        "financial",
+        "forecast",
+        "forecasting",
+        "gov",
+        "government",
+        "institute",
+        "journal",
+        "local",
+        "market",
+        "markets",
+        "media",
+        # ``n/a`` splits into ``n`` and ``a``.
+        "n",
+        "named",
+        "news",
+        "newspaper",
+        "official",
+        "original",
+        "outlet",
+        "outlets",
+        "peer",
+        "platform",
+        "platforms",
+        "policy",
+        "prediction",
+        "preprint",
+        "primary",
+        "projections",
+        "record",
+        "records",
+        "registry",
+        "report",
+        "reports",
+        "research",
+        "reviewed",
+        "secondary",
+        "service",
+        "services",
+        "single",
+        "social",
+        "source",
+        "sources",
+        "state",
+        "statistics",
+        "study",
+        "studies",
+        "tertiary",
+        "translated",
         "unknown",
-        "n/a",
-        "single-source",
-        "state government statistics",
-        "local newspaper report",
+        "updates",
+        "validation",
+        "validations",
+        "wire",
     }
 )
 
@@ -132,15 +187,17 @@ _HAS_LETTER_RE = re.compile(r"[A-Za-z]")
 class AttributionCheck:
     """Rewritten text plus the per-response counts the telemetry marker reports.
 
-    ``tagged`` counts outlet-named tier attributions (generic tier words excluded);
-    ``unsupported`` how many of them no grounded label backs; ``groups_rewritten`` how
-    many bracket groups changed, which is the marker's render footprint, since several
-    unsupported names in one group collapse to a single marker.
+    ``tagged`` counts outlet-named tier attributions; ``unsupported`` how many of them no
+    grounded label backs; ``generic`` the tier items that name no outlet at all (a class
+    description such as ``official``), which are rewritten too; ``groups_rewritten`` how
+    many bracket groups changed for either reason, which is the marker's render footprint,
+    since several rewritten items in one group collapse to a single marker.
     """
 
     text: str
     tagged: int
     unsupported: int
+    generic: int
     groups_rewritten: int
 
 
@@ -205,7 +262,8 @@ def _name_matches_label(name: str, label: str) -> bool:
 
     1. the name concatenates into the domain (``Golf Channel`` / golfchannel.com);
     2. every identity token appears in the domain (``The Guardian`` / guardian.co.uk);
-    3. the token sets intersect (``LSE Blogs`` / lse.ac.uk);
+    3. the token sets intersect on a token that is not a class word (``LSE Blogs`` /
+       lse.ac.uk, but not ``Research Institute of Foo`` / demographic-research.org);
     4. the domain's registrable core sits inside the name — the sub-brand shape
        (``Chosunbiz`` / chosun.com, ``iHeartRadio`` / iheart.com);
     5. a single-token name is a subsequence of the label — the name-abbreviates-the-outlet
@@ -224,7 +282,7 @@ def _name_matches_label(name: str, label: str) -> bool:
     name_tokens = _identity_tokens(name)
     if name_tokens and all(token in label_squashed for token in name_tokens):
         return True
-    if name_tokens and set(name_tokens) & set(_identity_tokens(label)):
+    if (set(name_tokens) - _DESCRIPTOR_TOKENS) & set(_identity_tokens(label)):
         return True
     core = _domain_core(label)
     if len(core) >= _MIN_DOMAIN_CORE_CHARS and core in name_squashed:
@@ -234,14 +292,19 @@ def _name_matches_label(name: str, label: str) -> bool:
     return len(core) >= _MIN_DOMAIN_CORE_CHARS and _is_prefix_concatenation(core, name_tokens)
 
 
-def _attribution_alternatives(name: str) -> list[str]:
-    """Non-generic halves of a slash-joined attribution (``Reuters/AP``, ``FT/Metaculus``).
+def _is_generic_descriptor(name: str) -> bool:
+    """Whether ``name`` describes a class of source rather than naming one."""
+    return all(token in _DESCRIPTOR_TOKENS for token in _identity_tokens(name))
 
-    Returns ``[]`` when every half names a class rather than an outlet, which is how a
-    generic tag (``official``, ``official/wire``) drops out of the check entirely.
+
+def _attribution_alternatives(name: str) -> list[str]:
+    """Named halves of a slash-joined attribution (``Reuters/AP``, ``official / GRG``).
+
+    Returns ``[]`` when every half describes a class rather than naming an outlet
+    (``official``, ``official/wire``), which is what makes a tag generic.
     """
     halves = [half.strip() for half in name.split("/") if half.strip()]
-    return [half for half in halves if half.lower() not in _GENERIC_TIER_WORDS and _HAS_LETTER_RE.search(half)]
+    return [half for half in halves if _HAS_LETTER_RE.search(half) and not _is_generic_descriptor(half)]
 
 
 def _is_supported(name: str, labels: Sequence[str]) -> bool:
@@ -266,49 +329,54 @@ def _split_group_items(inner: str) -> list[tuple[str, str]]:
     return [(separator, item.strip()) for separator, item in iter_group_items(inner) if item.strip()]
 
 
-def _rewrite_group(inner: str, labels: Sequence[str]) -> tuple[str | None, int, int]:
-    """Rewrite one bracket group's inner text: ``(new inner or None, tagged, unsupported)``.
+def _rewrite_group(inner: str, labels: Sequence[str]) -> tuple[str | None, int, int, int]:
+    """Rewrite one bracket group's inner text: ``(new inner or None, tagged, unsupported, generic)``.
 
-    ``None`` means leave the group exactly as the model wrote it — it holds no tier grade
-    at all (a bare-name bracket, or one of our own spliced ``[N]`` markers), or every
-    outlet it names is backed.
+    ``None`` means leave the group exactly as the model wrote it: it holds no tier grade at
+    all (a bare-name bracket, or one of our own spliced ``[N]`` markers), or every item in
+    it names an outlet the record backs.
     """
     items = _split_group_items(inner)
     if not any(_TIER_ITEM_RE.match(item) for _separator, item in items):
-        return None, 0, 0
+        return None, 0, 0, 0
 
     rendered: list[tuple[str, str]] = []
     tagged = 0
     unsupported = 0
+    generic = 0
     for separator, item in items:
         tier_match = _TIER_ITEM_RE.match(item)
         name = tier_match.group(2).strip() if tier_match else item
-        if name == UNVERIFIED_ATTRIBUTION_MARKER or not _attribution_alternatives(name):
+        if name == UNVERIFIED_ATTRIBUTION_MARKER or not _HAS_LETTER_RE.search(name):
             rendered.append((separator, item))
             continue
-        tagged += 1
-        if _is_supported(name, labels):
-            rendered.append((separator, item))
-            continue
-        unsupported += 1
+        if not _attribution_alternatives(name):
+            generic += 1
+        else:
+            tagged += 1
+            if _is_supported(name, labels):
+                rendered.append((separator, item))
+                continue
+            unsupported += 1
         # The tier GRADE goes with the outlet: the grade is an authority claim read off
-        # that outlet, so it cannot outlive it. Only the first unsupported item of a group
-        # renders a marker — a second "we could not verify this" adds nothing.
-        if unsupported == 1:
+        # that outlet, so it cannot outlive it, and a tag naming no outlet backs no grade.
+        # Only the first rewritten item of a group renders a marker; a second "we could
+        # not verify this" adds nothing.
+        if unsupported + generic == 1:
             rendered.append((separator, UNVERIFIED_ATTRIBUTION_MARKER))
-    if not unsupported:
-        return None, tagged, 0
-    return join_group_items(rendered), tagged, unsupported
+    if not unsupported and not generic:
+        return None, tagged, 0, 0
+    return join_group_items(rendered), tagged, unsupported, generic
 
 
 def rewrite_unsupported_attributions(text: str, labels: Sequence[str]) -> AttributionCheck:
-    """Replace tier-tag attributions no grounded ``label`` backs with the marker.
+    """Replace tier-tag attributions no grounded ``label`` backs, and tags naming no outlet, with the marker.
 
     ``labels`` are the rendered grounding labels the forecaster is shown, so the check
     and the ``### Sources`` block can never disagree about what our record says.
 
     A group's surviving items keep their text and their own ``,`` / ``;`` separators; the
-    unsupported ones collapse to ONE marker at the position of the first of them, because
+    rewritten ones collapse to ONE marker at the position of the first of them, because
     a second "we could not verify this" says nothing the first did not. Nothing outside a
     bracket is touched: the sentence a tag decorates comes through byte-identical.
     Idempotent — the marker is not itself an outlet name, so a second pass finds no
@@ -321,17 +389,19 @@ def rewrite_unsupported_attributions(text: str, labels: Sequence[str]) -> Attrib
     caller can bypass it.
     """
     if not labels:
-        return AttributionCheck(text=text, tagged=0, unsupported=0, groups_rewritten=0)
+        return AttributionCheck(text=text, tagged=0, unsupported=0, generic=0, groups_rewritten=0)
 
     tagged = 0
     unsupported = 0
+    generic = 0
     groups_rewritten = 0
 
     def replace(match: re.Match[str]) -> str:
-        nonlocal tagged, unsupported, groups_rewritten
-        rebuilt, group_tagged, group_unsupported = _rewrite_group(match.group("inner"), labels)
+        nonlocal tagged, unsupported, generic, groups_rewritten
+        rebuilt, group_tagged, group_unsupported, group_generic = _rewrite_group(match.group("inner"), labels)
         tagged += group_tagged
         unsupported += group_unsupported
+        generic += group_generic
         if rebuilt is None:
             return match.group(0)
         groups_rewritten += 1
@@ -343,5 +413,6 @@ def rewrite_unsupported_attributions(text: str, labels: Sequence[str]) -> Attrib
         text=BRACKET_GROUP_RE.sub(replace, text),
         tagged=tagged,
         unsupported=unsupported,
+        generic=generic,
         groups_rewritten=groups_rewritten,
     )

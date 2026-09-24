@@ -654,6 +654,7 @@ MARKER_SPECS: list[MarkerSpec] = [
         re.compile(
             r"GEMINI_UNSUPPORTED_ATTRIBUTION:\s*question=(?P<question>\S+)\s+tagged=(?P<tagged>\S+)"
             r"\s+unsupported=(?P<unsupported>\S+)\s+groups=(?P<groups>\S+)\s+labels=(?P<labels>\S+)"
+            r"(?:\s+generic=(?P<generic>\S+))?"
         ),
         qid_kind=QID_KIND_QUESTION_ID,  # gemini_search.py passes question.id_of_question
     ),

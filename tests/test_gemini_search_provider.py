@@ -232,8 +232,11 @@ async def test_real_selfcite_fixture_links_are_numbered_and_redirects_removed(
 
     assert "vertexaisearch.cloud.google.com" not in out
     assert "grounding-api-redirect" not in out
-    assert "[A: official] [1]" in out
-    assert "[C: aggregator] [3]" in out
+    # The fixture's tier tags are class descriptions, which name no outlet, so they are
+    # rewritten; the link numbers beside them survive.
+    assert "[unverified attribution] [1]" in out
+    assert "[unverified attribution] [3]" in out
+    assert "[A: official]" not in out
     assert "### Sources" in out
     assert "[1] example.com — https://www.example.com/report" in out
     assert "[2] news.example.org — https://news.example.org/briefing" in out
@@ -391,6 +394,39 @@ async def test_attribution_check_uses_resolved_domains(
     assert "NASA" not in out
     assert "[1] timeanddate.com — https://timeanddate.com/eclipse" in out
     assert "GEMINI_UNSUPPORTED_ATTRIBUTION: question=6007" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_generic_tier_tags_are_rewritten_and_counted(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A class tag names no outlet, so it is rewritten like an unmatched name and counted
+    apart in the provider details; the zero counts are recorded too, as measurements."""
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    text = f"The oldest age is 122 [[A: peer-reviewed journal]]({_SEARCH_REDIRECT}) and [B: NASA] agrees."
+    fake_client = _make_client_with_response(_make_response(text))
+
+    with (
+        patch("metaculus_bot.research.gemini_search.genai.Client", return_value=fake_client),
+        patch(
+            "metaculus_bot.research.gemini_search.resolve_search_redirects",
+            new=AsyncMock(return_value={_SEARCH_REDIRECT: "https://demographic-research.org/paper"}),
+        ),
+        caplog.at_level(logging.INFO),
+    ):
+        out = await gemini_search.invoke_gemini_grounded("prompt", qid=6010)
+
+    assert "peer-reviewed journal" not in out
+    assert out.count("[unverified attribution]") == 2
+    assert pop_provider_detail(6010, "gemini_search")["counts"] == {
+        "tier_tags": 1,
+        "generic_tier_tags": 1,
+        "unsupported_attributions": 1,
+    }
+    assert "GEMINI_UNSUPPORTED_ATTRIBUTION: question=6010 tagged=1 unsupported=1 groups=2 labels=1 generic=1" in (
+        caplog.text
+    )
 
 
 @pytest.mark.asyncio
