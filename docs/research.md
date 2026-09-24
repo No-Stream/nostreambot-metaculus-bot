@@ -513,8 +513,11 @@ bracket pair): 4 of 5 responses in the 2026-09-24 named-tag probe, about 95 of 1
 tags. Rendered as a plain label that loses its brackets (`A: NOAA [1]`) and escapes
 the check, so the formatter first rewrites a tier-tag label to the double-bracket
 form (`gemini_search._bracket_tier_tag_link_labels`), which renders `[A: NOAA] [1]`.
-The probe's tags were then 101 named, 0 generic, and after both fixes about 97% of
-the rescorable ones backed by their own source list. Matching of named tags is biased
+A second live run with both fixes (6 responses) wrote 82 tag-as-label links and 14
+wrapped ones, all rendered as checked tags with none escaping, and produced 127 named
+tags, 0 generic, 122 backed. The 5 rewritten tags each name the originator of copy the
+model read elsewhere (AP News on pbs.org, a Nature paper on sciencedaily.com and on
+PubMed, Guinness World Records with no link of its own). Matching of named tags is biased
 hard toward KEEPING, because a false
 strip discards real provenance while a false keep merely leaves one tag standing.
 Any one of six rules credits a name: it concatenates into the domain
