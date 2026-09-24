@@ -238,18 +238,8 @@ def _install_llm_router(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     real_acompletion = litellm.acompletion
 
-    def _mock_completion_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
-        """Use a model LiteLLM can resolve before its mock-response branch.
-
-        The repository roster contains future OpenRouter model IDs that the installed
-        LiteLLM release does not know how to route locally. Keeping the original model
-        in the outgoing call to this router still exercises the bot's model selection;
-        the forwarding-only model substitution lets LiteLLM reach its offline mock path.
-        """
-        return {**kwargs, "model": "gpt-3.5-turbo"}
-
     async def general_llm_router(**kwargs: Any) -> Any:
-        return await real_acompletion(**_mock_completion_kwargs(kwargs), mock_response=_route_general_llm(kwargs))
+        return await real_acompletion(**kwargs, mock_response=_route_general_llm(kwargs))
 
     # The scripted driver turns: set_research_plan first, then conclude.
     agentic_state = {"step": 0}
@@ -293,12 +283,12 @@ def _install_llm_router(monkeypatch: pytest.MonkeyPatch) -> None:
                     }
                 ]
             return await real_acompletion(
-                **_mock_completion_kwargs(kwargs),
+                **kwargs,
                 mock_response="driving the agentic loop",
                 mock_tool_calls=mock_tool_calls,
             )
         # The ghost phase calls with tools=None, and _summarize_ghost parses a plain block.
-        return await real_acompletion(**_mock_completion_kwargs(kwargs), mock_response=_CANNED_BINARY)
+        return await real_acompletion(**kwargs, mock_response=_CANNED_BINARY)
 
     monkeypatch.setattr(ft_general_llm, "acompletion", general_llm_router)
     monkeypatch.setattr(agentic_llm, "acompletion", agentic_router)
