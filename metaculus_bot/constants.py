@@ -31,8 +31,8 @@ METACULUS_CUP_ID: str = "metaculus-cup-fall-2026"
 MANTIC_HOST: str = "competitions.mantic.com"
 MANTIC_SITE_URL: str = f"https://{MANTIC_HOST}"
 MANTIC_API_BASE_URL: str = f"{MANTIC_SITE_URL}/api"
-MANTIC_TOURNAMENT_ID: str = "preseason-2"
-MANTIC_TOURNAMENT_END_DATE: str = "2026-09-20"  # forecasting_end_date on project 4 (API-verified 2026-09-08)
+MANTIC_TOURNAMENT_ID: str = "series-2"
+MANTIC_TOURNAMENT_END_DATE: str = "2026-12-16"  # forecasting_end_date on project 5 (API-verified 2026-09-24)
 # Mantic advertises `next` past the last page. Receipt: docs/constants.md "MANTIC_FETCH_QUESTION_CEILING".
 MANTIC_FETCH_QUESTION_CEILING: int = 500
 # The bot's own account (``nostreambot-bot``, ``/api/users/81/``): an unauthenticated read has no ``my_forecasts``.
@@ -92,7 +92,7 @@ def check_tournament_dates(
     """Check if tournament dates are stale and warn/error accordingly; True when past the end date.
 
     - Warns, and returns True, once the current UTC date is past the tournament's end date. The
-      end date is the LAST open day, not the first dead one: Preseason 2 forecasts until 12:00 UTC
+      end date is the LAST open day, not the first dead one: Series 2 forecasts until 23:59 UTC
       on ``MANTIC_TOURNAMENT_END_DATE``, and a run in those hours publishes normally.
     - Raises TournamentExpiredError if past end date + TOURNAMENT_HARD_STOP_WEEKS
 

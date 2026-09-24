@@ -77,9 +77,13 @@ Read straight off `/api/projects/tournaments/preseason-2/` on 2026-09-08: projec
 So `MANTIC_TOURNAMENT_END_DATE` is that `forecasting_end_date` on project 4, API-verified
 2026-09-08.
 
-No Series 2 project exists on that API yet. The valid slugs as of 2026-09-08 are preseason-2,
-series-1 and practice-series-1, and an unknown slug answers HTTP 400. Re-point
-`MANTIC_TOURNAMENT_ID` when Series 2 opens.
+Re-pointed to Series 2 on 2026-09-24, read off `/api/projects/tournaments/series-2/`: project
+id 5, `start_date` 2026-09-23T00:00:00Z, `forecasting_end_date` equal to `close_date`
+2026-12-16T23:59:00Z, `score_type` spot_baseline_tournament, `bot_leaderboard_status` bots_only,
+`visibility` normal. So `MANTIC_TOURNAMENT_ID` is `series-2` and `MANTIC_TOURNAMENT_END_DATE` is
+2026-12-16. On that date it held five open `[Practice]` questions (posts 663 to 667), all
+closing 2026-10-23T18:00Z; question submissions had not opened. The Preseason 2 reading above
+is kept as the record of the previous season. An unknown slug answers HTTP 400.
 
 ### MANTIC_FETCH_QUESTION_CEILING
 

@@ -1072,9 +1072,11 @@ platform client. Everything in this section was verified against the live API on
 2026-09-08, and the post-651 per-bin smoke of 2026-09-09 re-verified the publish path (see
 "Running it" below).
 
-The current target is Preseason 2: slug `preseason-2` (`MANTIC_TOURNAMENT_ID`),
-project id 4, forecasting closes 2026-09-20 12:00 UTC (`MANTIC_TOURNAMENT_END_DATE`),
-`score_type` `spot_baseline_tournament`. It holds four questions: one binary, one
+The current target is Series 2: slug `series-2` (`MANTIC_TOURNAMENT_ID`), project id 5,
+opened 2026-09-23, forecasting closes 2026-12-16 23:59 UTC (`MANTIC_TOURNAMENT_END_DATE`),
+`score_type` `spot_baseline_tournament`, API-verified 2026-09-24 with five open practice
+questions and submissions not yet open. The previous target was Preseason 2: slug
+`preseason-2`, project id 4, forecasting closed 2026-09-20 12:00 UTC. It held four questions: one binary, one
 multiple choice with four options, one discrete with 450 bins and
 `multi_resolution: true` (scored against eleven daily bitcoin prices and averaged),
 and one date question with twelve daily bins. Series 2 follows it, under rules
@@ -1085,7 +1087,7 @@ numeric and discrete with up to 2,000 bins; date questions default to daily bins
 and a multi-resolution question scores one distribution against several
 resolutions. Series 1 windows were exactly one hour long, opened on the hour, with
 up to three questions per hour. The Series 2 cadence is unannounced. Forecast every
-question: a miss costs more than a poor forecast under that scoring. When Series 2
+question: a miss costs more than a poor forecast under that scoring. When the next season
 opens, re-point `MANTIC_TOURNAMENT_ID` and `MANTIC_TOURNAMENT_END_DATE` in
 `constants.py`; an unknown slug answers HTTP 400 on the posts list and 404 on the
 tournament route. Two startup checks make that hand-over hard to miss, the Series 2
@@ -1583,9 +1585,9 @@ Operator steps, in order:
    nothing to enable in the Actions UI. Then enable the Mantic dispatcher job with
    `make cronjob_dispatch_setup ARGS="--apply --enable-mantic"` (paid, ask-first; see
    "Scheduling reliability" above).
-4. When Series 2 opens, update `MANTIC_TOURNAMENT_ID` and `MANTIC_TOURNAMENT_END_DATE`;
-   the "Series 2 discovery" and "Stale slug goes red" checks above are what flag the
-   hand-over.
+4. Done 2026-09-24: `MANTIC_TOURNAMENT_ID` and `MANTIC_TOURNAMENT_END_DATE` re-pointed to
+   Series 2 (`series-2`, closing 2026-12-16). For the next season, the "Series 2 discovery"
+   and "Stale slug goes red" checks above are what flag the hand-over.
 
 ## Cost discipline
 
