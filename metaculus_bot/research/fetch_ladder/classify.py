@@ -9,6 +9,7 @@ a rescued page indistinguishable downstream from a directly fetched one.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -34,7 +35,7 @@ from metaculus_bot.research.document_text import PdfText, extract_pdf_text, is_p
 from metaculus_bot.research.fetch_ladder import context, guard, run_cache
 from metaculus_bot.research.fetch_ladder.policy import RESOLUTION_SOURCE_POLICY, LadderPolicy
 from metaculus_bot.research.fetch_ladder.verdict import (
-    _RAW_TEXT_CONTENT_TYPES,
+    _HTML_STRIPPED_TEXT_CONTENT_TYPES,
     BodyRoute,
     DocumentVerdict,
     PageExtraction,
@@ -52,6 +53,7 @@ from metaculus_bot.research.http_fetch import (
     rewrite_aria_tables,
     unreadable_data_embed_providers,
 )
+from metaculus_bot.research.image_leads import extract_image_leads
 from metaculus_bot.research.resolution_body_text import strip_html_tags
 from metaculus_bot.research.resolution_chart_data import render_inline_chart_data
 from metaculus_bot.research.resolution_fetch_result import (
@@ -60,10 +62,12 @@ from metaculus_bot.research.resolution_fetch_result import (
     FetchResult,
     FetchStatus,
     FetchStatusReason,
+    LocalKind,
     http_failure_class,
     server_header_token,
     vacuous_body_status,
 )
+from metaculus_bot.research.source_documents import ParsedSource, SourceReadError, parse_source
 
 logger = logging.getLogger(__name__)
 
@@ -249,8 +253,16 @@ def _routing_body(body: bytes) -> bytes:
     stripped = body.lstrip()
     if stripped.startswith(b"%PDF-"):
         return b"%PDF-"
-    if stripped.startswith((b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a")):
+    if stripped.startswith((b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a", b"BM")):
         return stripped[:8]
+    if len(stripped) >= 12 and stripped.startswith(b"RIFF") and stripped[8:12] == b"WEBP":
+        return stripped[:12]
+    try:
+        json.loads(body.decode("utf-8", errors="strict"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        pass
+    else:
+        return b"{}"
     if b"<html" in body.lower():
         return b"<html"
     return b""
@@ -293,6 +305,7 @@ async def _classify_html_body(
     chart_block = await asyncio.to_thread(render_inline_chart_data, html_text)
     # Against the DOCUMENT url, which after a client-side redirect is not the URL asked for.
     links = extract_page_links(html_text, current_url)
+    image_leads = extract_image_leads(html_text, current_url)
     artifact = run_cache.HtmlRead(
         url=current_url,
         http_status=http_status,
@@ -303,6 +316,7 @@ async def _classify_html_body(
         unreadable_embeds=tuple(unreadable_embeds),
         links=tuple(links),
         routing_body=_routing_body(body),
+        image_leads=image_leads,
     )
     digest_budget = (
         float("inf") if remaining_wall_s is None else max(0.0, remaining_wall_s - (time.monotonic() - started))
@@ -346,7 +360,7 @@ def _raw_body_outcome(
     netloc = urlparse(current_url).netloc
     raw, undecodable_ratio = decode_text_body(body, content_type)
     # Text branches only: a JSON body's angle brackets are the data (see the doc).
-    if any(ct in content_type for ct in _RAW_TEXT_CONTENT_TYPES):
+    if any(ct in content_type for ct in _HTML_STRIPPED_TEXT_CONTENT_TYPES):
         raw = strip_html_tags(raw)
     floor = pol.thin_content_escalation_chars
     vacuous = vacuous_body_status(raw, undecodable_ratio, require_csv_rows=False)
@@ -395,6 +409,15 @@ class _PendingDocument:
     http_status: int
     content_type: str
     from_status: FetchStatus
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingSource:
+    url: str
+    body: bytes
+    http_status: int
+    content_type: str
+    local_kind: LocalKind
 
 
 def _parse_and_read(
@@ -517,6 +540,95 @@ async def _finish_document(pending: _PendingDocument, ctx: context.LadderContext
     return result
 
 
+def _local_kind(content_type: str, body: bytes) -> LocalKind:
+    media_type = content_type.partition(";")[0].strip().lower()
+    if "spreadsheet" in media_type or "excel" in media_type:
+        return "workbook"
+    if "wordprocessingml" in media_type or media_type in ("application/msword", "application/vnd.ms-word"):
+        return "word"
+    del body
+    return "archive"
+
+
+def _local_refusal(pending: _PendingSource) -> FetchResult:
+    return FetchResult(
+        url=pending.url,
+        status="unsupported_type",
+        text="",
+        http_status=pending.http_status,
+        content_type=pending.content_type or None,
+        local_kind=pending.local_kind,
+        local_read_refused=True,
+    )
+
+
+async def _finish_source(pending: _PendingSource, ctx: context.LadderContext) -> FetchResult:
+    """Parse a bounded local source off the event loop under the shared parser gate."""
+    gate = pdf_parse_semaphore()
+    budget_s = ctx.rung_budget_s()
+    if budget_s <= 0.0:
+        return _local_refusal(pending)
+    try:
+        await asyncio.wait_for(gate.acquire(), timeout=budget_s)
+    except TimeoutError:
+        return _local_refusal(pending)
+    parse_budget_s = ctx.rung_budget_s()
+    if parse_budget_s <= 0.0:
+        gate.release()
+        return _local_refusal(pending)
+    worker = asyncio.create_task(asyncio.to_thread(_parse_and_present_source, pending, ctx))
+    release_gate_here = True
+    try:
+        try:
+            artifact, result = await asyncio.wait_for(asyncio.shield(worker), timeout=parse_budget_s)
+        except SourceReadError as exc:
+            logger.info("local source read refused for %s: %s", pending.url, exc.reason)
+            return _local_refusal(pending)
+        except TimeoutError:
+            release_gate_here = False
+            worker.add_done_callback(lambda task: _release_parser_gate(task, gate, pending.url))
+            return _local_refusal(pending)
+        except asyncio.CancelledError:
+            # `to_thread` keeps running after cancellation. Keep the parser slot occupied until
+            # the worker really ends, while allowing the caller's wall timeout to return now.
+            release_gate_here = False
+            worker.add_done_callback(lambda task: _release_parser_gate(task, gate, pending.url))
+            raise
+    finally:
+        if release_gate_here:
+            gate.release()
+
+    # The complete parse is policy neutral even when this caller's query matched nothing.
+    ctx.capture_read(result, artifact)
+    return result
+
+
+def _parse_and_present_source(
+    pending: _PendingSource, ctx: context.LadderContext
+) -> tuple[run_cache.SourceRead, FetchResult]:
+    source: ParsedSource = parse_source(pending.body, pending.content_type)
+    artifact = run_cache.SourceRead(
+        url=pending.url,
+        http_status=pending.http_status,
+        content_type=pending.content_type or None,
+        source=source,
+    )
+    result = artifact.present(ctx.policy, query=ctx.query, route="direct", now=ctx.now)
+    return artifact, result
+
+
+def _release_parser_gate(
+    worker: asyncio.Task[tuple[run_cache.SourceRead, FetchResult]], gate: asyncio.Semaphore, source_url: str
+) -> None:
+    """Release a parser slot after a cancelled caller's thread actually completes."""
+    try:
+        worker.exception()
+    except asyncio.CancelledError:
+        logger.warning("local source parser worker was unexpectedly cancelled for %s", source_url)
+    finally:
+        gate.release()
+
+
 def _document_not_parsed(pending: _PendingDocument, reason: FetchStatusReason) -> FetchResult:
     """The result for a document we held and chose not to parse.
 
@@ -539,7 +651,7 @@ def _document_not_parsed(pending: _PendingDocument, reason: FetchStatusReason) -
 
 async def _resolution_response_outcome(
     resp: Any, current_url: str, ctx: context.LadderContext
-) -> FetchResult | _PendingDocument | str:
+) -> FetchResult | _PendingDocument | _PendingSource | str:
     """Classify one response: a terminal FetchResult, a held document, or the next hop's URL.
 
     One read, then one routing decision, so a body's cap and its branch cannot disagree. The
@@ -581,7 +693,7 @@ async def _resolution_response_outcome(
 
 async def _classify_body(
     body: bytes, current_url: str, content_type: str, ctx: context.LadderContext, *, http_status: int
-) -> FetchResult | _PendingDocument:
+) -> FetchResult | _PendingDocument | _PendingSource:
     """Route a 200 body this ladder holds to the branch the caller's verdict gives it.
 
     The ONE router, so a body the impersonated retry read takes the same branch a directly
@@ -610,7 +722,54 @@ async def _classify_body(
         if classified.artifact is not None:
             ctx.capture_read(classified.result, classified.artifact)
         return classified.result
-    if route in ("image", "unsupported"):
+    if route == "source":
+        ctx.local_read_receipt.encountered = True
+        return _PendingSource(
+            url=current_url,
+            body=body,
+            http_status=http_status,
+            content_type=content_type,
+            local_kind=_local_kind(content_type, body),
+        )
+    if route == "image":
+        if ctx.policy.caller != "gap_fill_v2":
+            return FetchResult(
+                url=current_url,
+                status="unsupported_type",
+                text="",
+                http_status=http_status,
+                content_type=content_type or None,
+                status_reason="image_needs_reader",
+                local_read_refused=True,
+            )
+        artifact = run_cache.ImageRead(
+            source=run_cache.ImageSource(url=current_url, body=body, content_type=content_type or None),
+            http_status=http_status,
+        )
+        result = artifact.present(ctx.policy, query=ctx.query, route="direct", now=ctx.now)
+        ctx.capture_read(result, artifact)
+        return result
+    if route == "svg":
+        return FetchResult(
+            url=current_url,
+            status="unsupported_type",
+            text="",
+            http_status=http_status,
+            content_type=content_type or None,
+            local_kind="image",
+            local_read_refused=True,
+        )
+    if route == "invalid_image":
+        return FetchResult(
+            url=current_url,
+            status="unsupported_type",
+            text="",
+            http_status=http_status,
+            content_type=content_type or None,
+            local_kind="image",
+            local_read_refused=True,
+        )
+    if route == "unsupported":
         return _unread_body_outcome(route, current_url, content_type, http_status=http_status)
     return _document_outcome(
         body, current_url, content_type, ctx, http_status=http_status, from_status="unsupported_type"
@@ -619,7 +778,7 @@ async def _classify_body(
 
 async def _classify_body_or_hop(
     body: bytes, current_url: str, content_type: str, ctx: context.LadderContext, *, http_status: int
-) -> FetchResult | _PendingDocument | str:
+) -> FetchResult | _PendingDocument | _PendingSource | str:
     """The router, plus the meta-refresh hop only the redirect loop may consume.
 
     Only once an HTML body carries no content anywhere does the hop run, which is what keeps it

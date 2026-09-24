@@ -48,7 +48,7 @@ _DEMOTED_BANNER = (
 
 
 def detachment_lint(finding: Finding) -> list[str]:
-    # Only ``claim`` and ``topic`` are scanned. ``derivation`` (W3) is
+    # Driver-authored ``claim``, ``topic`` and visual observation are scanned. ``derivation`` (W3) is
     # deliberately EXEMPT — it is arithmetic-only synthesis over the finding's
     # own quoted numbers (a saw-tooth-style bound/rate table), which needs no
     # likelihood language and would false-positive on incidental register words
@@ -57,7 +57,10 @@ def detachment_lint(finding: Finding) -> list[str]:
     # prompt/render-side convention, not a lint rule. ``quote`` stays unscanned
     # too — it is verbatim source text, not the driver's own register.
     violations: list[str] = []
-    for field_name, value in (("claim", finding.claim), ("topic", finding.topic)):
+    authored_fields = [("claim", finding.claim), ("topic", finding.topic)]
+    if finding.visual_observation is not None:
+        authored_fields.append(("visual_observation", finding.visual_observation))
+    for field_name, value in authored_fields:
         matches = [match.group(0) for match in _BANNED_REGISTER_RE.finditer(value)]
         for match in matches:
             violations.append(f"{field_name} contains banned register {match!r}")
@@ -98,8 +101,15 @@ def _finding_body_lines(finding: Finding, *, include_tier: bool) -> list[str]:
         body.append(_DERIVED_ANALYSIS_LABEL)
     body.append(f"Claim: {finding.claim}")
     body.append(f"Source: {finding.source_url}")
-    body.append("Quote:")
-    body.extend(_quote_lines(finding.quote))
+    if finding.evidence_kind == "image":
+        body.append(f"Image ID: {finding.image_id}")
+        body.append(
+            "Visual observation (driver-reported from delivered pixels; transcribed/estimated as stated): "
+            f"{finding.visual_observation}"
+        )
+    else:
+        body.append("Quote:")
+        body.extend(_quote_lines(finding.quote))
     if finding.derivation:
         body.append(f"Derivation: {finding.derivation}")
     body.append(f"Date: {finding.date}")

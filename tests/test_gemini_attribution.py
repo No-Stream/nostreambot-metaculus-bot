@@ -26,7 +26,7 @@ class TestSupportedAttributionsAreKept:
     """Matching is loose in the KEEP direction: an outlet missing from the grounded
     domains does not prove the fact wrong, so a false strip (real provenance discarded)
     costs more than a false keep (a tag left standing). Each case below is one of the
-    five support rules, and each rule closes a false-strip class the corpus contains.
+    six support rules, and each rule closes a false-strip class the corpus contains.
     """
 
     def test_name_that_concatenates_into_the_domain(self) -> None:
@@ -80,9 +80,28 @@ class TestSupportedAttributionsAreKept:
             text = f"The bill passed its second reading [B: {name}]."
             assert _rewrite(text, [label]) == text, name
 
+    def test_every_label_left_of_the_public_suffix_is_a_core(self) -> None:
+        # 2026-09-24 named-tag probe: self-cited sources list full hostnames. The identity can
+        # sit in the registrable name (tropical.colostate.edu: 9 correctly linked Colorado
+        # State University tags, the key source on Q45571, were stripped when only the first
+        # label counted) or in the subdomain (nhc.noaa.gov), so both are tried.
+        for name, label in (
+            ("Colorado State University", "tropical.colostate.edu"),
+            ("Colorado State University", "engr.source.colostate.edu"),
+            ("National Hurricane Center", "nhc.noaa.gov"),
+            # A hyphenated registered name reads by its first run, as before.
+            ("Gerontology Research Group", "grg-supercentenarians.org"),
+        ):
+            text = f"The outlook calls for two major hurricanes [A: {name}] [1]."
+            assert _rewrite(text, [label]) == text, (name, label)
+
+    def test_a_class_word_subdomain_is_not_a_core(self) -> None:
+        assert UNVERIFIED_ATTRIBUTION_MARKER in _rewrite("The poll moved [B: CBS News].", ["news.sky.com"])
+
     def test_title_side_of_a_label_counts(self) -> None:
-        # Every archived label is a bare domain, but ``_format_source_label`` renders
-        # ``<title> — <domain>`` when a chunk carries both, and a title routinely names
+        # Every archived label is a bare domain, matching the formatter's source-domain labels.
+        # The formatter previously rendered ``<title> — <domain>`` when a chunk carried both,
+        # and a title routinely names
         # the outlet the domain hides.
         text = "Coverage began Tuesday [C: Golf Channel]."
         assert _rewrite(text, ["Golf Channel highlights — sports.example.com"]) == text
@@ -171,42 +190,88 @@ class TestTheLooseningRulesStayBounded:
         assert "unverified attribution" in out
 
 
-class TestWhatTheCheckLeavesAlone:
-    def test_academic_categories_are_not_publisher_attributions(self) -> None:
-        for category in ("academic", "peer-reviewed", "academic / peer-reviewed"):
-            text = f"The paper models the age distribution [B: {category}]."
-            result = rewrite_unsupported_attributions(text, ["demographic-research.org"])
-            assert result.text == text
-            assert (result.tagged, result.unsupported, result.groups_rewritten) == (0, 0, 0)
+class TestGenericTagsAreRewritten:
+    """A tag that names a CLASS of source rather than an outlet cannot be checked, so it
+    lets the model claim tier A without naming anything. The prompt asks for the outlet,
+    and a tag that names none is treated as not following it: rewritten to the marker,
+    like an unmatched name, and counted as ``generic`` rather than ``tagged``.
+    """
 
-    def test_academic_category_does_not_exempt_an_unbacked_publisher(self) -> None:
-        text = "The paper models lifespan [B: academic / peer-reviewed]. The report agrees [B: Reuters]."
-        result = rewrite_unsupported_attributions(text, ["demographic-research.org"])
-        assert result.text == (
-            "The paper models lifespan [B: academic / peer-reviewed]. The report agrees [unverified attribution]."
-        )
-        assert (result.tagged, result.unsupported, result.groups_rewritten) == (1, 1, 1)
-
-    def test_generic_tier_words(self) -> None:
-        # ``official`` / ``aggregator`` name a class of source, not an outlet, so there is
-        # nothing in the grounding record to check them against. 307 of the corpus's 790
-        # tier items are one of these.
-        for text in (
-            "FSIS posted the notice [A: official].",
-            "Coverage was syndicated [C: aggregator].",
-            "Both carried it [A: official, C: aggregator].",
-            "A newswire moved it [B: wire service].",
-            "Posted to a feed [D: social].",
-            "Filed via the desk [A: official/wire].",
+    def test_the_q14333_smoke_descriptions_are_rewritten(self) -> None:
+        # 2026-09-24 smoke (run 36008672128): 10 of Gemini's 12 tags were class
+        # descriptions. ``peer-reviewed research`` and ``research institute`` used to pass
+        # only because "research" appears in demographic-research.org.
+        labels = ["demographic-research.org", "grg-supercentenarians.org", "metaculus.com"]
+        for tag in (
+            "A: peer-reviewed journal",
+            "A: validation registry",
+            "C: prediction platform",
+            "A: peer-reviewed research",
+            "C: research institute",
+            "A: official",
         ):
-            assert _rewrite(text, ["perlan.is"]) == text, text
+            result = rewrite_unsupported_attributions(f"The oldest validated age is 122 [{tag}].", labels)
+            assert result.text == f"The oldest validated age is 122 [{UNVERIFIED_ATTRIBUTION_MARKER}].", tag
+            assert (result.tagged, result.unsupported, result.generic, result.groups_rewritten) == (0, 0, 1, 1), tag
 
-    def test_a_generic_tag_beside_an_unsupported_outlet(self) -> None:
-        # q44802/q44808 shape, the corpus's single commonest group: the generic half stays
-        # verbatim and only the named half is marked.
+    def test_corpus_class_words(self) -> None:
+        # The archived corpus's own descriptive tags, and the 2026-09-22 probe controls'.
+        for tag in (
+            "A: official",
+            "C: aggregator",
+            "B: wire service",
+            "D: social",
+            "A: official/wire",
+            "A: primary/academic",
+            "B: academic / peer-reviewed",
+            "C: single-outlet report",
+            "C: aggregator/analysis",
+            "A: record authority",
+            "A: named forecasting market",
+            "C: Media Reports",
+        ):
+            assert _rewrite(f"The figure was published [{tag}].", ["perlan.is"]) == (
+                f"The figure was published [{UNVERIFIED_ATTRIBUTION_MARKER}]."
+            ), tag
+
+    def test_a_named_half_keeps_a_slash_joined_tag_checkable(self) -> None:
+        # The class half drops out and the named half is checked as usual.
+        text = "Her age was validated [A: official / GRG]."
+        result = rewrite_unsupported_attributions(text, ["grg-supercentenarians.org"])
+        assert result.text == text
+        assert (result.tagged, result.unsupported, result.generic) == (1, 0, 0)
+
+    def test_a_generic_tag_beside_a_supported_outlet(self) -> None:
+        out = _rewrite("The notice was revised [A: official, B: Reuters].", ["reuters.com"])
+        assert out == f"The notice was revised [{UNVERIFIED_ATTRIBUTION_MARKER}, B: Reuters]."
+
+    def test_a_generic_tag_beside_an_unsupported_outlet_collapses_to_one_marker(self) -> None:
+        # q44802/q44808 shape, the corpus's single commonest group.
         out = _rewrite("The notice was revised [A: official, B: Reuters].", ["usda.gov"])
-        assert out == f"The notice was revised [A: official, {UNVERIFIED_ATTRIBUTION_MARKER}]."
+        assert out == f"The notice was revised [{UNVERIFIED_ATTRIBUTION_MARKER}]."
 
+    def test_a_named_outlet_made_of_class_words_elsewhere_is_still_named(self) -> None:
+        # One identity token outside the vocabulary is enough to make it a name.
+        text = "Voters were polled [B: CBC News]."
+        result = rewrite_unsupported_attributions(text, ["cbc.ca"])
+        assert result.text == text
+        assert (result.tagged, result.generic) == (1, 0)
+
+
+class TestDescriptorTokensDoNotCreditANameAlone:
+    """The token-intersection rule ignores class words, so a shared "research" or
+    "institute" alone cannot credit an outlet; the other rules are unchanged."""
+
+    def test_a_journal_whose_name_is_its_domain_is_kept(self) -> None:
+        text = "The model fits the tail [A: Demographic Research]."
+        assert _rewrite(text, ["demographic-research.org"]) == text
+
+    def test_a_shared_class_word_alone_does_not_credit(self) -> None:
+        out = _rewrite("The model fits the tail [C: Research Institute of Foo].", ["demographic-research.org"])
+        assert out == f"The model fits the tail [{UNVERIFIED_ATTRIBUTION_MARKER}]."
+
+
+class TestWhatTheCheckLeavesAlone:
     def test_our_own_spliced_citation_markers(self) -> None:
         text = "Alpha.[1] Beta.[12] Gamma.[1, 3]"
         assert _rewrite(text, ["perlan.is"]) == text
@@ -244,6 +309,10 @@ class TestWhatTheCheckLeavesAlone:
         once = _rewrite(text, ["timeanddate.com"])
         assert _rewrite(once, ["timeanddate.com"]) == once
 
+    def test_is_idempotent_over_generic_tags(self) -> None:
+        once = _rewrite("Filed [A: official]. Cloudy [C: aggregator, C: Time and Date].", ["timeanddate.com"])
+        assert _rewrite(once, ["timeanddate.com"]) == once
+
     def test_no_labels_leaves_every_tag_standing(self) -> None:
         # A response whose chunks carry no renderable label gives the check no evidence
         # base at all; rewriting off an empty record would make our own render failure
@@ -254,18 +323,24 @@ class TestWhatTheCheckLeavesAlone:
 
 
 class TestCounts:
-    def test_counts_report_names_flags_and_render_footprint(self) -> None:
+    def test_counts_report_names_flags_generics_and_render_footprint(self) -> None:
         result = rewrite_unsupported_attributions(
-            "Alpha [A: official, B: Reuters]. Beta [C: Time and Date]. Gamma [D: Metaculus, C: Newsweek].",
+            "Alpha [A: official, B: Reuters]. Beta [C: Time and Date]. Gamma [D: Metaculus, C: Newsweek]."
+            " Delta [C: aggregator].",
             ["timeanddate.com"],
         )
-        # tagged excludes the generic ``official``; the three unsupported names are
-        # Reuters, Metaculus and Newsweek, and they land in two bracket groups.
-        assert (result.tagged, result.unsupported, result.groups_rewritten) == (4, 3, 2)
+        # ``tagged`` counts outlet names only; the unsupported ones are Reuters, Metaculus and
+        # Newsweek. The two generic tags are counted apart, and their groups count as
+        # rewritten: Alpha's for both reasons, Delta's for its generic tag alone.
+        assert (result.tagged, result.unsupported, result.generic, result.groups_rewritten) == (4, 3, 2, 3)
 
     def test_a_fully_supported_response_reports_zero(self) -> None:
         result = rewrite_unsupported_attributions("Cloudy [C: Time and Date].", ["timeanddate.com"])
-        assert (result.tagged, result.unsupported, result.groups_rewritten) == (1, 0, 0)
+        assert (result.tagged, result.unsupported, result.generic, result.groups_rewritten) == (1, 0, 0, 0)
+
+    def test_no_labels_reports_zero_generics_too(self) -> None:
+        result = rewrite_unsupported_attributions("Filed [A: official].", [])
+        assert (result.generic, result.groups_rewritten) == (0, 0)
 
 
 class TestTheSharedBracketGrammar:

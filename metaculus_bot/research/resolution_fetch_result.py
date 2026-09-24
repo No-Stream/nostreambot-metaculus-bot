@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 
 from metaculus_bot.constants import RESOLUTION_SOURCE_WAYBACK_MAX_AGE_DAYS
 from metaculus_bot.research.http_fetch import MAX_UNDECODABLE_CHAR_RATIO, DatawrapperChartRef
+from metaculus_bot.research.image_leads import ImageLead
 
 # `stale_data` has two producers, and only one of them earns the benign diagnostics token.
 # The Tier-2 Datawrapper hop reached a dataset whose Last-Modified is outside the freshness
@@ -95,9 +96,9 @@ from metaculus_bot.research.http_fetch import MAX_UNDECODABLE_CHAR_RATIO, Datawr
 # rather than a read of the page, and it is DISCARDED rather than rendered. Its own token because
 # it is the one failure that cost money, and because it says something no other status does —
 # the host answered a third-party fetcher's request with nothing while refusing ours. Mirrors the
-# grounded-chunk floor `gemini_search` applies and the identical guard on gap-fill v2's
-# `read_document`; the receipt for why is Q38195 (2026-07-19), where 30 search queries and 0
-# grounding chunks produced a confident fabricated table with fake `[primary]` tags.
+# cited-link floor `gemini_search` applies and the identical guard on gap-fill v2's
+# `read_document`; the receipt for why is Q38195 (2026-07-19), where 30 search queries and no
+# verified cited links produced a confident fabricated table with fake `[primary]` tags.
 FetchStatus = Literal[
     "success",
     "throttled",
@@ -280,6 +281,8 @@ FetchRoute = Literal[
     "wayback",
     "url_context",
 ]
+
+LocalKind = Literal["archive", "workbook", "word", "image"]
 
 # One forecaster-facing sentence per non-direct route, rendered under the "primary grading
 # evidence" caveat for every route present in a question's snapshot. Keyed by `FetchRoute` and
@@ -535,6 +538,12 @@ class FetchResult:
     passages_returned: int | None = None
     passages_grounded: int | None = None
     fallback_used: bool | None = None
+    # Small routing metadata only. Parsed source contents and raster bytes stay in the bounded
+    # process-run cache, never in the archive-facing result.
+    local_kind: LocalKind | None = None
+    navigation_only: bool = False
+    local_read_refused: bool = False
+    image_leads: tuple[ImageLead, ...] = ()
 
     def __post_init__(self) -> None:
         """Enforce the ``text`` invariant the field comment states.

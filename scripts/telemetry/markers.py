@@ -630,8 +630,18 @@ MARKER_SPECS: list[MarkerSpec] = [
         qid_kind=QID_KIND_QUESTION_ID,  # gemini_search.py passes question.id_of_question
     ),
     MarkerSpec(
+        "gemini_self_citation",
+        # Why: records the self-citation verification counts before the floor. Receipt: docs/telemetry_markers.md "GEMINI_SELF_CITATION".
+        re.compile(
+            r"GEMINI_SELF_CITATION:\s*question=(?P<question>\S+)\s+model=(?P<model>\S+)"
+            r"\s+links=(?P<links>\S+)\s+unique=(?P<unique>\S+)\s+resolved=(?P<resolved>\S+)"
+            r"\s+unverified=(?P<unverified>\S+)\s+sources=(?P<sources>\S+)"
+        ),
+        qid_kind=QID_KIND_QUESTION_ID,  # gemini_search.py passes question.id_of_question
+    ),
+    MarkerSpec(
         "gemini_grounding_density",
-        # Why: telemetry only, never a gate. Receipt: docs/telemetry_markers.md "GEMINI_GROUNDING_DENSITY".
+        # Why: historical production telemetry remains parseable. Receipt: docs/telemetry_markers.md "GEMINI_GROUNDING_DENSITY".
         re.compile(
             r"GEMINI_GROUNDING_DENSITY:\s*question=(?P<question>\S+)\s+chunks=(?P<chunks>\S+)"
             r"\s+supports=(?P<supports>\S+)\s+chars=(?P<chars>\S+)"
@@ -644,6 +654,7 @@ MARKER_SPECS: list[MarkerSpec] = [
         re.compile(
             r"GEMINI_UNSUPPORTED_ATTRIBUTION:\s*question=(?P<question>\S+)\s+tagged=(?P<tagged>\S+)"
             r"\s+unsupported=(?P<unsupported>\S+)\s+groups=(?P<groups>\S+)\s+labels=(?P<labels>\S+)"
+            r"(?:\s+generic=(?P<generic>\S+))?"
         ),
         qid_kind=QID_KIND_QUESTION_ID,  # gemini_search.py passes question.id_of_question
     ),

@@ -49,20 +49,12 @@ class TestMarketLlmStages:
         assert MARKET_RANKER_LLM_CONFIG["allowed_tries"] == 1
         assert MARKET_QUERY_AUTHOR_LLM_CONFIG["allowed_tries"] == 1
 
-    def test_both_configs_leave_headroom_over_the_measured_completions(self):
+    def test_neither_config_caps_output_tokens(self):
         """A truncated completion is a TOTAL loss on both stages — the ranking fails open and the
-        author's object will not parse — so `max_tokens` sits well above what the bake-off
-        measured rather than just above it, and luna's output tokens are cheap enough that the
-        headroom costs nothing.
-
-        Measured maxima INCLUDING reasoning tokens, from
-        scratch/bakeoff_run_2026-08-03/results/RANKED_ARM_RESULTS.md: ranker 1,042 (mean 589),
-        author 588. The shipped budgets are 3,000 and 1,500, i.e. 2.9x and 2.6x the measured
-        max. The floor asserted here is 2.5x — enough that a model whose reasoning budget grows
-        by half still fits, and low enough that it is not a restatement of the constants.
-        """
-        assert MARKET_RANKER_LLM_CONFIG["max_tokens"] >= 2.5 * 1042
-        assert MARKET_QUERY_AUTHOR_LLM_CONFIG["max_tokens"] >= 2.5 * 588
+        author's object will not parse — and reasoning tokens count against any cap. Since
+        2026-09-22 neither stage sets `max_tokens`; the elapsed-gated walls bound a runaway."""
+        assert "max_tokens" not in MARKET_RANKER_LLM_CONFIG
+        assert "max_tokens" not in MARKET_QUERY_AUTHOR_LLM_CONFIG
 
     def test_each_litellm_timeout_sits_above_its_elapsed_gated_wall(self):
         """The wall is meant to be the binding bound. A litellm timeout below it would fire

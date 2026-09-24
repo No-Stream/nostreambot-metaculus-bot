@@ -46,6 +46,13 @@ class ReadCapture:
     route: FetchRoute
 
 
+@dataclass(slots=True)
+class LocalReadReceipt:
+    """Mutable per-call receipt proving local source bytes reached the parser path."""
+
+    encountered: bool = False
+
+
 @dataclass
 class QuestionRungBudget:
     """The rung allowances one QUESTION shares across its cited URLs.
@@ -125,6 +132,7 @@ class LadderContext:
     session: Any = None
     host_sems: dict[str, asyncio.Semaphore] | None = None
     read_captures: list[ReadCapture] = field(default_factory=list, repr=False)
+    local_read_receipt: LocalReadReceipt = field(default_factory=LocalReadReceipt, repr=False)
 
     def capture_read(self, result: FetchResult, artifact: ReadArtifact) -> None:
         fired: list[FetchRoute] = [attempt.rung for attempt in self.rungs if not attempt.skipped_reason]

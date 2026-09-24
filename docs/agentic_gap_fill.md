@@ -104,13 +104,21 @@ most load-bearing claim. Most questions need little; a few need a lot.
 The user brief is frozen before the loop starts and the loop only ever appends
 to the message list, so the brief acts as a stable prompt-cache prefix.
 
-## The four tools
+## Search and document tools
 
 Built by `tools.py` `build_gap_fill_tools`. Each returns a `ToolOutcome`
 (content markdown, links, a `method` tag, a status, a truncation flag). Each
 also carries its own per-call timeout, set as `timeout_s` on its `ToolSpec` in
 `build_gap_fill_tools` and scaled to how heavy the tool is; the loop enforces it
 and turns a breach into an error `ToolOutcome` rather than a crash.
+
+The serialized tool reply stays within `LoopConfig.max_result_chars` (8,000 by
+default). That budget includes the tool metadata, source labels, image-lead
+metadata, budget line, and any continuation or truncation marker; those headers
+do not get added on top of the text allowance. Dispatch reserves up to 512
+characters for the remaining-budget line
+(`GAP_FILL_V2_TOOL_BUDGET_LINE_RESERVE_CHARS`) before truncating the tool body,
+then clips the line to the room available.
 
 - **`search_news`**: recent and historical news via AskNews, using the same
   rate gate and concurrency semaphore as the primary AskNews provider. Returns a
@@ -119,23 +127,29 @@ and turns a breach into an error `ToolOutcome` rather than a crash.
   Meant for official documents, datasets, reports, and primary sources the
   driver believes exist. Returns results with URLs and excerpts, which the
   driver is told to follow up with `fetch` since excerpts rarely verify a claim
-  on their own. The lightest of the four, and the one on the tightest timeout.
+  on their own. This is the lightest search or document tool, and the one on the
+  tightest timeout.
 - **`fetch`**: fetch a URL and return its main content as markdown plus
   outbound links. This is an auto-escalating ladder (detailed below), so the
   driver is told not to avoid a URL because of its format. Supports windowed
-  reads: over-cap content is truncated with a `start_char=N` marker, and
-  continuations are served from cache. A PDF is read here too, in full text, and
-  paginates the same way. Its `ToolSpec` timeout leaves headroom above its own
-  fetch budget for the document auto-escalation on the last rung.
+  reads with `start_char=N`; continuations are served from cache. A PDF is read
+  here too, in full text, and paginates the same way. ZIP, workbook, and Word
+  sources accept exact-name `member` and `sheet` selectors; their inventory is
+  navigation only until content is selected. An HTML result can also include
+  bounded image-lead metadata. Call `view_image` to deliver selected pixels on
+  the next driver turn. Its `ToolSpec` timeout leaves headroom above its own
+  fetch budget for document escalation on the last rung.
 - **`read_document`**: ask a specific question of a specific document, and get
   back the passages of it that bear on the ask. Acquisition-first: it runs the
   free rungs (this run's cache, then plain HTTP, the impersonated retry of a 403,
   and headless Chromium) and answers from the page's own text with a deterministic
   BM25 passage digest
-  (`method=digest_local`), and only where the ladder holds nothing usable (no text at
-  all, or the one refused shape described below) does Gemini read the URL through the
-  `url_context` tool on the native `google-genai` SDK (`method=document`). So it is
-  for targeted extraction from long or complex
+  (`method=digest_local`). For a remote page or PDF, Gemini reads the URL through the
+  `url_context` tool on the native `google-genai` SDK (`method=document`) only when the
+  local ladder has no usable content or reaches the one refused shape described below. Local
+  ZIP, spreadsheet, and Word reads use the local parser and the same BM25 digest,
+  optionally narrowed by exact `member` or `sheet` selectors; parser refusals do
+  not enter the paid fallback. So it is for targeted extraction from long or complex
   documents and as a fallback when `fetch` was blocked, and the paid half of it
   is now reserved for hosts our own client cannot read: measured 2026-09-03,
   two of 47 archived fetch failures. Requires a precise `ask`: it is what selects
@@ -151,6 +165,10 @@ and turns a breach into an error `ToolOutcome` rather than a crash.
   so it is the one rung the plain fetch's self-reference refusal could not
   otherwise reach, and on Mantic the page it would read carries the other bots'
   forecasts.
+- **`view_image`**: fetch a selected image URL and normalize supported pixels to
+  a bounded PNG. The loop sends those pixels to the same driver on its next
+  ordinary request, which incurs image input tokens but makes no separate
+  image-reader call. Crop and provenance rules are detailed below.
 
 ### The three known-API tools (built and wired)
 
@@ -213,9 +231,8 @@ shared ladder. Everything per call (the ask, the wall origin, the rung list) is 
 process-run artifact; the question-platform refusal, which runs before the ladder because it is this caller's own
 policy and must refuse before anything is dialed (the resolution-source fetcher drops those URLs when
 it selects them); the throttle outcome and marker presentation after the shared ladder has classified
-the body; the auto-escalation to
-`read_document` for a document no local rung can turn into text; and the two shared fetch markers,
-emitted after each tool call with `question=None`.
+the body; the auto-escalation to `read_document` for an unreadable document; and the two shared
+fetch markers, emitted after each tool call with `question=None`.
 
 ### The shared fetch ladder, and the adapter over it
 
@@ -223,17 +240,20 @@ The ladder speaks the resolution-source vocabulary — thirteen `FetchStatus` va
 values, a `status_reason` where a status has more than one rule behind it — and the driver reads seven
 statuses plus a `method` the verification-tier map keys on. `agentic/ladder_adapter.py` is the ONE
 place the two meet, so a status the ladder gains cannot silently become an `ok` the loop stamps
-`fetched`. Its table:
+`fetched`. The table shows those mappings and the local-source selector outcomes that `tools.py`
+applies after the ladder returns:
 
 | `FetchStatus` (and reason) | loop `status` | loop `method` | what the driver is told |
 |---|---|---|---|
-| `success` | `ok` | from the `route`: `direct`/`meta_refresh` → `plain`, `pdf_local`, `impersonate`, `derived_api`, `rendered`, `wayback` | the text the ladder read |
+| `success` (ordinary text or document) | `ok` | `cache`, or from the `route`: `direct`/`meta_refresh` → `plain`, `pdf_local`, `impersonate`, `derived_api`, `rendered`, `wayback` | the text the ladder read |
+| `success` + selected local source | `ok` | `local` | the selected parsed text |
+| `success` + `navigation_only` | `ok` | `local_navigation` | a member/sheet inventory or internal image-acquisition notice |
 | `throttled` | `throttled` | `throttled` | blank text; the original rung is retained in the throttle marker |
 | `js_wall`, `empty_body`, `no_resolving_content` | `empty` | `plain` | "Plain fetch returned no extractable text." |
 | `unsupported_type` + `undecodable_body` | `empty` | `plain` | "Plain fetch could not decode the body as text." |
-| `unsupported_type` (any other) | `error` | `plain` | "Unsupported content type: X" |
-| `unsupported_type` + `image_needs_reader` | `ok` | `document_needed` | the use-`read_document` placeholder |
-| `unreadable_document` (scan, encrypted, malformed) | `ok` | `document_needed` | the same placeholder |
+| `unsupported_type` + `local_read_refused` | `error` | `plain` | terminal local-parser refusal; no paid fallback |
+| other `unsupported_type` | `error` | `plain` | "Unsupported content type: X" |
+| `unreadable_document` (scanned, encrypted, or malformed PDF) | `ok` | `document_needed` | the use-`read_document` placeholder |
 | `blocked` with a host status | `blocked` | `plain` | "Fetch blocked with HTTP N." |
 | `blocked` with none (a refusal we made) | `blocked` | `plain` | the platform-block message, hosts named |
 | `ssrf_blocked` | `blocked` | `plain` | non-public URL, or non-public redirect target |
@@ -241,17 +261,126 @@ place the two meet, so a status the ladder gains cannot silently become an `ok` 
 | `error` + `oversize_document` | `error` | `oversize_document` | the too-large-to-read message |
 | `error` (a 5xx, a malformed redirect, an over-cap body, a transport failure, a spent redirect budget) | `error` | `plain` | one clause per shape |
 
-Five facts of the tool contract the adapter exists to preserve, each pinned by a test: `ok` means
-content was read and nothing else, because `provenance._harvest_verification_tiers` grants the
-`fetched` tier on status alone; `method` is a `provenance._METHOD_TO_TIER` token for a real read and
-one the map does not carry for a non-read; `http_status` is set only by a host's response, never by a
-refusal the ladder made itself; `escalate_rendered` is the caller's thin-content signal with a chart
-block pinning it off; and links resolve against the DOCUMENT url, after a client-side redirect.
+For the current gap-fill image path, the shared ladder retains the raster and returns `success` with
+`navigation_only`; the adapter maps that intermediate result to `local_navigation`, which earns
+neither finding provenance nor a verification tier. The public `fetch` and `read_document` handlers
+intercept `local_kind=image` before returning a result and deliver pixels through the same viewer
+path as `view_image`. The internal acquisition notice is not returned to the driver, and the
+`image_needs_reader` adapter case is not used for supported gap-fill image responses.
+
+Five facts of the tool contract the adapter exists to preserve, each pinned by a test: status alone
+does not grant a verification tier; `method` must also map through `provenance._METHOD_TO_TIER`, and
+`local_navigation` is excluded from finding provenance; `http_status` is set only by a host's
+response, never by a refusal the ladder made itself; `escalate_rendered` is the caller's thin-content
+signal with a chart block pinning it off; and links resolve against the DOCUMENT url, after a
+client-side redirect.
 
 One capability the shared browser rung does not carry: the loop's old rendered rung escalated a
 render whose Content-Type was a document to `read_document`, and the shared rung classifies every
 rendered DOM as HTML instead. A page whose client-side redirect lands on a PDF now reads as a
 JavaScript wall rather than escalating. `FUTURE.md` carries the entry.
+
+### Local archives, spreadsheets, and Word documents
+
+The shared classifier recognizes ZIP, TSV, valid UTF-8 JSON served as
+`application/octet-stream`, Excel workbooks, and `.docx` files. Generic ZIPs
+are opened locally without extracting files. Supported readable members are
+plain text (`.txt`, `.md`, `.json`, `.xml`, `.log`), CSV/TSV, `.xlsx`/`.xlsm`,
+`.xls`, and `.docx`; nested archives and legacy `.doc` are not read. OOXML
+packages are identified before the same ZIP bytes can be mistaken for an
+ordinary archive.
+
+The complete bounded parse lives in the shared fetch cache. It is not shaped
+around the first caller's query, member, sheet, or output window: each later
+presentation applies its own selectors, digest, and pagination. In `fetch`, an
+archive with no `member` returns an exact-name member inventory. Selecting a
+workbook member without a `sheet` returns its sheet inventory. These inventories
+are navigation only, never evidence for a finding. Select a member or sheet to
+read the labeled text; long text uses the existing `start_char` continuation
+contract. `read_document` with no selectors runs its query digest across all
+readable sections; `member` and `sheet` narrow that search first.
+
+Spreadsheet output uses values saved in the workbook. `.xlsx` and `.xlsm`
+formula cells show the cached result when one exists; formulas are not evaluated
+locally, and a missing cached result is called out. `.xls` uses saved values and
+includes the same notice. For `.xls`, active percent format tokens display the
+stored value as a percentage; quoted or escaped literal percent signs preserve
+the stored number and include a format notice. Word extraction preserves body
+paragraph/table order, including nested tables, then reads each distinct
+non-empty default, first-page, and even-page header and footer. Their labels
+identify the variant and section, such as `first-page header section 1`.
+Directories appear in ZIP inventories as unreadable entries because they have
+no file content. Images, OCR, embedded objects, tracked changes, text boxes,
+footnotes, and unsupported Word parts are omitted with a disclosure in the
+returned text.
+
+The page response remains capped at 5 MiB. Expanded source content is capped at
+20 MiB, ZIP files at 128 entries, workbooks at 32 sheets and 250,000 cells, and
+all extracted text at 2 million characters. The process-run cache keeps at most
+64 MiB across parsed local-source text and retained image bodies. Exceeding a
+limit refuses the parse instead of returning partial content. A local parser
+refusal—including an unsupported or malformed container, encryption, or an
+exceeded cap—is terminal and never falls through to Gemini's paid `url_context`
+reader. Unsupported archive members are identified in the inventory and left
+unparsed. These limits live in `constants.py` and are spelled out in
+`docs/constants.md`.
+
+Run `make test_fetch_formats` for offline coverage of local parsing, image
+normalization, and image delivery. Its fake-driver checks verify that image
+bytes are serialized into the next driver request; they do not measure live
+model visual accuracy. For a network-backed check of one source, run
+`uv run python -m scripts.probes.fetch_diagnostic --source-url <URL> --query <query>`.
+That maintained diagnostic uses the production acquisition ladder and BM25
+passage selection, with the paid `url_context` rung disabled.
+
+The classifier parses supported formats locally without adding a ladder rung or
+making a paid call. Selected content is returned with `method=local` and receives
+the fetched verification tier. An inventory is returned with
+`method=local_navigation`, which does not earn a verification tier until the
+driver selects and reads content.
+
+### Image leads and same-driver image reading
+
+HTML fetches may expose up to three likely image URLs from figure captions or
+descriptive `alt` text. The adjacent metadata is untrusted and explicitly says
+that pixels have not been read. The driver calls `view_image(url, crop=None)` to
+inspect one. When the URL itself is an image, `fetch(url)` and
+`read_document(url, ask)` immediately deliver its pixels through the same view
+path as `view_image`; these calls do not return navigation instructions and do
+not fall through to the paid document reader. All three tools share one budget
+of four distinct normalized PNG hashes per question, including crops; duplicate
+pixels reuse their image ID. `view_image` reuses acquired bytes or obtains them
+through the shared ladder, then normalizes them to a metadata-free PNG. Static
+PNG, JPEG, WebP, BMP, and GIF are supported; SVG and all animated formats,
+including APNG, are rejected. Source images are limited to 25 megapixels. A
+delivered image is at most 2,048 pixels on its long edge, 2 megapixels total,
+and 2 MiB. Crop coordinates are `[left, top, right, bottom]` in the displayed
+image orientation after EXIF rotation.
+
+The loop waits for all tool replies in a batch, appends one byte-free message
+with the newly returned image IDs, then includes the pixels in the next normal
+request to the same driver model. This uses input tokens on that driver request
+and adds no separate image-reader LLM call. Transcripts store references, not
+base64. The plain ghost and v1 ghost keep those references in their shared
+context and resolve them through the same request wrapper. Visual findings
+carry `evidence_kind=image`, the delivered `image_id`,
+the exact registered source or final image URL, and a `visual_observation`.
+Numeric readings must be identified as transcribed or estimated. The loop
+accepts an image ID only after delivery on a preceding driver turn and checks
+that the cited URL belongs to that image. That proves which pixels were shown,
+not that the visual interpretation is correct.
+
+Normalized PNG bytes are persisted separately as
+`research_outputs/media/<sha256>.png`. Each byte-free entry in the artifact's
+`images` list has one `asset_path` per normalized PNG hash; `image_id` and
+`png_sha256` are that same hash. Entries carry `byte_count`,
+`representative_metadata`, and exact-deduplicated `observations`.
+Each observation retains source hashes and URLs, parent-page URLs, original and
+normalized dimensions, and crop coordinates. `source_urls` and
+`parent_page_urls` are stored separately as unions. Both artifact harvest paths
+validate each manifest hash before copying the sidecar into the canonical
+research archive. Existing text-only records continue to work without a media
+manifest.
 
 ### The shared throttle check
 
@@ -363,8 +492,10 @@ Structure:
   it first is deliberate: a flagged briefing error is the single most valuable
   thing v2 can produce.
 - The remaining findings grouped by topic, sorted.
-- Each finding renders as Claim, Source, a blockquoted Quote, Date, and
-  Retrieved how.
+- A text finding renders as Claim, Source, a blockquoted Quote, Date, and
+  Retrieved how. An image finding renders its image ID and driver-reported
+  visual observation in place of the quote, along with the same source, date,
+  and retrieval fields.
 - A `Pending leads:` list at the end for things the driver couldn't verify (dead
   links, paywalls, no coverage) but wanted to flag rather than guess at.
 
@@ -411,14 +542,19 @@ briefing URL at all: see `gates._check_url_provenance`.
 
 Each finding has one source URL. The driver is instructed to record evidence from
 different sources as separate findings, keeping each source's evidence in its own
-`claim` and `quote`, so every excerpt retains its own link.
+`claim` and `quote` or `visual_observation`, so every excerpt retains its own link.
 
-The quote spot-check in `_validate_findings_payload` is warn-only. A quote that
-is not found verbatim in the run's tool contents is logged and counted in
-`quote_mismatch_warnings`, but the finding is still banked, because
-`read_document` paraphrases and joins passages with ellipses. The warning is
-deduped per run on `(source_url, quote)`, so a finding re-listed in `conclude`'s
-`final_findings` counts once rather than once per submission.
+The quote spot-check in `_validate_findings_payload` applies only to text
+findings and is warn-only. A quote that is not found verbatim in the run's tool
+contents is logged and counted in `quote_mismatch_warnings`, but the finding is
+still banked, because `read_document` paraphrases and joins passages with
+ellipses. The warning is deduped per run on `(source_url, quote)`, so a finding
+re-listed in `conclude`'s `final_findings` counts once rather than once per
+submission. Image findings have no quote: the finding validator instead
+requires an image ID already delivered on a preceding driver turn and checks
+that its `source_url` is the image's registered source or final URL. The visual
+observation is scanned by detachment lint, but the code cannot verify that it
+matches the pixels.
 
 Two `Finding` fields carry their own rules. `derivation` (W3) is arithmetic-only
 synthesis over the finding's own quoted numbers: a derived table, bound or rate
@@ -572,7 +708,11 @@ out of budget. Three limits bound it:
   are where latency lives, so batching is encouraged.
 - **Max steps** `LoopConfig.max_steps`, which the seam doesn't override, so
   this one lives on the dataclass rather than in `constants.py` and takes no env
-  var. A step is one driver turn.
+  var. A step is one driver turn, and the last one is reserved for `conclude`
+  (below). Before 2026-09-22 the step cap was invisible to the driver: the budget
+  line showed only time and tool calls, so a driver that had both to spare was cut
+  off mid-research at step 20 with no conclude, no gap accounting and no ghost
+  (Q14333 smoke, GPT-6-Sol driver, 26/30 calls, 428 s left).
 - **The gate caps**, also on the dataclass. `max_gaps` is how many ranked gaps
   `set_research_plan` keeps (the driver ranks them, so the dropped tail is the
   least valuable; `GAP_FILL_V2_MAX_GAPS` feeds it). `max_plan_nudges` is how many
@@ -583,11 +723,13 @@ out of budget. Three limits bound it:
   budget-exhaustion conclusion bypasses the gate and never counts.
 
 There is also a **conclude threshold** `GAP_FILL_V2_CONCLUDE_THRESHOLD`. Once
-fewer than that many seconds remain, or the tool-call cap is hit, `_tool_schemas`
-stops offering the research tools and exposes only the internal ones
-(`_INTERNAL_TOOL_NAMES`), which forces the driver to wrap up inside the wall
-deadline. A budget line is appended to every tool result so the driver always
-knows how much room it has left.
+fewer than that many seconds remain, the tool-call cap is hit, or only the final
+turn of `max_steps` is left, `_tool_schemas` stops offering the research tools
+and exposes only the internal ones (`_INTERNAL_TOOL_NAMES`), which forces the
+driver to wrap up inside all three budgets. A budget line is appended to every
+tool result so the driver always knows how much room it has left: seconds, tool
+calls and turns used, plus the plan's gap ids (`plan_gaps=[...]`, a static list;
+findings carry no gap id, so the loop cannot tell which gaps are done).
 
 The loop also does light stuck-detection: an exact-duplicate tool call (same
 tool, same normalized arguments) bumps a `dup_tool_calls` counter and gets a
@@ -732,6 +874,11 @@ worth flagging); `conclude_gate_rejections` counts early conclusions the W2 gate
 sent back before accepting one, and persistent 2s in prod flag a gate that is too
 strict or a prompt that is unclear.
 
+The existing completion line is unchanged by image support: `tool_calls` includes
+`view_image`, while `fetches` and `reads` continue to count only `fetch` and
+`read_document`. The archive's `telemetry.per_tool_counts` retains the separate
+`view_image` count. There is no additional image marker.
+
 For a richer trace, the seam accepts an `archive_sink` callback. When the loop
 actually ran, the orchestrator captures `{transcript, telemetry, ghost, ghost_v1}`
 through it and writes it into the research archive (`persistence.py`), including
@@ -746,18 +893,21 @@ level up:
 | File | What's in it |
 | --- | --- |
 | `agentic_gap_fill.py` (one level up) | The seam. `run_gap_fill_v2` owns prompt/tool/config construction and the outermost soft-fail boundary, keeping the orchestrator thin, and hands the loop's `GhostContext` out through `ghost_context_sink`; `run_gap_fill_v2_ghost_v1` is the v1 ghost the stage (`research/gap_fill_stages.py`) issues once both passes have landed. |
-| `agentic/loop.py` | `run_agentic_loop` and the turn loop: message management, the three internal tool handlers, per-call handler dispatch, the ghost phase, `run_ghost_v1`, the `GAP_FILL_V2` completion marker, and the timeout/soft-fail wrapper. Everything that logs one of this loop's telemetry markers stays here so the markers keep their `...agentic.loop` logger. |
+| `agentic/loop.py` | `run_agentic_loop` and the turn loop: message management, the three internal tool handlers, per-call handler dispatch, image materialization at the LLM boundary, the ghost phase, `run_ghost_v1`, the `GAP_FILL_V2` completion marker, and the timeout/soft-fail wrapper. Everything that logs one of this loop's telemetry markers stays here so the markers keep their `...agentic.loop` logger. |
 | `agentic/tool_schemas.py` | `_INTERNAL_TOOL_NAMES` (the loop's own tools, and their timeout) plus the JSON-schema builders for the tool list advertised each turn. |
 | `agentic/loop_state.py` | `_LoopState` (the one mutable per-run record), the `_ToolCall` / `_ToolExecutionResult` per-turn records, the assistant-message parsers that produce them, and the budget arithmetic. |
 | `agentic/provenance.py` | URL and quote normalization, the quote-grounding span logic, and the per-call harvesters behind the provenance gate and the W4 verification tiers. |
 | `agentic/gates.py` | The W1 plan gate's nudge and gap coercion, the W2 conclude gate, the W3 `source_url` check, and W4 tier stamping plus idempotent findings banking. |
-| `agentic/dispatch.py` | One assistant turn's tool calls in, one tool message each out: batch admission (plan gate, call budget, duplicate detection), provenance absorption, and the tool-message/rejection rendering. |
-| `agentic/tools.py` | `build_gap_fill_tools`, `question_ladder_context` and the seven advertised tool handlers, plus `_fetch_via_ladder`, the one seam onto the shared fetch ladder, and this caller's window presentation and throttle outcome. |
+| `agentic/dispatch.py` | One assistant turn's tool calls in, one tool message each out: batch admission (plan gate, call budget, duplicate detection), provenance absorption, byte-free image references appended after tool replies, and the tool-message/rejection rendering. |
+| `agentic/tools.py` | `build_gap_fill_tools`, `question_ladder_context` and the search, fetch, document, image, and known-API handlers, plus `_fetch_via_ladder`, the one seam onto the shared fetch ladder, source selectors, window presentation, and throttle outcome. |
 | `agentic/ladder_adapter.py` | One `FetchResult` read as this ladder's own `PlainFetchResult`: the status and method tables, and the message the driver is told for every non-read. |
 | `agentic/local_document.py` | What the free ladder holds for one URL (`HeldDocument`), the passage digest `read_document` serves, the url_context size gate, and the `AGENTIC_FETCH_LOCAL_DOC` marker. The parses themselves are held in `research/document_cache.py`, shared with the ladder's document verdict. |
 | `agentic/fetch_outcomes.py` | This ladder's result type (`PlainFetchResult`), the question-platform self-reference refusal (metaculus.com and `competitions.mantic.com`), and the escalate-to-a-reader outcome. Its per-body-shape builders are dead since the loop moved onto the shared classifier and are deleted with the rest of the loop's own rungs. |
 | `agentic/tool_backends.py` | The outbound half of the tools: the AskNews and Exa clients with their retry ladders and concurrency caps, the Gemini `url_context` document read and its fixed in-thread ceiling, and the markdown formatting of what comes back. |
 | `agentic/tool_descriptions.py` | The driver-facing tool descriptions and JSON parameter schemas: behavioral text, so a change here changes what the driver does. |
+| `agentic/image_messages.py` | Byte-free image references in archived messages and their multimodal materialization for the next driver request. |
+| `research/source_documents.py`, `research/source_presentation.py` | Bounded local source parsers and caller-time member/sheet selection, inventories, and query digests. |
+| `research/image_leads.py`, `research/image_assets.py`, `research/image_persistence.py` | HTML image-lead metadata, bounded image normalization, and content-addressed sidecar persistence and archive verification. |
 | `research/robots_policy.py` (outside `agentic/`, shared with the Tier-1 url_context rung) | The `Google-Extended` robots.txt group parser and per-host cache behind the pre-check on every paid read, written because `urllib.robotparser` falls back to `User-agent: *`. |
 | `agentic/driver_prompt.py` | The four prompt builders: `build_system_prompt`, `build_user_brief`, `build_ghost_prompt`, `build_ghost_v1_prompt`, plus the `SupportedQuestion` type. |
 | `agentic/artifact.py` | `render_findings` (the output section) and `detachment_lint`. |

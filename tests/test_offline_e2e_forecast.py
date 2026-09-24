@@ -283,7 +283,9 @@ def _install_llm_router(monkeypatch: pytest.MonkeyPatch) -> None:
                     }
                 ]
             return await real_acompletion(
-                **kwargs, mock_response="driving the agentic loop", mock_tool_calls=mock_tool_calls
+                **kwargs,
+                mock_response="driving the agentic loop",
+                mock_tool_calls=mock_tool_calls,
             )
         # The ghost phase calls with tools=None, and _summarize_ghost parses a plain block.
         return await real_acompletion(**kwargs, mock_response=_CANNED_BINARY)
@@ -334,18 +336,15 @@ class _FakeAskNewsSDK:
 
 
 def _make_gemini_response() -> Any:
-    """Minimal google-genai GenerateContentResponse shape with one grounding chunk.
+    """Minimal response with a self-cited redirect link for the offline e2e path."""
 
-    Passes the grounded-chunk floor (>=1 chunk) so _format_grounded_response
-    returns non-empty text with a Sources section.
-    """
-
-    web = SimpleNamespace(uri="https://vertex-redirect/blob", title="BLS Employment Situation", domain="bls.gov")
-    chunk = SimpleNamespace(web=web)
-    metadata = SimpleNamespace(grounding_chunks=[chunk], grounding_supports=None, web_search_queries=["unemployment"])
+    metadata = SimpleNamespace(grounding_chunks=None, grounding_supports=None, web_search_queries=["unemployment"])
     candidate = SimpleNamespace(grounding_metadata=metadata, url_context_metadata=None)
     return SimpleNamespace(
-        text="Google Search grounding: the April 2026 unemployment rate was 4.1%.",
+        text=(
+            "Google Search found an April 2026 unemployment rate of 4.1% "
+            "[BLS Employment Situation](https://vertexaisearch.cloud.google.com/grounding-api-redirect/offline-e2e-token)."
+        ),
         candidates=[candidate],
     )
 
@@ -582,6 +581,15 @@ def _install_provider_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(research_providers.asyncio, "sleep", _fast_sleep)
 
     monkeypatch.setattr(gemini_search, "build_gemini_client", _fake_gemini_client)
+    monkeypatch.setattr(
+        gemini_search,
+        "resolve_search_redirects",
+        AsyncMock(
+            return_value={
+                "https://vertexaisearch.cloud.google.com/grounding-api-redirect/offline-e2e-token": "https://bls.gov/report",
+            }
+        ),
+    )
 
     # Prediction-market + resolution-source aiohttp sessions.
     monkeypatch.setattr(prediction_market, "_get_session", _FakeHttpSession)

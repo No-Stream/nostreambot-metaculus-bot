@@ -138,6 +138,12 @@ Each has cost real work at least once. The group's pointer carries the reasoning
 
 - Run `make sync_all` first, which "residual analysis" always implies: a single-source pull silently drops what it did
   not fetch, and Actions artifacts expire at 90 days.
+- Routine residual refreshes use the committed collectors, analysis tools and `RoundSpec` library API documented in
+  the playbook and `docs/performance_analysis.md`. Do not write new scratch scripts, copy prior-round drivers, or
+  recreate standard dimensions for a routine refresh without an agreed functionality change. `scratch/residual_<date>/`
+  holds round inputs and outputs. There is no integrated multi-source round CLI today; report missing standard
+  functionality and agree on a maintained addition before building it. Focused follow-up analyses may use scratch
+  scripts.
 - Era boundaries are merge-to-main committer timestamps, never authoring dates, which have produced a phantom era and a
   wrong presence rate (`performance_analysis/eras.py`).
 - Era-bucket every calibration, aggregation or bias claim; three conclusions have flipped under it. A fitted

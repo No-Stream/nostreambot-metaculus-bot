@@ -6,17 +6,27 @@ import asyncio
 from collections import OrderedDict
 from dataclasses import dataclass, replace
 from datetime import datetime
+from itertools import count
 from time import monotonic
 from typing import Protocol
 
+from metaculus_bot.constants import LOCAL_SOURCE_CACHE_MAX_BYTES
 from metaculus_bot.research import document_cache, document_text, resolution_presentation
 from metaculus_bot.research.fetch_ladder.digest import DigestPassages, bm25_digest
 from metaculus_bot.research.fetch_ladder.policy import LadderPolicy
 from metaculus_bot.research.fetch_ladder.throttle import matched_throttle_phrase
 from metaculus_bot.research.fetch_ladder.verdict import HtmlVerdict, PageExtraction
-from metaculus_bot.research.http_fetch import DatawrapperChartRef
+from metaculus_bot.research.http_fetch import DatawrapperChartRef, pdf_parse_semaphore
+from metaculus_bot.research.image_leads import ImageLead
 from metaculus_bot.research.resolution_body_text import _truncate_with_marker
 from metaculus_bot.research.resolution_fetch_result import FetchResult, FetchRoute
+from metaculus_bot.research.source_documents import ParsedSource
+from metaculus_bot.research.source_presentation import (
+    digest_source,
+    select_source_sections,
+    source_inventory,
+    source_text,
+)
 from metaculus_bot.research.wayback import WaybackSnapshot, snapshot_age_days, wayback_lead
 
 _MAX_ENTRIES = 50
@@ -61,6 +71,7 @@ class HtmlRead:
     unreadable_embeds: tuple[str, ...]
     links: tuple[str, ...]
     routing_body: bytes
+    image_leads: tuple[ImageLead, ...] = ()
 
     def _prepare(self, policy: LadderPolicy, *, route: FetchRoute) -> tuple[HtmlVerdict, bool] | FetchResult | None:
         if policy.verdict.body_route(self.content_type or "", self.routing_body) != "html":
@@ -124,6 +135,7 @@ class HtmlRead:
             passages_returned=passages_returned,
             passages_grounded=passages_grounded,
             fallback_used=fallback_used,
+            image_leads=self.image_leads if policy.collect_links else (),
         )
 
     def _ordinary_result(
@@ -275,6 +287,109 @@ class PdfRead:
 
 
 @dataclass(frozen=True, slots=True)
+class SourceRead:
+    """A complete bounded local parse, presented according to the current caller policy."""
+
+    url: str
+    http_status: int
+    content_type: str | None
+    source: ParsedSource
+
+    @property
+    def retained_bytes(self) -> int:
+        return self.source.retained_bytes
+
+    def present(self, policy: LadderPolicy, *, query: str, route: FetchRoute, now: datetime) -> FetchResult:
+        del now
+        if policy.caller == "gap_fill_v2" and self.source.kind != "word":
+            text = source_inventory(self.source)
+            navigation_only = True
+        elif policy.caller == "gap_fill_v2":
+            text = source_text(select_source_sections(self.source))
+            navigation_only = False
+        else:
+            if policy.per_url_max_chars is None:
+                raise RuntimeError("resolution-source local reads require a presentation cap")
+            digest = digest_source(
+                self.source,
+                query=query,
+                source_url=self.url,
+                max_chars=policy.per_url_max_chars,
+            )
+            text = digest.block if digest.passages else ""
+            navigation_only = False
+        if not text.strip():
+            return FetchResult(
+                url=self.url,
+                status="no_resolving_content",
+                text="",
+                http_status=self.http_status,
+                content_type=self.content_type,
+                status_reason="no_matching_passage",
+                route=route,
+                local_kind=self.source.kind,
+            )
+        return FetchResult(
+            url=self.url,
+            status="success",
+            text=text,
+            http_status=self.http_status,
+            content_type=self.content_type,
+            route=route,
+            local_kind=self.source.kind,
+            navigation_only=navigation_only,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ImageSource:
+    url: str
+    body: bytes
+    content_type: str | None
+
+    @property
+    def retained_bytes(self) -> int:
+        return len(self.body)
+
+
+@dataclass(frozen=True, slots=True)
+class ImageRead:
+    source: ImageSource
+    http_status: int
+
+    @property
+    def url(self) -> str:
+        return self.source.url
+
+    @property
+    def retained_bytes(self) -> int:
+        return self.source.retained_bytes
+
+    def present(self, policy: LadderPolicy, *, query: str, route: FetchRoute, now: datetime) -> FetchResult:
+        del query, now
+        if policy.caller != "gap_fill_v2":
+            return FetchResult(
+                url=self.url,
+                status="unsupported_type",
+                text="",
+                http_status=self.http_status,
+                content_type=self.source.content_type,
+                status_reason="image_needs_reader",
+                route=route,
+            )
+        return FetchResult(
+            url=self.url,
+            status="success",
+            text=f"Raster image retained for local viewing: {self.url}",
+            http_status=self.http_status,
+            content_type=self.source.content_type,
+            route=route,
+            local_kind="image",
+            navigation_only=True,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class WaybackRead:
     """A dated archive capture plus the complete read made from its bytes."""
 
@@ -373,20 +488,28 @@ class WaybackRead:
         return replace(snapshot_read, url=self.url, text=text, route="wayback")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class _Entry:
     artifact: ReadArtifact
     route: FetchRoute
+    aliases: set[str]
+    sequence: int
 
 
 _CACHE: OrderedDict[str, _Entry] = OrderedDict()
+_ENTRIES: OrderedDict[int, _Entry] = OrderedDict()
+_SEQUENCES = count()
 
 
 async def get(url: str, *, policy: LadderPolicy, query: str, now: datetime, budget_s: float) -> FetchResult | None:
     entry = _CACHE.get(url)
     if entry is None:
         return None
-    if isinstance(entry.artifact, (HtmlRead, WaybackRead)):
+    if isinstance(entry.artifact, SourceRead):
+        presentation = _present_source(
+            entry.artifact, policy, query=query, route=entry.route, now=now, budget_s=budget_s
+        )
+    elif isinstance(entry.artifact, (HtmlRead, WaybackRead)):
         presentation = entry.artifact.present_html(
             policy,
             query=query,
@@ -400,19 +523,103 @@ async def get(url: str, *, policy: LadderPolicy, query: str, now: datetime, budg
     if result is None:
         if _CACHE.get(url) is entry:
             _CACHE.pop(url)
+            entry.aliases.discard(url)
+            if not entry.aliases:
+                _ENTRIES.pop(entry.sequence, None)
         return None
     if _CACHE.get(url) is entry:
         _CACHE.move_to_end(url)
+        _ENTRIES.move_to_end(entry.sequence)
     return replace(result, cache_hit=True)
 
 
+async def _present_source(
+    artifact: SourceRead,
+    policy: LadderPolicy,
+    *,
+    query: str,
+    route: FetchRoute,
+    now: datetime,
+    budget_s: float,
+) -> FetchResult:
+    """Present cached source text under the parser gate without leaking a slot on cancellation."""
+    started = monotonic()
+    gate = pdf_parse_semaphore()
+    await asyncio.wait_for(gate.acquire(), timeout=max(0.0, budget_s))
+    remaining_s = budget_s - (monotonic() - started)
+    if remaining_s <= 0.0:
+        gate.release()
+        raise TimeoutError
+    worker = asyncio.create_task(asyncio.to_thread(artifact.present, policy, query=query, route=route, now=now))
+    release_gate_here = True
+    try:
+        try:
+            return await asyncio.wait_for(asyncio.shield(worker), timeout=remaining_s)
+        except TimeoutError:
+            release_gate_here = False
+            worker.add_done_callback(lambda task: _release_source_gate(task, gate))
+            raise
+        except asyncio.CancelledError:
+            release_gate_here = False
+            worker.add_done_callback(lambda task: _release_source_gate(task, gate))
+            raise
+    finally:
+        if release_gate_here:
+            gate.release()
+
+
+def _release_source_gate(worker: asyncio.Task[FetchResult], gate: asyncio.Semaphore) -> None:
+    try:
+        worker.exception()
+    except asyncio.CancelledError:
+        pass
+    finally:
+        gate.release()
+
+
 def put(requested_url: str, artifact: ReadArtifact, *, route: FetchRoute) -> None:
-    entry = _Entry(artifact=artifact, route=route)
-    for key in dict.fromkeys((requested_url, artifact.url)):
+    aliases = set(dict.fromkeys((requested_url, artifact.url)))
+    entry = _Entry(artifact=artifact, route=route, aliases=aliases, sequence=next(_SEQUENCES))
+    _ENTRIES[entry.sequence] = entry
+    for key in aliases:
+        previous = _CACHE.get(key)
+        if previous is not None:
+            previous.aliases.discard(key)
+            if not previous.aliases:
+                _ENTRIES.pop(previous.sequence, None)
         _CACHE[key] = entry
         _CACHE.move_to_end(key)
-    while len(_CACHE) > _MAX_ENTRIES:
-        _CACHE.popitem(last=False)
+    _evict_to_bounds()
+
+
+def _evict_to_bounds() -> None:
+    while len(_ENTRIES) > _MAX_ENTRIES or _retained_bytes() > LOCAL_SOURCE_CACHE_MAX_BYTES:
+        _, entry = _ENTRIES.popitem(last=False)
+        for alias in entry.aliases:
+            if _CACHE.get(alias) is entry:
+                _CACHE.pop(alias)
+
+
+def _retained_bytes() -> int:
+    return sum(getattr(entry.artifact, "retained_bytes", 0) for entry in _ENTRIES.values())
+
+
+def local_source_for(url: str) -> ParsedSource | None:
+    entry = _CACHE.get(url)
+    if entry is None or not isinstance(entry.artifact, SourceRead):
+        return None
+    _CACHE.move_to_end(url)
+    _ENTRIES.move_to_end(entry.sequence)
+    return entry.artifact.source
+
+
+def image_source_for(url: str) -> ImageSource | None:
+    entry = _CACHE.get(url)
+    if entry is None or not isinstance(entry.artifact, ImageRead):
+        return None
+    _CACHE.move_to_end(url)
+    _ENTRIES.move_to_end(entry.sequence)
+    return entry.artifact.source
 
 
 def with_lead(artifact: ReadArtifact, lead: str, *, url: str) -> ReadArtifact:
@@ -423,6 +630,7 @@ def with_lead(artifact: ReadArtifact, lead: str, *, url: str) -> ReadArtifact:
 
 def clear() -> None:
     _CACHE.clear()
+    _ENTRIES.clear()
 
 
 def cacheable(artifact: ReadArtifact) -> bool:

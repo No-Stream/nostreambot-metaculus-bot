@@ -1072,9 +1072,11 @@ platform client. Everything in this section was verified against the live API on
 2026-09-08, and the post-651 per-bin smoke of 2026-09-09 re-verified the publish path (see
 "Running it" below).
 
-The current target is Preseason 2: slug `preseason-2` (`MANTIC_TOURNAMENT_ID`),
-project id 4, forecasting closes 2026-09-20 12:00 UTC (`MANTIC_TOURNAMENT_END_DATE`),
-`score_type` `spot_baseline_tournament`. It holds four questions: one binary, one
+The current target is Series 2: slug `series-2` (`MANTIC_TOURNAMENT_ID`), project id 5,
+opened 2026-09-23, forecasting closes 2026-12-16 23:59 UTC (`MANTIC_TOURNAMENT_END_DATE`),
+`score_type` `spot_baseline_tournament`, API-verified 2026-09-24 with five open practice
+questions and submissions not yet open. The previous target was Preseason 2: slug
+`preseason-2`, project id 4, forecasting closed 2026-09-20 12:00 UTC. It held four questions: one binary, one
 multiple choice with four options, one discrete with 450 bins and
 `multi_resolution: true` (scored against eleven daily bitcoin prices and averaged),
 and one date question with twelve daily bins. Series 2 follows it, under rules
@@ -1085,7 +1087,7 @@ numeric and discrete with up to 2,000 bins; date questions default to daily bins
 and a multi-resolution question scores one distribution against several
 resolutions. Series 1 windows were exactly one hour long, opened on the hour, with
 up to three questions per hour. The Series 2 cadence is unannounced. Forecast every
-question: a miss costs more than a poor forecast under that scoring. When Series 2
+question: a miss costs more than a poor forecast under that scoring. When the next season
 opens, re-point `MANTIC_TOURNAMENT_ID` and `MANTIC_TOURNAMENT_END_DATE` in
 `constants.py`; an unknown slug answers HTTP 400 on the posts list and 404 on the
 tournament route. Two startup checks make that hand-over hard to miss, the Series 2
@@ -1583,9 +1585,9 @@ Operator steps, in order:
    nothing to enable in the Actions UI. Then enable the Mantic dispatcher job with
    `make cronjob_dispatch_setup ARGS="--apply --enable-mantic"` (paid, ask-first; see
    "Scheduling reliability" above).
-4. When Series 2 opens, update `MANTIC_TOURNAMENT_ID` and `MANTIC_TOURNAMENT_END_DATE`;
-   the "Series 2 discovery" and "Stale slug goes red" checks above are what flag the
-   hand-over.
+4. Done 2026-09-24: `MANTIC_TOURNAMENT_ID` and `MANTIC_TOURNAMENT_END_DATE` re-pointed to
+   Series 2 (`series-2`, closing 2026-12-16). For the next season, the "Series 2 discovery"
+   and "Stale slug goes red" checks above are what flag the hand-over.
 
 ## Cost discipline
 
@@ -1662,7 +1664,7 @@ The paid run is the operator's last step.
   be on `main`. See "Scheduling reliability" above.
 - `make probe_resolver QUESTION=<id>`: replays the gaps the archive recorded for one
   question through the production gap-fill v1 resolver path at every model and
-  search-context cell of a grid (default: the current resolver model and `gpt-5.6-luna`,
+  search-context cell of a grid (default: the current resolver model and `gpt-6-luna`,
   each at high, medium and low) and writes the answers beside OpenRouter's per-call cost
   to `scratch/probes/`. Up to about $0.20 a call on the operator's personal OpenRouter key
   (the donated key is forced off); the script prints its ceiling first and refuses without
@@ -2276,6 +2278,13 @@ outer tail, the supply probe, per-model recovery, the spot-peer rule,
 `spot_peer_delta`, and the clip-threshold sweep) live in
 `docs/performance_analysis.md`.
 
+**Routine residual refreshes use the committed CLI and `RoundSpec` library API described
+there and in the residual playbook.** Do not write new scratch scripts, copy prior-round
+drivers, or recreate standard dimensions without an agreed functionality change. Keep dated
+`scratch/residual_<date>/` directories for round data and reports. Focused follow-up analyses
+may use scratch scripts; if routine support is missing, report the gap and agree on a maintained
+addition.
+
 `metaculus_bot/performance_analysis/` evaluates the live bot's calibration
 against actual resolutions. The pull hits only the Metaculus API (resolved
 questions plus the bot's own comments, user id 275109, auth via
@@ -2287,8 +2296,9 @@ uv run python -m metaculus_bot.performance_analysis --tournament <slug> --output
 ```
 
 The `--tournament` default is `DEFAULT_TOURNAMENT` (`performance_analysis/cli.py`)
-and lags the live season, so pass the current slug explicitly. Pass
-`--cached <path>` to re-analyze a saved dataset without re-fetching.
+and lags the live season, so pass the current slug explicitly. It collects one Metaculus slug
+per call; on a routine refresh, also pass `--prior <previous same-slug dataset>` to detect
+platform re-resolutions. Pass `--cached <path>` to re-analyze a saved dataset without re-fetching.
 
 The width monitor (`performance_analysis/width_monitor.py`) tracks how wide the
 published numeric distributions are and how well that width is calibrated, split
@@ -2371,15 +2381,25 @@ permanently unrecoverable. The twice-weekly launchd job in
 
 ### Auditing a round pull, and probing the season slugs
 
-Two free CLIs sit either side of a residual-round pull. Both were per-round scratch
-scripts pasted forward for months before promotion, so their history lives in
-`scratch/residual_*/`.
+Use these maintained commands to preflight a pull and audit its output:
 
 ```bash
 make probe_slugs                                     # before the pull: is the season config current?
 make verify_pull ARGS="--records scratch/residual_<date>/perf_<slug>.json \
   --prior-records scratch/residual_<prior>/perf_<slug>.json"
 ```
+
+`verify_pull` requires the raw posts from the same pull in a sibling file named
+`perf_<slug>_checkpoint.json`. The performance-analysis CLI does not write this checkpoint;
+`collector.fetch_resolved_questions` returns raw posts, but a separate call is a separate
+snapshot. Comparing separate snapshots cannot establish coverage of the exact scored pull.
+If maintained CLI support for checkpoint output is needed, agree on that addition rather than
+adding a scratch capture script.
+
+These are pull checks, not a full-round driver. For routine round assembly, use the committed
+`RoundSpec` library API described in `docs/performance_analysis.md` and the residual playbook.
+There is no integrated multi-source round CLI; keep `scratch/residual_<date>/` for round inputs
+and outputs rather than copied driver or dimension scripts.
 
 `scripts/probe_slugs.py` reads one project object per candidate slug,
 `/api/projects/tournaments/<slug>/`, and reports whether it exists, its visibility,
@@ -2395,8 +2415,8 @@ season under a spelling the constants do not name. Post and question counts stay
 `make supply_probe`'s job; this probe pages nothing.
 
 `scripts/verify_pull.py` is fully offline. It reads the pull's checkpoint (the raw post
-payloads it fetched, written beside the records file, so one `--records` path locates
-both) and runs five checks: which resolved posts produced no record and why, which
+payloads saved beside the records file as `<records stem>_checkpoint.json`, so one
+`--records` path locates both) and runs five checks: which resolved posts produced no record and why, which
 resolved members of a covered group post produced none, the diff against the prior round
 (`--output` writes that cohort as JSON), whether every platform score on an overlapping
 record reproduces exactly, and whether the pull still parses per-model forecasts and

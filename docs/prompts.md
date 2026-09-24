@@ -57,7 +57,7 @@ Two step-8 bullets are ONE format constant each with the elicited object as the 
 ## What the base prompts carry, and where
 
 - **Market clause** (`_strong_evidence_market_clause`, all three base prompts) renders ONLY when the research carries `MARKET_SNAPSHOT_SECTION_HEADER` (`## Prediction Market Snapshot`, defined in `prompts.py` and imported by `research/section_format.py` the way `TS_ANCHOR_SECTION_HEADER` already was), so a backtest, a flag-off run or a soft-failed provider no longer hands the forecaster 1.5k chars about a table it does not have. Prod-neutral: the provider emits the header whenever it rendered anything, including the deliberate-empty "no sufficiently relevant market" sentence. One consumer needs the header handed to it explicitly: the gap-fill v2 driver's template skeleton (`research/agentic/driver_prompt.py`) renders the base prompts with a placeholder research string, so that placeholder now carries `MARKET_SNAPSHOT_SECTION_HEADER` and the driver dry-runs against the same template the forecasters read. The rendered table's legend (`MARKET_SIGNAL_LEGEND`, `research/market_retrieval/rendering.py`) owns NOTATION (liquidity labels and `no-liquidity-data`, evidential order, the four relation tiers, RESOLVED, `↳` sub-rows, `[remaining N]`); the prompt owns POLICY through `_MARKET_READING_RULES`: extrapolate from an other-cut market rather than discount it vaguely; liquidity governs a relation-vs-liquidity conflict because a thin price is noisy however tight its relation; a multi-outcome ladder is a DISTRIBUTION and never an equality constraint on a tail (the last two both q45189). That constant replaced the 1,908-char `_MARKET_RELATION_WEIGHTING_SENTENCE`, which re-taught the legend's notation, and `_MARKET_LIQUIDITY_WEIGHTING_SENTENCE` was removed as a verbatim duplicate of the legend.
-- **`_SOURCE_PROVENANCE_LADDER`** (all three) says the briefing's claims arrive tagged by source tier, names the tag shape (`[A: ...]` to `[D: ...]`; the FULL tier definitions live once, in the research-side `_SOURCE_TIER_TAG_INSTRUCTION`, and the ladder carries a one-clause gloss per tier, so a tier re-cut has to move both or the forecaster reads the old boundary), keeps the two usage clauses the tag instruction does not state (use a C-tier report's cited facts, not its framing; D-tier is suggestive only), the motivation, primary-record-override and implausibility bullets, and a two-line definition of `[unverified attribution]` (the pipeline could not match the outlet; the claim may still be correct; treat it as untiered, not low-tier). The four A-D definitions it used to restate IN FULL were cut back to that gloss because every artifact record since the tagging landed in prod (99 of 1,069 archive records) already carries the tags.
+- **`_SOURCE_PROVENANCE_LADDER`** (all three) says the briefing's claims arrive tagged by source tier, names the tag shape (`[A: ...]` to `[D: ...]`; the FULL tier definitions live once, in the research-side `_SOURCE_TIER_TAG_INSTRUCTION`, and the ladder carries a one-clause gloss per tier, so a tier re-cut has to move both or the forecaster reads the old boundary), keeps the two usage clauses the tag instruction does not state (use a C-tier report's cited facts, not its framing; D-tier is suggestive only), the motivation, primary-record-override and implausibility bullets, and a two-line definition of `[unverified attribution]` (the tag named no outlet, or the pipeline could not match the one it named; the claim may still be correct; treat it as untiered, not low-tier). The four A-D definitions it used to restate IN FULL were cut back to that gloss because every artifact record since the tagging landed in prod (99 of 1,069 archive records) already carries the tags.
 - **`_NULL_RESULT_READING`** (all three, after the Strong/Moderate/Weak rubric): a null search result licenses only "we could not find evidence of X", and the weight of an absence scales with how well-indexed the source is. Receipt q44799, where the gap-fill resolver reported "I found no authoritative public record" and four of six forecasters converted that into "the authorization is absent"; the two that discounted it scored best. Its third bullet (absence is weaker still where the actor already demonstrated the behavior) was removed: it carried no receipt of its own and pushed the wrong way on q43837. `gap_fill_analyzer_prompt` carries a separately-worded auditor version ("NULL RESULTS ARE SEARCH OUTCOMES"). The stacking prompts are excluded, test-enforced.
 - **`_COUNT_IN_PERIOD_REFERENCE_CLASS`** (all three, reference-class step), verbatim as shipped: for a question asking how many events of a kind occur in a period, the admissible outside view is the pooled realized rate over the longest comparable history, and a schedule of currently known candidates updates that rate rather than replacing it. Receipt q44561, where all six members built a "no failure announced yet, so Poisson(1.0)" schedule model instead of the pooled FDIC bank-failure rate.
 - **`_REMAINING_EXPOSURE_SENTENCE`** (binary and MC, outside-view step): rates apply to the exposure that REMAINS, applied from now until the deadline with the elapsed event-free part of the window treated as observed, because a rate spread over the whole window prices time that has already passed. In binary it opens the conditional-hazard bullet, which is the same rule specialised to recurring events; in MC it is one bullet on its own, since MC has no hazard bullet. Receipt q43837 (six members applied a monthly announcement rate over the full window with 16 days already elapsed event-free, then OR-ed it with a scheduled path the rate already contained). It replaced `_REMAINING_EXPOSURE_RULE`, whose first bullet restated the hazard bullet twenty lines below it and whose second restated the disjointness clause that lives in the binary union line ("union only over paths that cannot be the same event"), so one rule read three times. MC never computes a union and carries no disjointness text.
@@ -158,6 +158,22 @@ Merging this constant to main changed the live research-output format, so it was
 gap-fill v2 config-era boundary (the july15 merge) rather than being merged or cherry-picked on its
 own.
 
+Since 2026-09-24 each tag must name the specific outlet or publisher (`"[A: BLS]"`,
+`"[B: Reuters]"`, `"[D: Reddit]"`), a category is explicitly not a name, a D-tier tag names the
+platform or account, and a claim is tagged only when the outlet can be named and the tier is clear.
+The old examples were categories (`"[A: official]"`, `"[C: aggregator]"`) and taught category tags:
+in the Q14333 smoke (run 36008672128) 10 of Gemini's 12 tags were class descriptions such as
+`[A: peer-reviewed journal]`, and the 2026-09-22 probe's old-prompt control calls show the same
+style (85% of tags), so it predates self-citation. A category cannot be checked against the
+retrieval record, which let the model claim tier A while naming nothing; Gemini's output now has
+such tags rewritten to `[unverified attribution]` (`research/gemini_attribution.py`). The rule is
+shared, so GPT native search and the AskNews summarizer name outlets too, though only Gemini's tags
+are checked. The A to D definitions did not change. The 2026-09-24 named-tag probe (5 Gemini
+responses on Q14333 and Q45571, `scratch/attribution_named_tags_2026-09-24/`) found 101 named tags
+and 0 class tags (a second run: 127 and 0), against 85% class tags on the old prompt; the model often makes the tag the link
+label, which the Gemini formatter normalizes (see `docs/research.md`). Pins: `TestSourceTierTagging` in
+`tests/prompts/test_research_clauses.py` (named examples present, category examples absent).
+
 ### `OUTSIDE_VENUE_MARKET_ODDS_POLICY` and `_OUTSIDE_VENUE_MARKET_ODDS_BULLET`
 
 The FOCUS AREAS market-odds bullet, narrowed away from the four venues the structured
@@ -179,25 +195,23 @@ was confirmed against. Restating the policy per prompt is what let the two Perpl
 keep the retired blanket "consider all relevant prediction markets" ask after this one was narrowed,
 until a review caught them.
 
-### `_AUTO_ANNOTATED_CITATION_CLAUSE`
+### `_SEARCH_LINK_CITATION_CLAUSE`
 
-The citation instruction for the Gemini grounding provider. The SDK returns grounding metadata that
-`research/gemini_search.py` splices in as plain `[N]` markers, and the model ALSO writes its own
-hierarchical `[1.2.3]` indices, which index a chunk list we do not hold. 173 of 323 archived Gemini
-sections carried them, 163 of those alongside our real markers, so a forecaster reading the section
-cannot tell which brackets are checkable. The formatter strips them after splicing; this clause
-stops the model producing them in the first place. It is Gemini-only, because the markdown branch is
-the native-search provider, whose citations are the model's own by design.
+The citation instruction for the Gemini grounded-search provider. Google drops `groundingMetadata`
+on a substantial share of Gemini 3.8 Flash calls, including calls where the model searched. The
+2026-09-22 self-citation probe showed the model wrote Google's
+`vertexaisearch.cloud.google.com/grounding-api-redirect/...` links in 10/10 calls, while grounding
+metadata appeared in only 1/10. The formatter resolves those exact links itself, numbers distinct
+resolved target URLs, and marks links that do not resolve as unverified. The same probe resolved
+135/136 unique links with one no-follow GET (HTTP 302 plus `Location`), and no non-redirect links
+were written. Receipt: `scratch/gemini_grounding_2026-09-22/README.md` and
+`scratch/gemini_grounding_2026-09-22/selfcite_raw/selfcite_*.json`.
 
-The closing carve-out is spelled out because `_SOURCE_TIER_TAG_INSTRUCTION` renders 26 lines further
-down the SAME prompt and orders the model to write bracketed `[A: official]` tier tags, so an
-unqualified ban on self-invented bracketed annotation reads as a contradiction. Over-compliance is
-the direction nothing guards: a model that stops tagging costs the forecaster prompts the
-source-tier signal they weight on, and leaves `research/gemini_attribution.py` no tags to check.
-Under-compliance is already handled downstream by `_strip_model_citation_indices`, which removes the
-dotted indices and keeps the tier tags in a mixed group. The carve-out is phrased as "still applies"
-rather than as a requirement, because the tier block's own closing line licenses leaving a claim
-untagged when its tier is unclear.
+The wording requires the model to copy only tool-returned URLs in full and to keep the
+`_SOURCE_TIER_TAG_INSTRUCTION` tags alongside each link. Numeric citation markers remain forbidden;
+the formatter assigns its own `[N]` markers after link verification. The `markdown` branch remains
+the native-search provider's model-authored citation style, so this Gemini-only clause does not
+change it.
 
 ### `SUMMARIZER_SOFT_FAIL_BANNER`
 
@@ -232,6 +246,11 @@ definition, so a tier re-cut has to move both places.
 Every line is pre-indented to 15 spaces or more so `clean_indents` preserves the nesting in all
 three prompts despite their differing baselines, binary at 12 and multiple-choice and continuous at
 8.
+
+The `[unverified attribution]` bullet says the tag named no outlet, or named one the pipeline could
+not match against its retrieval record (the first cause added 2026-09-24, when class-description
+tags started being rewritten; see `_SOURCE_TIER_TAG_INSTRUCTION`). The rest of the bullet is
+unchanged: the claim may still be right, and it reads as untiered rather than low-tier.
 
 ### `_NULL_RESULT_READING`
 
@@ -573,7 +592,7 @@ pre-window warning semantics must stay intact.
 - **`GRADE EVERY GAP` in `gap_fill_analyzer_prompt`** (2026-09-09). Three grade fields beside each gap in the schema (`answerable_now`, `already_in_first_pass`, `same_need_as`) make the prompt's own discipline rules checkable by code: `research/targeted.py` `triage_gaps` drops a failing gap before its resolver call, with the rules and their receipts in `docs/research.md` "v1 triage". The clause sits immediately before the schema, states the consequence once with its reason (code reads the grades and drops a failing gap before its search is paid for), defines each field in one sentence, fixes the position convention (1 = the first gap) and names the two commonest repeat shapes from the archive (a dashboard and its monthly summary; official and preliminary results, questions 45088 and 44880). Receipt: about a third of v1's resolver calls bought nothing on the archive, future-dated asks 18% of gaps, re-bought first-pass readings on 47% of the forced current-reading slots, a paraphrase pair on one question in three (`scratch/cost_pass_2026-09-09/v1_gap_redundancy/REDUNDANCY.md`); a positional cap was rejected because it dropped the useful gap on 4 of 6 traced questions. The ANSWERABLE NOW block keeps its mandate and carve-out untouched, so the two sentences it shares with the `answerable_now` and `already_in_first_pass` definitions (the never-the-resolution-date rule and the dated-reading carve-out) are a candidate prose cut for a later pass, not taken here. Size: the analyzer renders at 4,766 whitespace-collapsed characters on a minimal fixture against 4,018 at the previous commit (+748, +18.6%), the 2026-09-02 method from the size paragraph above on a minimal fixture rather than that paragraph's market-bearing one, which is why the before figure reads 4,018 rather than 4,023; the whole increase is the clause and the three schema lines. Pins: `tests/prompts/test_research_clauses.py` `TestGapFillAnalyzerGradeFields`.
 - **Resolution criteria and fine print in `gap_fill_search_prompt`** (2026-09-09). The per-gap resolver reads the question's `resolution_criteria` and `fine_print` under a labelled block ("Resolution criteria (what the question actually resolves on):", then "Fine print:" when there is any) right after the question title and before the search instruction, because a gap is routinely "which of these figures resolves the question" and the model answering it had only the title to go on. Receipt q44267, the 2026-09-09 round's worst miss at -95.66 spot peer: the analyzer, which already saw both fields, posed the right gap (the headline count of People's Liberation Army sorties around Taiwan, or the subset that entered the air-defence identification zone), and the resolver ruled for the headline count on the strength of sister question 40685, whose title asks about sorties "operating around Taiwan"; all six forecasters ratified it, and the resolving value (26, the zone-entry subset) fell below every member's 2.5th percentile. The slot is two required parameters on the prompt and a caller that passes the question object (`research/targeted.py` `_resolve_single_gap`), with no flag and no branch beyond omitting an empty fine print; the v2 driver brief (`research/agentic/driver_prompt.py` `build_user_brief`) already carried both. Pins: `tests/prompts/test_research_clauses.py` `TestGapFillSearchPrompt` (the slot, its placement, the empty fine print, the `(none provided)` placeholder shared with the analyzer, and a regression pin built from 44267's real criteria text asserting the zone-entry wording is present) and `tests/test_gap_fill_pass.py` `test_resolver_prompt_carries_the_resolution_criteria_and_fine_print` for the wiring.
 - **Two vintage / as-of bullets in `web_research_prompt`'s GUIDELINES**: carry the publication date of every dated or forward-looking claim, and for a schedule or plan state when and where it was announced rather than presenting an undated recollection as a current fact. Both consumers (native search and gemini) see them.
-- **`_AUTO_ANNOTATED_CITATION_CLAUSE`**: the gemini branch of `citation_clause` now tells the model not to write its own citation markers, naming hierarchical `[1.2.3]` tokens and self-invented bracketed numbering. This is the prompt half of the strip described under Gemini grounded search; the `markdown` (native-search) branch is untouched, since there the citations are the model's own by design.
+- **`_SEARCH_LINK_CITATION_CLAUSE`**: the Gemini branch of `citation_clause` requires exact markdown links copied from the search tool, including Google's redirect tokens, and keeps source-tier tags alongside them. The formatter resolves and numbers those links; unresolved links are marked `[unverified link]`. The `markdown` (native-search) branch is unchanged.
 - **`OUTSIDE_VENUE_MARKET_ODDS_POLICY` / `_OUTSIDE_VENUE_MARKET_ODDS_BULLET`**: one policy, two renderings: the public constant is the sentence, the private one is that sentence as a FOCUS AREAS bullet. `web_research_prompt` interpolates the bullet; the two Perplexity prompts (`research/providers.py::_perplexity_provider`, `research/orchestrator.py::_call_perplexity`) interpolate the sentence, because their bodies are single `clean_indents` blocks where an interpolated column-0 line would defeat the dedent. All three carry it because Perplexity becomes the PRIMARY provider whenever AskNews credentials are absent, and the two Perplexity sites kept asking for "all relevant prediction markets" after the bullet was narrowed, until a review caught it. **Narrowed** (wording confirmed verbatim by the operator 2026-09-01) to market-implied or crowd odds from sources OTHER than the four venues the prediction-market provider already snapshots live, with an explicit instruction not to report Polymarket/Kalshi/Manifold/PredictIt prices out of search results, whose indexed copies are usually days stale. Narrowed rather than removed because every realized instance of decisive market evidence came from outside those four (Good Judgment Open on q44869, CME FedWatch on q45401, the Metaculus crowd on q20683) while the only measured harm mode was stale covered-venue prices contradicting correct live snapshot rows. Benchmarking still suppresses the bullet entirely; note the leakage guard was strengthened at the same time, because after the narrowing the old "the string `Prediction market` is absent" assertion passed for the wrong reason (it is absent in both modes now), so the test asserts no covered venue, Metaculus, or CME FedWatch appears anywhere in a benchmarking prompt.
 
 Not narrowed, and deliberately: the Exa and Perplexity fallback providers carry their own market-seeking instructions (`research/providers.py`, `research/orchestrator.py`) that this narrowing does not touch. They never run in prod (AskNews is the primary), so the inconsistency is latent; those two strings are where the narrowing would go if it is ever wanted.

@@ -79,6 +79,10 @@ precommit_all:
 test:
 	$(call RUN_UNBUFFERED,-m pytest)
 
+.PHONY: test_fetch_formats
+test_fetch_formats:
+	$(call RUN_UNBUFFERED,-m pytest tests/test_source_documents.py tests/test_source_presentation.py tests/test_fetch_ladder_local_sources.py tests/test_local_source_tools.py tests/test_image_tools.py tests/test_image_assets.py tests/test_image_leads.py tests/test_agentic_images.py tests/test_image_persistence.py tests/test_fetch_formats_e2e.py tests/test_source_probe.py)
+
 # Verbose test run: shows which tests are running/failing and where, with
 # short tracebacks. Useful when debugging a regression.
 test_verbose:
@@ -193,7 +197,7 @@ test_live:
 	$(call RUN_UNBUFFERED,-m pytest -m live -v --tb=short --timeout=300)
 
 test_fast:
-	$(call RUN_UNBUFFERED,-m pytest -m "not live and not e2e" --tb=short)
+	$(call RUN_UNBUFFERED,-m pytest -m 'not live and not e2e' --tb=short)
 
 # --- Research persistence (backtest replay) ---
 
@@ -356,7 +360,7 @@ cost_report:
 # One-question probe of gap-fill v1's per-gap resolver: replays the gaps the archive recorded
 # for question QUESTION=<question id> through the production resolver path
 # (gap_fill_search_prompt + build_native_search_llm) at every model x search_context_size cell
-# of a grid (default: the current resolver model and gpt-5.6-luna, each at high/medium/low),
+# of a grid (default: the current resolver model and gpt-6-luna, each at high/medium/low),
 # and writes the answers side by side with OpenRouter's per-call cost and tokens to
 # scratch/probes/. PAID (ask-first gate, see AGENTS.md): gaps x cells resolver calls at up to
 # ~$0.20 each on the operator's PERSONAL OpenRouter key (the donated key is forced off); the

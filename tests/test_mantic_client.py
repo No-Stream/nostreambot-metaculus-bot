@@ -164,7 +164,7 @@ class TestTournamentFetchFilter:
 
         params = client._create_url_params_for_search(api_filter)
         assert "forecast_type" not in params
-        assert params["tournaments"] == ["preseason-2"]
+        assert params["tournaments"] == [MANTIC_TOURNAMENT_ID]
         assert params["statuses"] == ["open"]
 
     def test_group_question_mode_passes_through(self, client: ManticClient, monkeypatch: pytest.MonkeyPatch):

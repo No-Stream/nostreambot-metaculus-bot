@@ -2,7 +2,7 @@
 
 ``--plain-llm`` and ``--lineup`` together decide the stacker model, and that choice has
 to be visible in two places at once: the on-disk cache slug (so an opus-4.5 free-tier
-run and an opus-4.8 prod run never overwrite each other) and the kwargs handed to
+run and an opus-5.5 prod run never overwrite each other) and the kwargs handed to
 ``run_stacker_batch``. Both derivations live here so they cannot drift apart.
 """
 
@@ -28,11 +28,11 @@ def _active_stacker_slug(args: argparse.Namespace) -> str:
     """Filesystem slug for the stacker this run uses, for per-stacker cache keying.
 
     Only the LLM-stacker arms (stack / stack_aug) are slugged so a stacker swap
-    (e.g. opus-4.5 free-tier vs opus-4.8 prod) never overwrites another stacker's
+    (e.g. opus-4.5 free-tier vs opus-5.5 prod) never overwrites another stacker's
     results, while deterministic arms (median / mean / pdf_*) stay shared. The
     selection mirrors the stacker construction in ``_stage_llm_stacker``:
 
-    * ``--plain-llm --lineup prod`` → opus-4.8 (``PROD_STACKER_MODEL``).
+    * ``--plain-llm --lineup prod`` → opus-5.5 (``PROD_STACKER_MODEL``).
     * ``--plain-llm`` other lineups → opus-4.5 (``DEFAULT_STACKER_MODEL``).
     * No ``--plain-llm`` → the default donated-key wrapper, whose primary is also
       ``DEFAULT_STACKER_MODEL`` (opus-4.5).

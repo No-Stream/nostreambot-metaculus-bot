@@ -842,7 +842,7 @@ def financial_data_provider(is_benchmarking: bool = False) -> ResearchCallable:
         # temperature=None defers reasoning models to provider defaults; redundant
         # on ft 0.2.92 (GeneralLlm ctor default is already None). No top_p.
         temperature=None,
-        max_tokens=500,
+        # No max_tokens (2026-09-22): reasoning tokens counted against the old 500 cap; the timeout bounds a runaway.
         reasoning={"effort": "low"},
         timeout=FINANCIAL_CLASSIFIER_TIMEOUT,
         # allowed_tries=1 so the elapsed-gated transient retry in

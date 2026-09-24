@@ -301,7 +301,10 @@ async def test_parallel_tool_calls_execute_concurrently_and_append_budget_line()
     # tool_messages[0] is the set_research_plan result; the parallel batch follows.
     tool_messages = _tool_messages(result)[1:4]
     assert [message["name"] for message in tool_messages] == ["alpha", "beta", "gamma"]
-    budget_lines = [message["content"].splitlines()[-1] for message in tool_messages]
+    budget_lines = [
+        next(line for line in message["content"].splitlines() if line.startswith("[budget: "))
+        for message in tool_messages
+    ]
     assert len(set(budget_lines)) == 1
     assert budget_lines[0].startswith("[budget: ")
     # plan (1) + alpha/beta/gamma (3) = 4 tool calls used. The default plan's gap
@@ -337,9 +340,7 @@ async def test_budget_threshold_switches_to_conclude_mode_and_shrinks_tools() ->
     # The plan turn (tool message [0]) runs at full budget; the search (message
     # [1]) advances the clock to 5s remaining, tipping into must-conclude mode.
     # The default plan's gap id trails as the W1 work-list suffix.
-    assert (
-        "[budget: 5s remaining — you must conclude now unaddressed_gaps=[g1]]" in _tool_messages(result)[1]["content"]
-    )
+    assert "[budget: 5s remaining — you must conclude now plan_gaps=[g1]]" in _tool_messages(result)[1]["content"]
     # calls[2] is the conclude turn — the first LLM call made after the clock
     # crossed the threshold, so its tool schema is shrunk to internals only.
     assert _tool_names(fake_llm.calls[2]["tools"]) == ["set_research_plan", "record_findings", "conclude"]
@@ -617,6 +618,118 @@ async def test_cap_exhaustion_restricts_next_step_to_internal_tools() -> None:
     # calls[2] is the conclude turn — offered only internal tools once the cap hit.
     assert _tool_names(fake_llm.calls[2]["tools"]) == ["set_research_plan", "record_findings", "conclude"]
     assert result.telemetry.tool_calls == 3
+
+
+class _ResearchUntilForcedDriver:
+    """A driver that researches whenever external tools are offered and concludes only when forced.
+
+    It plans on turn one, then searches on every turn that offers ``search_web``, and calls
+    ``conclude`` as soon as the schema shrinks to internal tools. This is the shape of the
+    2026-09-22 smoke (Q14333): a diligent driver that never volunteers a conclusion, so the
+    loop's own budget signals are the only thing that can make it wrap up.
+    """
+
+    def __init__(self, ghost_text: str = "") -> None:
+        self.calls: list[dict[str, Any]] = []
+        self._ghost_text = ghost_text
+
+    async def __call__(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        *,
+        tool_choice: str | None = None,
+    ) -> Any:
+        self.calls.append({"tools": tools, "tool_choice": tool_choice})
+        if tool_choice == "none":
+            return _response(content=self._ghost_text)
+        turn = len(self.calls)
+        if turn == 1:
+            return _response(tool_calls=[_plan_call()])
+        if "search_web" in _tool_names(tools):
+            return _response(tool_calls=[_tool_call(f"search{turn}", "search_web", {"query": f"q{turn}"})])
+        return _response(tool_calls=[_tool_call(f"done{turn}", "conclude", {"gap_accounting": _accounting("g1")})])
+
+
+async def _search_ok(**_: Any) -> ToolOutcome:
+    return ToolOutcome(content_markdown="result", method="search")
+
+
+class TestStepCapForcesConclusion:
+    """The step cap must warn the driver and leave it a conclude turn, like the other two budgets.
+
+    Regression for the Q14333 smoke: the loop exhausted ``max_steps`` while the budget line still
+    reported spare tool calls and wall time, so the driver never saw "must conclude", the transcript
+    ended on an unread tool result, and conclude (gap accounting) and the ghost phase never ran.
+    """
+
+    @pytest.mark.parametrize("max_steps", [2, 3, 5, 20])
+    async def test_a_driver_that_never_volunteers_still_concludes_explicitly(self, max_steps: int) -> None:
+        driver = _ResearchUntilForcedDriver()
+
+        result = await run_agentic_loop(
+            "system",
+            "user",
+            [_tool_spec("search_web", _search_ok)],
+            _config(max_steps=max_steps, max_tool_calls=100, wall_deadline_s=100.0),
+            llm_call=driver,
+        )
+
+        assert result.telemetry.steps == max_steps
+        assert result.telemetry.concluded_early is True
+        assert _tool_names(driver.calls[-1]["tools"]) == ["set_research_plan", "record_findings", "conclude"]
+        assert all("search_web" in _tool_names(call["tools"]) for call in driver.calls[:-1])
+
+    async def test_budget_line_counts_turns_and_announces_the_final_turn(self) -> None:
+        driver = _ResearchUntilForcedDriver()
+
+        result = await run_agentic_loop(
+            "system",
+            "user",
+            [_tool_spec("search_web", _search_ok)],
+            _config(max_steps=4, max_tool_calls=100, wall_deadline_s=100.0),
+            llm_call=driver,
+        )
+
+        budget_lines = [
+            next(line for line in message["content"].splitlines() if line.startswith("[budget: "))
+            for message in _tool_messages(result)
+        ]
+        assert "1/4 turns used" in budget_lines[0]
+        assert "2/4 turns used" in budget_lines[1]
+        # After turn 3 only one turn is left, so the line must say so before the driver spends it.
+        assert "you must conclude now" in budget_lines[2]
+
+    async def test_ghost_phase_runs_after_a_step_cap_conclusion(self) -> None:
+        driver = _ResearchUntilForcedDriver(ghost_text='```json\n{"question_type":"binary","posterior_prob":0.3}\n```')
+
+        result = await run_agentic_loop(
+            "system",
+            "user",
+            [_tool_spec("search_web", _search_ok)],
+            _config(max_steps=3, max_tool_calls=100, wall_deadline_s=100.0),
+            llm_call=driver,
+            ghost_prompt="ghost now",
+        )
+
+        assert result.ghost is not None
+        assert result.ghost.parsed_summary == "posterior_prob=0.3000"
+
+    async def test_step_forced_conclusion_bypasses_the_conclude_gate(self) -> None:
+        """The forced final turn is a budget-exhaustion conclusion, which the W2 gate must never block."""
+        driver = _ResearchUntilForcedDriver()
+
+        result = await run_agentic_loop(
+            "system",
+            "user",
+            [_tool_spec("search_web", _search_ok)],
+            # Two turns: the plan, then the forced conclude, with no fetch ever made (fetch floor unmet).
+            _config(max_steps=2, max_tool_calls=100, wall_deadline_s=100.0),
+            llm_call=driver,
+        )
+
+        assert result.telemetry.conclude_gate_rejections == 0
+        assert result.telemetry.concluded_early is True
 
 
 _CLEAN_FINDING = {

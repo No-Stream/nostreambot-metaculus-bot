@@ -17,10 +17,15 @@ per-round **procedure** (Pre-pull → Recon → Pull → automated dims → per-
 dossiers with adversarial verification → Synthesize). Read this doc for *why a number
 means what it means*; read those two for *what to type* and *what order to do it in*.
 
-Every constant, function, module path and CLI flag here was verified against the code
-on 2026-09-03, and the Mantic and date-question passages on 2026-09-09. Measured figures are
-dated and carry their receipt path, because most of them are a snapshot of one round's
-archive rather than a repo constant.
+The pull and round-builder APIs described here were checked against current code on
+2026-09-20. Measured figures are dated and carry their receipt path, because most are
+snapshots of one round's archive rather than repo constants.
+
+**Routine refreshes use the committed CLI and library API below.** Do not write new scratch
+scripts, copy prior-round drivers, or recreate standard dimensions for a routine refresh without
+an agreed functionality change. Dated `scratch/residual_<date>/` directories hold round inputs
+and outputs. Focused follow-up analyses may use scratch scripts; if a standard step is missing,
+report the gap and agree on a maintained addition.
 
 ## The round pull, and why `--prior` is mandatory
 
@@ -95,7 +100,7 @@ did not fetch. Three archives:
   (`NUMERIC_DEGENERATE_DECLARATION`, `NUMERIC_AGGREGATE_GRID_MISMATCH`,
   `SPREAD_UNDEFINED`, `MARKET_RANKING_DEGRADED`, `CDF_MAXSTEP_CLIP`), the 2026-09-01
   bundle's set (`EXTREME_CALL`, `THIN_PUBLISH_FLOOR`, `RESOLUTION_SOURCE_FETCH`,
-  `CREDIT_ROLE_SPEND`, `GEMINI_GROUNDING_DENSITY`, `GEMINI_UNSUPPORTED_ATTRIBUTION`,
+  `CREDIT_ROLE_SPEND`, `GEMINI_GROUNDING_DENSITY` (historical; retired 2026-09-22), `GEMINI_UNSUPPORTED_ATTRIBUTION`,
   `FINANCIAL_NOISE_FLAG`, `MARKET_TIER_CAPPED`, `FRED_UNKNOWN_SERIES`), the 2026-09-02
   additions (`AGENTIC_FETCH_THROTTLED`, `MEMBER_FORECAST`), plus `GEMINI_USAGE` (the
   google-genai token and grounded-query accounting for all three Gemini surfaces, which bill
@@ -1147,10 +1152,10 @@ records. The measured effect on the archive is triple-era cov80 0.727 → 0.818,
 n=11 is one record (q44842) going from miss to covered rather than a distributional
 shift.
 
-Two API notes for any round script:
+Two API notes for any analysis caller:
 
 - `compute_pit_details` is now `compute_pit_reading` (`width_monitor.py`), renamed with
-  no compatibility wrapper on purpose, so a stale round script fails with an ImportError
+  no compatibility wrapper on purpose, so a stale caller fails with an ImportError
   rather than silently getting the retired convention.
 - `EraWidthMetrics.pit_std` / `mean_pit` are `float | None` behind a
   `point_metrics_underpowered` gate and render as `n/a`, so JSON consumers must expect
@@ -1406,38 +1411,45 @@ Every round produces one `perf_all_tagged.json`, the dataset every downstream la
 rules for building it are the same round to round and live in two tracked modules:
 `performance_analysis/round_dataset.py` (load, dedup, heal, tag, cohort) and
 `performance_analysis/round_outputs.py` (the four output files and the console report).
-Everything that names one particular round lives in a `RoundSpec` the round's own script
-constructs, so a new round is a spec and two calls rather than another copy of the script. The
-script had been copy-pasted forward ten times before this extraction, once per round, and each
-copy diverged; one of them carried a wrong era boundary for four months.
+The package CLI pulls and reports one Metaculus tournament slug per call. For the tagged
+multi-source round dataset, callers provide a `RoundSpec` to the maintained library API below.
+There is no integrated command that collects all round inputs and assembles the full round.
+Do not create a per-round scratch driver or copy standard dimension scripts; `scratch/residual_<date>/`
+is for round inputs and outputs. Use a scratch script only for a distinct follow-up analysis.
 
-### The round script
+### Calling the round dataset API
+
+This is a direct invocation/configuration example for the tracked API, not a request to save a
+new round script.
 
 ```python
-SPEC = RoundSpec(
-    round_dir=THIS_DIR,
-    label="2026-09-16",
-    prior_dir=THIS_DIR.parent / "residual_2026-09-09",
-    prior_label="2026-09-09",
-    telemetry_dir=REPO / "backtests" / "telemetry_archive",
-    weighted_slug="summer-futureeval-2026",
-    required_slugs=("summer-futureeval-2026",),
-    optional_slugs=("metaculus-cup-fall-2026", "minibench"),
-    reused_slugs=("spring-aib-2026", "fall-aib-2025", "summer-futureeval-2026"),
-)
+from pathlib import Path
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
-write_round_outputs(build_round_dataset(SPEC))
+from metaculus_bot.performance_analysis.round_dataset import RoundSpec, build_round_dataset
+from metaculus_bot.performance_analysis.round_outputs import write_round_outputs
+
+round_dir = Path("scratch/residual_<date>")
+prior_dir = Path("scratch/residual_<prior-date>")
+spec = RoundSpec(
+    round_dir=round_dir,
+    label=round_dir.name.removeprefix("residual_"),
+    prior_dir=prior_dir,
+    prior_label=prior_dir.name.removeprefix("residual_"),
+    telemetry_dir=Path("backtests/telemetry_archive"),
+    weighted_slug="<weighted-slug>",
+    required_slugs=("<required-slug>",),
+    optional_slugs=("<optional-slug>",),
+    reused_slugs=("<reused-slug>",),
+)
+write_round_outputs(build_round_dataset(spec))
 ```
 
-Filenames inside the round directory are conventional, so the spec names slugs rather than
-paths: `perf_<slug>.json` for each pulled tournament, `question_weights.json` for the
-leaderboard weights, `platform_rescored.json` for the pull's own re-resolution diff, and the
-four outputs. A required slug whose file is missing logs a WARNING and contributes nothing; an
-optional slug whose file is missing is silent, which is how a probed-but-empty successor
-tournament is meant to behave. `label` and `prior_label` are the provenance strings a record
-carries (`fresh_2026-09-16`, `reused_2026-09-09_tagged`), so they are the round's own name and
-not a path.
+Stage the conventional inputs in the round directory before calling the API: `perf_<slug>.json`
+for each pulled tournament, `question_weights.json` for leaderboard weights, and
+`platform_rescored.json` for the pull's re-resolution diff. A required slug whose file is missing
+logs a WARNING and contributes nothing; an optional slug whose file is missing is silent, which
+is how a probed-but-empty successor tournament is meant to behave. `label` and `prior_label` are
+the provenance strings a record carries, so they are the round names and not paths.
 
 ### What the spine does, in order
 

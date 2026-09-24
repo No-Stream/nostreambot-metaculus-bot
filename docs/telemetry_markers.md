@@ -25,12 +25,12 @@ incidents behind the design.
 |---|---|---|
 | `EXTRACTION_RUNG` | `value_extraction.py:_log_extraction` | Per-forecast extraction-rung outcome. `qtype` is the block type: a question type, or `pmf` for the per-bin block a Mantic enumerable grid is elicited with since 2026-09-09. The question's own type rides the `MEMBER_FORECAST` line with the same `question` and `model`. |
 | `BLOCK_FALLBACK` | `value_extraction.py:_run_ladder` | Per-forecast fallback record, only when the winning value came from a candidate other than the first the best-first walk tried. |
-| `GAP_FILL_V2` | `research/agentic/loop.py:_log_completion` | Per-question gap-fill v2 agentic loop completion counters. |
+| `GAP_FILL_V2` | `research/agentic/loop.py:_log_completion` | Per-question gap-fill v2 agentic loop completion counters, including image tool calls in `tool_calls`. |
 | `GHOST_PRE` / `GHOST_PRE_JSON` | `research/agentic/loop.py:_set_research_plan_tool` | Pre-research ghost snapshot (the counterpart to `GHOST_FORECAST` taken before research starts) and its JSON companion. |
 | `GHOST_FORECAST` / `GHOST_FORECAST_JSON` | `research/agentic/loop.py:_run_ghost_phase` | Concluding ghost-forecast summary and its full-fidelity JSON companion. |
 | `GHOST_FORECAST_V1` / `GHOST_FORECAST_V1_JSON` | `research/agentic/loop.py:run_ghost_v1`, issued from `research/gap_fill_stages.py` | The same ghost re-asked with gap-fill v1's section in its brief, once both passes have landed; the plain ghost's shapes under a `_V1` token. |
 | `AGENTIC_FETCH_THROTTLED` | `research/agentic/tools.py:_throttled_fetch_outcome` | Per-fetch: a host answered the gap-fill v2 ladder with a rate-limit interstitial under HTTP 200. |
-| `AGENTIC_FETCH_LOCAL_DOC` | `research/agentic/local_document.py:log_local_document_read` | Per-document: the gap-fill v2 ladder read a document locally instead of paying for a Gemini `url_context` call. |
+| `AGENTIC_FETCH_LOCAL_DOC` | `research/agentic/local_document.py:log_local_document_read` | Per-document: the gap-fill v2 loop served held PDF or page text locally instead of paying for a Gemini `url_context` call. |
 | `AGENTIC_URLCONTEXT_ROBOTS_SKIP` | `research/agentic/tools.py` | Per-URL: the gap-fill v2 paid document read was skipped before spending anything, because robots.txt disallows `Google-Extended`. |
 | `OPEN_BOUND_PILING` | `numeric/diagnostics.py:log_open_bound_piling_diagnostics` | Per-forecaster open-bound piling on a numeric declaration. |
 | `CLOSE_MARGIN` | `close_margin.py:format_close_margin_marker`, emitted from `forecaster.py` at submit time | Per-question submit-time close margin. |
@@ -78,7 +78,8 @@ incidents behind the design.
 | `QUESTION_CAP_FORFEIT` | `forecaster.py:forecast_questions` | The `max_questions_per_run` cap. |
 | `SKIP_GUARD_UNREADABLE` | `forecaster.py:_drop_questions_with_unreadable_forecast_history` | Per-question WARNING: the re-spend guard could not read `my_forecasts`, so the question was dropped rather than treated as never forecast. |
 | `GEMINI_UNGROUNDED_SUPPRESSED` | `research/gemini_search.py:_format_grounded_response` | Gemini grounded-search suppression. |
-| `GEMINI_GROUNDING_DENSITY` | `research/gemini_search.py:_format_grounded_response` | The floor's complement: one row per response that passed the grounded-chunk floor. |
+| `GEMINI_SELF_CITATION` | `research/gemini_search.py:_format_grounded_response` | Per-response self-citation verification counts, emitted before the grounded-search floor decision. |
+| `GEMINI_GROUNDING_DENSITY` | Retired parse-only spec (historical production logs; 2026-09-22) | Historical grounded-chunk density; no longer emitted after the self-citation migration. |
 | `GEMINI_UNSUPPORTED_ATTRIBUTION` | `research/gemini_search.py:_check_attributions` | The embellishment channel, per response. |
 | `GEMINI_USAGE` | `research/gemini_search.py`, `research/agentic/tool_backends.py`, `research/resolution_source.py` | Per-call google-genai token and grounded-query accounting for all three Gemini surfaces. |
 | `AGENTIC_DOCUMENT_UNGROUNDED_SUPPRESSED` | `research/agentic/tools.py:read_document` | The `read_document` twin of `GEMINI_UNGROUNDED_SUPPRESSED`. |
@@ -286,13 +287,15 @@ are retuned on evidence rather than taste.
 
 ### AGENTIC_FETCH_LOCAL_DOC
 
-Per-document: the gap-fill v2 ladder read a document without paying for it
+Per-document: the gap-fill v2 loop served held PDF or page text without paying for it
 (`research/agentic/local_document.py:log_local_document_read`). Registered because it is how the
-whole local-first change gets measured: before it, every PDF the driver met went to a paid Gemini
+PDF-first local-read change is measured: before it, every PDF the driver met went to a paid Gemini
 `url_context` read, and the only trace of one was the spend. `method` separates the two local
 routes: `pdf_local` is a fetch serving a PDF's extracted text (which paginates, so it selects
-nothing); `digest_local` is a `read_document` answering an ask from BM25-selected passages of text
-already held.
+nothing); `digest_local` is a `read_document` answering an ask from BM25-selected passages of PDF
+or page text already held. The later ZIP/workbook/Word readers and image views do not emit this
+marker; their tool outcomes, selectors, and image IDs remain in the archived research transcript,
+and `GAP_FILL_V2` keeps its existing line shape.
 
 `chars` is the local text held, not the window or digest block handed to the driver, so one
 figure is comparable across both routes and against `URL_CONTEXT_SIZE_GATE_TOKENS` (`chars / 4`).
@@ -1184,38 +1187,58 @@ dropped post can be named without a join. What to do when it fires is in `docs/o
 ### GEMINI_UNGROUNDED_SUPPRESSED
 
 Gemini grounded-search suppression (`research/gemini_search.py:_format_grounded_response`):
-`google_search` returned no grounding chunks and no `url_context` read succeeded, so the section
-is dropped as ungrounded parametric output. The orchestrator then records `status="empty"`, which
-is NOT alertable and bumps no counter, so this WARN is the only signal, and without a spec the
-suppression rate was unmeasurable from the archive. `qid_kind` is `question_id`
-(`gemini_search.py` passes `question.id_of_question`).
+the response contained no cited link that resolved to a real search target or to a URL successfully
+read by `url_context`, so the section is dropped as ungrounded parametric output. The orchestrator
+then records `status="empty"`, which is NOT alertable and bumps no counter, so this WARN is the
+only signal. `qid_kind` is `question_id` (`gemini_search.py` passes `question.id_of_question`).
+
+### GEMINI_SELF_CITATION
+
+One INFO line for every grounded-search response that reaches formatting
+(`research/gemini_search.py:_format_grounded_response`), emitted before the floor decision. The
+marker records `links` (all extracted markdown-link occurrences), `unique` (distinct cited URLs),
+`resolved` (distinct cited URLs verified against a resolved search redirect or a successful
+`url_context` read), `unverified` (distinct cited URLs that did not verify), and `sources` (the
+number of distinct verified target URLs assigned source numbers). `qid_kind` is `question_id`.
+
+The self-citation path was validated in the 2026-09-22 probe receipt at
+`scratch/gemini_grounding_2026-09-22/README.md`: the model wrote search-redirect links in 10/10
+calls, and 135 of 136 unique links resolved to real pages with one no-follow GET. This marker
+is the durable record of whether each formatted response supplied verifiable links; it does not
+record Google's omitted `groundingMetadata`.
 
 ### GEMINI_GROUNDING_DENSITY
 
-The floor's complement (`research/gemini_search.py:_format_grounded_response`): one row per
-response that passed the grounded-chunk floor, carrying how thinly the passing text is
-attributed. Post-floor the median response has one grounding support per ~872 chars and 41% of
-passers carry <=3 supports, which is the surface the floor cannot see and where the embellishment
-rate lives. Deliberately telemetry and never a gate: a decisive true figure once came out of a
-1-support response, so nothing keys on these values; they exist so "did embellishment move" is a
-query over the archive. `chars` is the raw model text, so `supports / chars` reproduces the
-audit's density denominator. `qid_kind` is `question_id`.
+Historical production telemetry retained as a parse-only spec after the 2026-09-22 self-citation
+migration. It was emitted by `research/gemini_search.py:_format_grounded_response` for responses
+that passed the old grounded-chunk floor, carrying how thinly the passing text was attributed.
+Post-floor the median response had one grounding support per ~872 chars and 41% of passers carried
+<=3 supports, which was the surface the old floor could not see. `chars` is the raw model text, so
+`supports / chars` reproduces the audit's density denominator. No current emitter writes this
+marker; retaining its spec keeps historical logs parseable. `qid_kind` is `question_id`.
 
 ### GEMINI_UNSUPPORTED_ATTRIBUTION
 
 The embellishment channel, per response (`research/gemini_search.py:_check_attributions`):
 outlet-named source-tier tags (`[A: NASA]`, `[B: Reuters]`) that the same response's own
-grounded-domain list does not name, rewritten to `[unverified attribution]` at format time. 70%
+verified-domain list does not name, rewritten to `[unverified attribution]` at format time. 70%
 (478 of 681) of the outlet-named tier attributions in the 323 archived Gemini sections are that
 shape under the shipped keep-biased matcher (86% under the audit's looser rule; receipts in
-`scratch/next_season_bundle_2026-09/item4_attribution_check/VALIDATION.md`), and the zero-chunk
-floor cannot see any of them (it fires only when nothing grounded at all), so before this the rate
+`scratch/next_season_bundle_2026-09/item4_attribution_check/VALIDATION.md`), and the cited-link
+floor cannot see any of them (it fires before attribution only when no cited link verifies), so before this the rate
 was a hand audit. `labels` is load-bearing context, not decoration: the same `unsupported` count
-reads completely differently against it (q38195 named 21 outlets over one grounded domain), and
+reads completely differently against it (q38195 named 21 outlets over one verified domain), and
 `groups` is the render footprint, below `unsupported` because several unsupported names in one
 bracket collapse to a single marker. Emitted only when `unsupported` > 0; a checked response with
 none logs nothing and carries its zero in the research archive's provider details instead. Not
 alertable: an absent outlet is the model's habit, not a bot defect. `qid_kind` is `question_id`.
+
+`generic` (appended 2026-09-24, optional in the spec so earlier lines still parse) counts tier tags
+that name no outlet at all (`[A: official]`, `[A: peer-reviewed journal]`), which are rewritten to
+the same marker since that date; `groups` includes the groups rewritten only for such a tag. The
+emission gate is unchanged, so a response whose only rewrites are generic logs no line, and its
+count lives in the provider details as `generic_tier_tags` beside `tier_tags` and
+`unsupported_attributions`.
 
 ### GEMINI_USAGE
 
@@ -1249,7 +1272,7 @@ bound, biased toward undercounting the largest calls; the denominator is
 this marker's row count.
 
 `question` is optional and last: the grounded-search call site has the question in scope and
-passes `question.id_of_question` (hence `qid_kind`, matching its `GEMINI_GROUNDING_DENSITY`
+passes `question.id_of_question` (hence `qid_kind`, matching its `GEMINI_SELF_CITATION`
 sibling), while `read_document` runs as a per-URL tool below the loop's log prefix with no
 question at all, and the resolution-source rung runs per cited URL inside its provider with none
 either. A keyed tail group is what lets one spec serve all three without recording None for a

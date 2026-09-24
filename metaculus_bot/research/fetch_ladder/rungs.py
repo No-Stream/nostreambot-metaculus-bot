@@ -151,6 +151,8 @@ async def _impersonated_body_outcome(response: ImpersonatedResponse, ctx: contex
     )
     if isinstance(outcome, classify._PendingDocument):
         return await classify._finish_document(outcome, ctx)
+    if isinstance(outcome, classify._PendingSource):
+        return await classify._finish_source(outcome, ctx)
     return outcome
 
 

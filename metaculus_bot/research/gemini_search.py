@@ -16,6 +16,7 @@ import os
 import re
 from collections.abc import Sequence
 from typing import Any
+from urllib.parse import urlsplit
 
 from forecasting_tools.data_models.questions import MetaculusQuestion
 from google import genai
@@ -25,6 +26,7 @@ from metaculus_bot.constants import (
     GEMINI_SEARCH_DEFAULT_MODEL,
     GEMINI_SEARCH_HTTP_ATTEMPTS,
     GEMINI_SEARCH_HTTP_TIMEOUT_MS,
+    GEMINI_SEARCH_LINK_RESOLVE_TIMEOUT_S,
     GEMINI_SEARCH_MODEL_ENV,
     GEMINI_SEARCH_THINKING_LEVEL,
     GEMINI_SEARCH_TIMEOUT,
@@ -43,6 +45,12 @@ from metaculus_bot.research.gemini_usage import log_gemini_usage
 from metaculus_bot.research.provider_diagnostics import record_provider_detail
 from metaculus_bot.research.providers import ResearchCallable
 from metaculus_bot.research.raw_log import record_raw_research
+from metaculus_bot.research.search_redirects import (
+    SEARCH_REDIRECT_HOST,
+    SEARCH_REDIRECT_PATH_PREFIX,
+    is_search_redirect,
+    resolve_search_redirects,
+)
 from metaculus_bot.research.url_context_telemetry import (
     URL_RETRIEVAL_SUCCESS,
     extract_url_context_telemetry,
@@ -57,9 +65,16 @@ __all__ = [
     "invoke_gemini_grounded",
 ]
 
-# Header-only initializer for the sources list. Checking `len(sources_lines) > _SOURCES_HEADER_LEN`
-# against this named constant keeps the sources-present gate tied to the init block.
-_SOURCES_HEADER_LEN = 3
+_MARKDOWN_LINK_RE = re.compile(r"\[(?P<label>(?:[^\[\]]|\[[^\[\]]*\])*)\]\((?P<url>https?://[^)\s]+)\)")
+# A link whose label IS a source-tier tag (``[A: NOAA](url)``), optionally inside one more
+# bracket pair (``[[A: NOAA](url)]``); the conditional group takes the closing bracket only
+# when it took the opening one.
+_TIER_TAG_LINK_LABEL_RE = re.compile(
+    r"(?P<outer>\[)?\[(?P<tag>[A-D]: [^\[\]\n]+)\]\((?P<url>https?://[^)\s]+)\)(?(outer)\])"
+)
+_RAW_SEARCH_REDIRECT_RE = re.compile(
+    rf"https?://{re.escape(SEARCH_REDIRECT_HOST)}{re.escape(SEARCH_REDIRECT_PATH_PREFIX)}\S+"
+)
 
 
 @functools.lru_cache(maxsize=1)
@@ -117,7 +132,11 @@ def _format_url_context_marker(reported: bool, entries: list[tuple[str, str]]) -
     at all → empty string (no marker). Failed-fetch URLs are still captured in the INFO logs for
     auditing, just not in the forecaster-facing research blob.
     """
-    successes = [(status, url) for status, url in entries if status == URL_RETRIEVAL_SUCCESS and url]
+    successes = [
+        (status, url)
+        for status, url in entries
+        if status == URL_RETRIEVAL_SUCCESS and url and not is_search_redirect(url)
+    ]
     if successes:
         lines = ["", "", _URL_CONTEXT_HEADER]
         lines.extend(f"{status} — {url}" for status, url in successes)
@@ -127,69 +146,9 @@ def _format_url_context_marker(reported: bool, entries: list[tuple[str, str]]) -
     return ""
 
 
-def _format_source_label(web: object) -> str:
-    """Render a grounding chunk's web source as ``title — domain`` (no redirect URL).
-
-    The SDK's ``chunk.web.uri`` is an opaque vertexaisearch grounding-api-redirect
-    blob (~250 chars) that a text-only forecaster cannot resolve. ``chunk.web.domain``
-    carries the real source domain (e.g. ``aljazeera.com``), so we render that plus
-    the title and drop the blob entirely. Falls back to the title alone when the
-    domain is absent (or vice versa); returns ``""`` when neither is present, so a
-    label-less chunk contributes no line rather than leaking the redirect URL.
-    """
-    if web is None:
-        return ""
-    domain = (getattr(web, "domain", None) or "").strip()
-    title = (getattr(web, "title", None) or "").strip()
-    if title and domain and title != domain:
-        return f"{title} — {domain}"
-    return title or domain
-
-
-def _splice_inline_citations(text: str, supports: Sequence[Any] | None) -> str:
-    """Insert ``[N]`` citation markers into ``text`` at each support's segment boundary.
-
-    Google's ``segment.end_index`` is a UTF-8 BYTE offset into the response text, so
-    we splice on the encoded bytes rather than the Python str (which is indexed by
-    codepoint). Indexing the str by a byte offset shifts every marker left by the
-    count of multi-byte chars (em-dashes, smart quotes) before it, landing markers
-    mid-word ("civilization. T[1]hese" instead of "civilization.[1] These").
-    Iterating right-to-left keeps earlier byte offsets valid as we mutate the buffer.
-
-    Returns ``text`` unchanged when there are no supports, and falls back to the
-    ORIGINAL text (never a half-spliced buffer) if the splice fails.
-    """
-    if not supports:
-        return text
-    try:
-        sorted_supports = sorted(
-            supports,
-            key=lambda s: s.segment.end_index if s.segment and s.segment.end_index is not None else 0,
-            reverse=True,
-        )
-        annotated_bytes = text.encode("utf-8")
-        for support in sorted_supports:
-            segment = support.segment
-            if segment is None or segment.end_index is None:
-                continue
-            chunk_indices = support.grounding_chunk_indices
-            if not chunk_indices:
-                continue
-            # Convert to 1-indexed markers, dedup, sort for readability.
-            markers = sorted({int(i) + 1 for i in chunk_indices})
-            marker_str = "[" + ", ".join(str(m) for m in markers) + "]"
-            end_index = segment.end_index
-            annotated_bytes = annotated_bytes[:end_index] + marker_str.encode("utf-8") + annotated_bytes[end_index:]
-        return annotated_bytes.decode("utf-8")
-    except (AttributeError, TypeError, ValueError, UnicodeDecodeError) as exc:
-        # Malformed supports (or a byte offset that lands mid-codepoint) shouldn't kill the response.
-        logger.warning(f"GeminiSearch: could not splice inline citations ({type(exc).__name__}): {exc}")
-        return text
-
-
 # Gemini writes its OWN hierarchical citation indices — ``[2.4.1]``, ``[1.1.1, 1.1.2]``,
 # ``[A: NASA, 1.1.2]`` — indexing a source list that does not exist on our side, alongside the
-# resolvable ``[N]`` markers ``_splice_inline_citations`` puts in from real grounding metadata.
+# resolvable ``[N]`` markers this formatter adds to verified search links.
 # 173 of 323 archived sections carry them and 163 carry BOTH families, so half the corpus hands a
 # forecaster a bracket field where some brackets resolve and some are decoration, with nothing to
 # tell them apart (scratch/residual_2026-08-31/gemini_search_audit/cutB_pattern.md §3.1).
@@ -223,10 +182,8 @@ def _tidy_group_item(item: str) -> str:
 def _strip_model_citation_indices(text: str) -> str:
     """Remove Gemini's self-authored hierarchical citation indices from bracket groups.
 
-    MUST run AFTER ``_splice_inline_citations``: that function indexes the ORIGINAL response
-    text by grounding-support BYTE offsets, so editing the text first would shift every offset
-    and land our real ``[N]`` markers mid-word. Our markers are plain integers, so they survive
-    this pass untouched; only dotted runs go.
+    Runs after the link rewrite. Our markers are plain integers, so they survive this pass
+    untouched; only dotted model-authored runs go.
 
     A group emptied of everything but punctuation is removed along with one preceding space, so
     ``"office [1.1.1, 1.1.2]. He"`` reads ``"office. He"`` rather than ``"office . He"``.
@@ -253,39 +210,21 @@ def _strip_model_citation_indices(text: str) -> str:
     return BRACKET_GROUP_RE.sub(replace, text)
 
 
-def _grounded_source_labels(chunks: Sequence[Any]) -> list[tuple[int, str]]:
-    """``(1-based chunk index, rendered label)`` for every chunk that carries a label.
-
-    The single derivation of "what our grounding record says", read by both the
-    ``### Sources`` block and the unsupported-attribution check — so the check can never
-    judge an attribution against a source list different from the one the forecaster is
-    shown. The index is the CHUNK's, not the surviving entry's, because the spliced inline
-    ``[N]`` markers point at chunk positions; renumbering would misaim them.
-    """
-    labels = []
-    for idx, chunk in enumerate(chunks, start=1):
-        label = _format_source_label(chunk.web)
-        if label:
-            labels.append((idx, label))
-    return labels
+def _grounded_source_labels(sources: Sequence[tuple[int, str, str]]) -> list[str]:
+    """Return the domains represented by the numbered verified source list."""
+    return [domain for _number, domain, _url in sources]
 
 
-def _render_sources_section(chunks: Sequence[Any]) -> str:
-    """Render the trailing ``### Sources`` block, or ``""`` when no chunk carries a label.
-
-    Renders the real source domain, NOT the opaque
-    vertexaisearch.cloud.google.com/grounding-api-redirect/<~250-char blob> URI. The
-    domain carries all the signal a text-only forecaster can use, and the redirect
-    blobs were ~5% of the whole research bundle. Entries stay 1:1 with the grounding
-    chunks so the inline [N] markers keep pointing at the right source (deduping
-    would misalign them).
-    """
-    sources_lines = ["", "", "### Sources"]
-    sources_lines.extend(f"[{idx}] {label}" for idx, label in _grounded_source_labels(chunks))
-    return "\n".join(sources_lines) if len(sources_lines) > _SOURCES_HEADER_LEN else ""
+def _render_sources_section(sources: Sequence[tuple[int, str, str]]) -> str:
+    """Render the trailing ``### Sources`` block from numbered, resolved targets."""
+    if not sources:
+        return ""
+    lines = ["", "", "### Sources"]
+    lines.extend(f"[{number}] {domain} — {url}" for number, domain, url in sources)
+    return "\n".join(lines)
 
 
-def _check_attributions(text: str, chunks: Sequence[Any], *, qid: int | None) -> str:
+def _check_attributions(text: str, sources: Sequence[tuple[int, str, str]], *, qid: int | None) -> str:
     """Mark the tier-tag attributions this response's own grounding record cannot back.
 
     Runs AFTER the citation-index strip, on the annotated body only (the ``### Sources``
@@ -300,123 +239,190 @@ def _check_attributions(text: str, chunks: Sequence[Any], *, qid: int | None) ->
     outlet-named tier tags are unsupported, so this is the model's habitual embellishment
     rather than a bot defect, and an absent outlet does not make the FACT wrong.
     """
-    labels = [label for _idx, label in _grounded_source_labels(chunks)]
+    labels = _grounded_source_labels(sources)
     if not labels:
         return text
     checked = rewrite_unsupported_attributions(text, labels)
     # ``tier_tags`` rides alongside because the count this check exists to report is not
     # readable without it: the marker below is gated on ``unsupported``, so a response that
     # carried no tier tags at all and one whose every tag was backed both archive as
-    # ``unsupported_attributions=0`` and log nothing. It counts OUTLET-NAMED tier items only
-    # (generic tier words like "official" — 307 of the corpus's 790 items — are excluded
-    # before matching), so a 0 reads as "no outlet-named tags", not "no tier tags"; the
-    # definitive check for the latter is a grep for "[A: " over the archived section.
+    # ``unsupported_attributions=0`` and log nothing. It counts OUTLET-NAMED tier items only;
+    # tags naming a class of source rather than an outlet ("official", "peer-reviewed
+    # journal") are rewritten too but counted apart as ``generic_tier_tags``, so the two
+    # together are every checked tier item.
     record_provider_detail(
         qid,
         "gemini_search",
-        {"counts": {"tier_tags": checked.tagged, "unsupported_attributions": checked.unsupported}},
+        {
+            "counts": {
+                "tier_tags": checked.tagged,
+                "generic_tier_tags": checked.generic,
+                "unsupported_attributions": checked.unsupported,
+            }
+        },
     )
     if checked.unsupported:
         # ``labels`` rides the line because the same count reads completely differently
-        # against it: q38195 named 21 outlets over ONE grounded domain.
+        # against it: q38195 named 21 outlets over ONE verified domain. ``generic`` is
+        # appended last (2026-09-24) so the fields before it keep their positions.
         logger.info(
             f"GEMINI_UNSUPPORTED_ATTRIBUTION: question={qid} tagged={checked.tagged} "
-            f"unsupported={checked.unsupported} groups={checked.groups_rewritten} labels={len(labels)}"
+            f"unsupported={checked.unsupported} groups={checked.groups_rewritten} labels={len(labels)} "
+            f"generic={checked.generic}"
         )
     return checked.text
 
 
+def _bracket_tier_tag_link_labels(text: str) -> str:
+    """Rewrite a tier-tag link label to ``[[A: NOAA]](url)``, which renders ``[A: NOAA] [N]``.
+
+    Once the prompt asked tags to name the outlet, Gemini started using the tag as the link's
+    "source name" (4 of 5 responses in the 2026-09-24 named-tag probe, 95 of about 101 tags).
+    A plain label renders without its brackets (``A: NOAA [1]``) and a wrapped one as
+    ``[A: NOAA [1]]``; the attribution check's bracket grammar sees neither, and the
+    forecaster's ladder reads tags in the ``[A: ...]`` shape.
+    """
+    return _TIER_TAG_LINK_LABEL_RE.sub(lambda match: f"[[{match.group('tag')}]]({match.group('url')})", text)
+
+
+def _rewrite_cited_links(
+    text: str,
+    matches: Sequence[re.Match[str]],
+    resolved_redirects: dict[str, str],
+    read_urls: set[str],
+) -> tuple[str, list[tuple[int, str, str]], set[str], set[str]]:
+    """Replace cited links and return text, numbered sources, verified URLs, and unverified URLs."""
+    source_numbers: dict[str, int] = {}
+    sources: list[tuple[int, str, str]] = []
+    verified_urls: set[str] = set()
+    unverified_urls: set[str] = set()
+    replacements: list[tuple[int, int, str]] = []
+    for match in matches:
+        cited_url = match.group("url")
+        if is_search_redirect(cited_url):
+            target = resolved_redirects.get(cited_url)
+        elif cited_url in read_urls:
+            target = cited_url
+        else:
+            target = None
+        if target is None:
+            unverified_urls.add(cited_url)
+            replacement = f"{match.group('label')} [unverified link]"
+        else:
+            verified_urls.add(cited_url)
+            number = source_numbers.get(target)
+            if number is None:
+                number = len(sources) + 1
+                source_numbers[target] = number
+                hostname = urlsplit(target).hostname or target
+                sources.append((number, hostname.removeprefix("www."), target))
+            replacement = f"{match.group('label')} [{number}]"
+        replacements.append((match.start(), match.end(), replacement))
+    for start, end, replacement in reversed(replacements):
+        text = text[:start] + replacement + text[end:]
+    return _RAW_SEARCH_REDIRECT_RE.sub("[unverified link]", text), sources, verified_urls, unverified_urls
+
+
 def _format_grounded_response(
     response: genai_types.GenerateContentResponse,
+    resolved_redirects: dict[str, str] | None = None,
     *,
     qid: int | None = None,
     model: str | None = None,
 ) -> str:
-    """Stitch response text with inline citations from grounding metadata.
+    """Rewrite self-cited links, enforce the verification floor, and render resolved sources.
 
     Output format:
         <response text>
 
         ### Sources
-        [1] <title> — <domain>
-        [2] <title> — <domain>
+        [1] <domain> — <resolved URL>
+        [2] <domain> — <resolved URL>
         ...
 
-    Inline citation markers are inserted per-segment using
-    grounding_metadata.grounding_supports, iterating in reverse end_index order
-    so index offsets stay valid while we mutate the string. Falls back to a
-    plain-text + sources-list if supports are missing. The model's own hierarchical
-    ``[2.4.1]`` indices are then stripped (``_strip_model_citation_indices``) so every
-    bracket left in the body resolves against the rendered ``### Sources`` list, and the
-    surviving source-tier tags are checked against that same list (``_check_attributions``)
-    so an outlet our own grounding record cannot back reads as
-    ``[unverified attribution]``; the sources block itself is appended after both passes
-    and never goes through either.
-
-    Grounded-chunk floor: a response with no grounding evidence at all — zero
-    google_search chunks AND no successful url_context read — is suppressed
-    (returns ``""``) rather than passed through, because the whole premise of this
-    provider is grounded retrieval and ungrounded Gemini text is a demonstrated
-    fabrication vector (Q38195, 2026-07-19: 30 search queries, 0 grounding chunks,
-    a confident fabricated contract table with fake ``[primary]`` tags reached
-    forecasters). ``qid`` / ``model`` are threaded in only to make that
-    suppression WARN greppable. "No grounding evidence" includes a response with no
-    candidates at all: there is no path around the floor that returns text.
+    A response with no verified cited links is suppressed as ungrounded parametric output.
+    ``qid`` and ``model`` make the suppression warning and self-citation marker greppable.
     """
     text = response.text or ""
     if not text:
         return ""
 
-    # No candidates means no grounding metadata at all, which IS the ungrounded case the
-    # floor below exists to refuse — the old early `return text` here bypassed the Q38195
-    # guard entirely. Unreachable on today's SDK (``response.text`` is derived from a
-    # candidate, so text-without-candidates cannot happen), but a hole in a fabrication
-    # guard should not depend on an SDK invariant it doesn't own.
     candidates = response.candidates
     metadata = candidates[0].grounding_metadata if candidates else None
-    if metadata is None or not metadata.grounding_chunks:
-        # Grounded-chunk floor. No google_search grounding chunks reached us:
-        # either the search tool never fired (metadata is None) or it fired and
-        # grounded nothing (chunks empty, the Q38195 case). The only reason to
-        # still pass the text through is a successful url_context read — that is
-        # genuine retrieval, so it counts as grounding. Absent both, the text is
-        # ungrounded parametric output; suppress the section (the orchestrator
-        # then omits it) and leave a greppable WARN.
-        _, _, n_url_success, _ = extract_url_context_telemetry(response)
-        if n_url_success == 0:
-            n_queries = len(metadata.web_search_queries or []) if metadata is not None else 0
-            logger.warning(f"GEMINI_UNGROUNDED_SUPPRESSED: question={qid} model={model} queries={n_queries}")
-            # Record the loss so the Provider Diagnostics line and the schema-v2 archive
-            # carry a `lost=grounding:...` token. Without it, the "" this returns maps to
-            # ProviderResult status `empty` — byte-identical to a healthy Gemini call that
-            # legitimately found nothing, since the provider didn't raise and so no counter
-            # moves. Mirrors _degraded_to_raw_articles, which solved the same shape for the
-            # AskNews summarizer. Deliberately NOT an alertable counter: folding a new term
-            # into alertable_count changes what CI treats as red, which is the operator's
-            # call, not a side effect of adding visibility.
-            record_provider_detail(qid, "gemini_search", {"sources": {"grounding": "error(ungrounded_suppressed)"}})
-            return ""
-        # url_context grounded the text but google_search produced no chunks: keep
-        # the text as-is (no citation markers to splice, no Sources block). The
-        # caller appends the url_context fetch marker. No GEMINI_GROUNDING_DENSITY here:
-        # the marker measures google_search support density, and a response with neither
-        # chunks nor supports has an undefined density rather than a zero one.
-        return _strip_model_citation_indices(text)
-
-    supports = metadata.grounding_supports or ()
-    # Grounding DENSITY, as telemetry and never as a gate: post-floor the median response
-    # carries one support per ~872 chars and 41% of passing responses have <=3 supports,
-    # which is the floor-immune surface where the ~33% embellishment rate lives. Not a gate
-    # because q44944's decisive, true, later-verified ICE figure came out of a 1-support
-    # response (gemini_search_audit/VERDICT.md §2-3). ``chars`` is the RAW model text — the
-    # denominator the audit measured — not the annotated or sources-appended length.
-    logger.info(
-        f"GEMINI_GROUNDING_DENSITY: question={qid} chunks={len(metadata.grounding_chunks)} "
-        f"supports={len(supports)} chars={len(text)}"
+    _reported, _n_url_total, _n_url_success, url_entries = extract_url_context_telemetry(response)
+    read_urls = {
+        url for status, url in url_entries if status == URL_RETRIEVAL_SUCCESS and url and not is_search_redirect(url)
+    }
+    text = _bracket_tier_tag_link_labels(text)
+    matches = list(_MARKDOWN_LINK_RE.finditer(text))
+    cited_urls = [match.group("url") for match in matches]
+    text, sources, verified_urls, unverified_urls = _rewrite_cited_links(
+        text, matches, resolved_redirects or {}, read_urls
     )
-    annotated = _strip_model_citation_indices(_splice_inline_citations(text, supports))
-    return _check_attributions(annotated, metadata.grounding_chunks, qid=qid) + _render_sources_section(
-        metadata.grounding_chunks
+
+    logger.info(
+        f"GEMINI_SELF_CITATION: question={qid} model={model} links={len(cited_urls)} "
+        f"unique={len(set(cited_urls))} resolved={len(verified_urls)} "
+        f"unverified={len(unverified_urls)} sources={len(sources)}"
+    )
+    if not verified_urls:
+        n_queries = len(metadata.web_search_queries or []) if metadata is not None else 0
+        logger.warning(f"GEMINI_UNGROUNDED_SUPPRESSED: question={qid} model={model} queries={n_queries}")
+        record_provider_detail(qid, "gemini_search", {"sources": {"grounding": "error(ungrounded_suppressed)"}})
+        return ""
+    annotated = _strip_model_citation_indices(text)
+    return _check_attributions(annotated, sources, qid=qid) + _render_sources_section(sources)
+
+
+async def _generate_grounded(
+    client: genai.Client,
+    model: str,
+    prompt: str,
+    config: genai_types.GenerateContentConfig,
+    *,
+    deadline: float,
+    qid: int | None,
+) -> genai_types.GenerateContentResponse:
+    """One grounded call inside what is left of the shared wall, with its spend line and raw record."""
+    remaining_s = deadline - asyncio.get_running_loop().time()
+    try:
+        response = await asyncio.wait_for(
+            client.aio.models.generate_content(model=model, contents=prompt, config=config),
+            timeout=remaining_s,
+        )
+    except TimeoutError:
+        logger.warning(
+            f"GeminiSearch: {model} timed out after {max(remaining_s, 0.0):.0f}s "
+            f"(what remained of the {GEMINI_SEARCH_TIMEOUT}s wall)"
+        )
+        raise
+
+    # Before any formatting branch, so the tokens are recorded on the suppressed-response
+    # paths too: an ungrounded response we refuse to publish was billed exactly like a
+    # useful one, and a spend line that only covers the responses we kept would understate
+    # the bill by precisely the wasted calls.
+    log_gemini_usage(
+        response,
+        role="grounded_search",
+        model=model,
+        question=str(qid) if qid is not None else None,
+    )
+
+    # Capture the raw SDK response (text + grounding metadata: the actual Google
+    # queries and sources) before formatting drops most of it.
+    record_raw_research(qid=qid, provider="gemini_search", payload=response)
+    return response
+
+
+async def _resolve_cited_redirects(response: genai_types.GenerateContentResponse, *, deadline: float) -> dict[str, str]:
+    """Resolve cited Google redirect URLs inside the remaining provider wall."""
+    remaining_s = deadline - asyncio.get_running_loop().time()
+    if remaining_s <= 0:
+        return {}
+    cited_urls = [match.group("url") for match in _MARKDOWN_LINK_RE.finditer(response.text or "")]
+    redirect_urls = [url for url in cited_urls if is_search_redirect(url)]
+    return await resolve_search_redirects(
+        redirect_urls, timeout_s=min(GEMINI_SEARCH_LINK_RESOLVE_TIMEOUT_S, remaining_s)
     )
 
 
@@ -454,42 +460,14 @@ async def invoke_gemini_grounded(
     )
 
     logger.info(f"GeminiSearch: calling {model} with grounding")
-    try:
-        response = await asyncio.wait_for(
-            client.aio.models.generate_content(model=model, contents=prompt, config=config),
-            timeout=GEMINI_SEARCH_TIMEOUT,
-        )
-    except TimeoutError:
-        logger.warning(f"GeminiSearch: {model} timed out after {GEMINI_SEARCH_TIMEOUT}s")
-        raise
-
-    # Before any formatting branch, so the tokens are recorded on the suppressed-response
-    # paths too: an ungrounded response we refuse to publish was billed exactly like a
-    # useful one, and a spend line that only covers the responses we kept would understate
-    # the bill by precisely the wasted calls.
-    log_gemini_usage(
-        response,
-        role="grounded_search",
-        model=model,
-        question=str(qid) if qid is not None else None,
-    )
-
-    # Capture the raw SDK response (text + grounding metadata: the actual Google
-    # queries and sources) before formatting drops most of it.
-    record_raw_research(qid=qid, provider="gemini_search", payload=response)
-
-    formatted = _format_grounded_response(response, qid=qid, model=model)
-    n_chunks = 0
-    candidates = response.candidates
-    if candidates:
-        metadata = candidates[0].grounding_metadata
-        if metadata is not None and metadata.grounding_chunks:
-            n_chunks = len(metadata.grounding_chunks)
+    deadline = asyncio.get_running_loop().time() + GEMINI_SEARCH_TIMEOUT
+    response = await _generate_grounded(client, model, prompt, config, deadline=deadline, qid=qid)
+    resolved_redirects = await _resolve_cited_redirects(response, deadline=deadline)
+    formatted = _format_grounded_response(response, resolved_redirects, qid=qid, model=model)
 
     reported, n_url_total, n_url_success, url_entries = extract_url_context_telemetry(response)
     logger.info(
-        f"GeminiSearch: got {len(formatted)} chars, {n_chunks} grounding chunks, "
-        f"{n_url_success}/{n_url_total} url_context fetches from {model}"
+        f"GeminiSearch: got {len(formatted)} chars, {n_url_success}/{n_url_total} url_context fetches from {model}"
     )
     if url_entries:
         for status, url in url_entries:
@@ -517,7 +495,7 @@ def gemini_search_provider(
             # names it has been shown (q44952 — zero retrieval on the eventual winner).
             options=getattr(question, "options", None),
             is_benchmarking=is_benchmarking,
-            citation_style="auto_annotated",
+            citation_style="search_links",
             allow_resolution_source_reading=True,
         )
         return await invoke_gemini_grounded(

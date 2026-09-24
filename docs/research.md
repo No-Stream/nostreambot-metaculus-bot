@@ -312,7 +312,7 @@ briefing rendered under the AskNews header as though it were research. The
 formatter now logs `ASKNEWS_NO_ARTICLES`, records an `articles: empty(no_articles)`
 source loss so the diagnostics line reads `empty | 0 chars | lost=articles:...`
 rather than a bare `empty`, and the orchestrator skips the summarizer call
-entirely. Gemini's grounded-chunk floor is the same pattern one provider over.
+entirely. Gemini's cited-link floor is the same pattern one provider over.
 
 `_format_asknews_dual_sections` stays pure and does none of that reporting itself. The
 `ASKNEWS_NO_ARTICLES` WARN and the `lost=articles:...` registry token belong to
@@ -435,59 +435,56 @@ search index to the ensemble. Model and request timeout come from
 enables both the `google_search` tool and the `url_context` tool, so the model
 can read specific URLs named in a question's fine print directly.
 
-Output is stitched together with real `[N]` citation markers spliced in from the
-response's grounding metadata, plus a matching `### Sources` domain list
-(`_format_grounded_response`). url_context fetches are logged and only
-*successful* fetches are surfaced to forecasters (a "fired but fetched nothing"
-run collapses to a terse `_url_context: none_` marker rather than pushing dead
-URLs at the model).
+Output is now built from the model's own markdown links rather than Google's
+grounding metadata. Google drops that metadata on a substantial share of
+gemini-3.8-flash responses, including responses that did search. The 2026-09-22
+probe showed the model wrote Google's search redirect links in 10/10 calls,
+while metadata appeared in only 1/10; 135/136 unique links resolved to a real
+page with one no-follow GET (HTTP 302 plus `Location`), and no non-redirect links
+were written. Receipt: `scratch/gemini_grounding_2026-09-22/README.md` and
+`scratch/gemini_grounding_2026-09-22/selfcite_raw/selfcite_*.json`.
 
-**Two citation systems, one of them ours.** Gemini also writes its own
-hierarchical `[2.4.1]` / `[1.1.1, 1.1.2]` / `[A: NASA, 1.1.2]` indices, pointing
-at a source list nobody outside the model holds. 173 of 323 archived sections
-carried them and 163 carried both families at once, so half the corpus handed a
-forecaster a bracket field where some brackets resolve against the rendered
-`### Sources` list and some are decoration, with nothing to tell them apart.
-`_strip_model_citation_indices` (shipped 2026-09-01) removes them. It MUST run
-after `_splice_inline_citations`, because that splice indexes the ORIGINAL
-response text by grounding-support byte offsets: rewrite the text first and our
-real markers land mid-word, a bug class this repo has already shipped and fixed.
-It only removes a dotted run that is delimited the way a citation is AND whose
-every dot-separated component is at most two digits, so bracketed quantities,
-currency, versions, years and IP-like tokens survive. Both bounds were measured on
-the archive: across 2,609 dotted bracket groups the largest component anywhere is
-39. The plan's alternative (require at least three components) was NOT adopted,
-because all 165 two-component groups read in context are genuine indices, so the
-stricter rule would have left 318 fake markers standing for no safety gain. The
-strip runs on both forecaster-facing branches (the grounded path and the
-url_context-only escape) and never on the rendered `### Sources` block, which is
-appended afterwards and whose labels are page titles that legitimately carry
-version numbers. Validated over all 323 archived sections at zero false positives
-(`scratch/next_season_bundle_2026-09/item3_citation_strip/`).
-The Gemini-only prompt clause also asks the model not to write the indices in the
-first place, and it carves the source-tier tags back out by name, because the
-same prompt orders bracketed `[A: official]` tags 26 lines further down: a
-literal reader that over-complies stops tagging, which costs the forecaster
-prompts the tier signal they weight on and leaves the attribution check below
-nothing to check.
+### Self-cited search links
 
-**Attributions the response's own grounding record cannot back.** Gemini also
+`_SEARCH_LINK_CITATION_CLAUSE` requires the model to copy each tool-returned
+`vertexaisearch.cloud.google.com/grounding-api-redirect/...` URL exactly and
+inline beside the factual claim. `research/search_redirects.py` resolves each
+distinct redirect concurrently through the existing HTTP transport. A cited
+redirect is verified only when it resolves to an absolute HTTP(S) target. A
+non-redirect link is verified only when the response's `url_context` telemetry
+records a successful read of that exact URL. The formatter rewrites verified
+links to `<label> [N]`, shares a number when distinct redirect tokens resolve to
+the same target, and rewrites every other link to `<label> [unverified link]`.
+The `### Sources` block lists each numbered target as its resolved hostname and
+URL, never the model's label or a raw Google redirect token.
+
+The floor now asks whether the response cites at least one verified search hit.
+Successful `url_context` reads that the response does not cite do not pass the
+floor, and text with no verified cited links is suppressed with
+`GEMINI_UNGROUNDED_SUPPRESSED`. This blocks the Q38195 shape: confident prose
+with fake tier tags and no links. The provider still strips old numeric citation
+indices and runs `_check_attributions` / `rewrite_unsupported_attributions`
+against the verified source domains. Google's per-sentence `groundingSupports`
+alignment is gone; self-attribution is checked only for whether a cited link is
+a real search hit, using the same standard as the OpenRouter native-search
+provider's markdown citations. The resolved-link counts are recorded by
+`GEMINI_SELF_CITATION`.
+
+**Attributions the response's verified source record cannot back.** Gemini also
 writes self-invented source-tier tags (`[A: NASA]`, `[B: Reuters]`,
 `[C: Time and Date]`), and across the 323 archived sections, 478 of the 681
 outlet-named tier attributions (70%) name an outlet absent from that same
-response's grounded-domain list. q44953 claimed `[A: NASA]` for the eclipse path
+response's verified-domain list. q44953 claimed `[A: NASA]` for the eclipse path
 over a source list of perlan.is / guidetoiceland.is / timeanddate.com; q45401
 named 19 institutions (Bloomberg, FactSet, Goldman Sachs, Kalshi, AP, …) over a
-single grounded domain. The zero-chunk floor cannot see any of this, because it
-fires only when nothing grounded at all, and the forecaster prompts instruct
-weighting by source tier, so an unbacked tier tag is an authority claim we
+single verified domain. The forecaster prompts instruct weighting by source tier,
+so an unbacked tier tag is an authority claim we
 manufactured. `_check_attributions` → `rewrite_unsupported_attributions`
 (`research/gemini_attribution.py`, shipped 2026-09-01)
-replaces each one with `[unverified attribution]` at format time. It runs on the
-grounded path ONLY (the url_context-only escape gets the citation strip and
-returns), after that strip and before the `### Sources` block is appended, with
-`_grounded_source_labels` the single derivation of both the check's evidence base
-and the rendered block, so the two can never disagree about what our record says.
+replaces each one with `[unverified attribution]` at format time, after link
+rewriting and before the `### Sources` block is appended. The verified source
+labels are the single evidence base for both the check and the rendered block,
+so the two can never disagree about what our record says.
 A supported outlet in the same bracket survives verbatim with its own separator:
 `[A: FDA, B: Food Safety Magazine]` on a record holding fda.gov renders
 `[A: FDA, unverified attribution]`. Several unsupported names in one bracket
@@ -497,51 +494,80 @@ FACT is not what is being disputed (an aggregator domain can carry another
 outlet's copy), only the provenance claim, which is why the marker says
 *unverified* and not *false*.
 
-Generic tier words that name a CLASS rather than an outlet are skipped before
-matching (`official` alone is 243 of the corpus's 790 tier items, and the skip
-list starts from the audit's own). This includes `academic` and `peer-reviewed`:
-the single-question smoke on 2026-09-11 otherwise counted all 23 occurrences of
-`[B: academic / peer-reviewed]` as unsupported publisher names. Matching is then biased
+Tags that name a CLASS of source rather than an outlet (`[A: official]`,
+`[A: peer-reviewed journal]`, `[C: prediction platform]`) are rewritten to the same
+marker since 2026-09-24, and counted apart as `generic`. Until then they passed
+through untouched, and the prompt's own examples (`"[A: official]"`,
+`"[C: aggregator]"`) taught them: in the 2026-09-24 Q14333 smoke (run 36008672128)
+10 of Gemini's 12 tags were class descriptions, and the 2026-09-22 probe's
+old-prompt calls show 85% of tags in that style. A class tag lets the model claim
+tier A with nothing to check it against, so it is read as not following the prompt,
+which now asks for the outlet (`prompts._SOURCE_TIER_TAG_INSTRUCTION`). A name is
+generic when every identity token is in `_DESCRIPTOR_TOKENS`, a vocabulary built
+from the archive's and the probes' descriptive tags; a slash-joined tag keeps its
+named half (`[A: official / GRG]` is checked as GRG). Replayed over the archive,
+420 generic tags flip to rewritten and no named tag changes verdict
+(`scratch/attribution_named_tags_2026-09-24/`). Once tags name the outlet, Gemini
+tends to make the tag the link label (`[A: NOAA](url)`, sometimes inside one more
+bracket pair): 4 of 5 responses in the 2026-09-24 named-tag probe, about 95 of 101
+tags. Rendered as a plain label that loses its brackets (`A: NOAA [1]`) and escapes
+the check, so the formatter first rewrites a tier-tag label to the double-bracket
+form (`gemini_search._bracket_tier_tag_link_labels`), which renders `[A: NOAA] [1]`.
+A second live run with both fixes (6 responses) wrote 82 tag-as-label links and 14
+wrapped ones, all rendered as checked tags with none escaping, and produced 127 named
+tags, 0 generic, 122 backed. The 5 rewritten tags each name the originator of copy the
+model read elsewhere (AP News on pbs.org, a Nature paper on sciencedaily.com and on
+PubMed, Guinness World Records with no link of its own). Matching of named tags is biased
 hard toward KEEPING, because a false
 strip discards real provenance while a false keep merely leaves one tag standing.
 Any one of six rules credits a name: it concatenates into the domain
 (`Golf Channel` / golfchannel.com); all of its identity tokens appear in the
-domain (`The Guardian` / guardian.co.uk); the token sets intersect (`LSE Blogs` /
-lse.ac.uk); the domain's registrable core sits inside the name, the sub-brand
-shape (`Chosunbiz` / chosun.com); a single-token name is a subsequence of the
-label (`WaPo` / washingtonpost.com: single-token only, since a subsequence test
-over a multiword name credits almost anything); or the domain core abbreviates the
-name (`Times of Central Asia` / timesca.com). A response whose chunks carry no
-renderable label is skipped rather than blanket-marked (q44802): with no evidence
-base, a rewrite would dress our own render failure as the model's embellishment.
+domain (`The Guardian` / guardian.co.uk); the token sets intersect on a token
+that is not a class word (`LSE Blogs` / lse.ac.uk, while a shared "research" alone
+cannot credit `Research Institute of Foo` against demographic-research.org); a
+domain core sits inside the name, the sub-brand shape (`Chosunbiz` / chosun.com);
+a single-token name is a subsequence of the label (`WaPo` / washingtonpost.com:
+single-token only, since a subsequence test over a multiword name credits almost
+anything); or a domain core abbreviates the name (`Times of Central Asia` /
+timesca.com). The domain cores are every label left of the public suffix
+(`research/public_suffix.registrable_domain`), each read by its first alphanumeric
+run, less stop and class words: `nhc` and `noaa` for nhc.noaa.gov, `colostate` for
+tropical.colostate.edu, `grg` for grg-supercentenarians.org. Self-cited sources list
+full hostnames, and until 2026-09-24 only the first label counted, which read
+tropical.colostate.edu as `tropical` and stripped 9 correctly linked `Colorado
+State University` tags in the named-tag probe. A response with no renderable
+verified source label is skipped rather than blanket-marked (q44802): with no
+evidence base, a rewrite would dress our own render failure as the model's
+embellishment.
 That skip is what makes the count's ABSENCE meaningful: on a schema-v2 record an
 absent `unsupported_attributions` means the check had no evidence base or the
 record predates the change, while a recorded 0 means it ran and found nothing.
 The token is defined where the forecaster reads it: `prompts._SOURCE_PROVENANCE_LADDER`
-carries one bullet saying the pipeline could not match the named outlet against its
-own retrieval record, that the claim itself may still be correct, and that the
+carries one bullet saying the tag named no outlet, or one the pipeline could not
+match against its own retrieval record, that the claim itself may still be correct, and that the
 evidence is untiered rather than low-tier. Without that, the ladder tells the model
 to weight by tier while a token it has never seen stands where the tier was.
 Per-response counts ride
 `GEMINI_UNSUPPORTED_ATTRIBUTION: question=... tagged=N unsupported=N groups=N
-labels=N` (INFO, emitted only when `unsupported` > 0, harvested as
+labels=N generic=N` (INFO; `generic` appended 2026-09-24, emitted only when `unsupported` > 0, harvested as
 `gemini_unsupported_attribution`, and deliberately NOT alertable: the habit is the
 model's, not a bot defect) and the provider-diagnostics
 `unsupported_attributions` count (always, so a zero is a measurement); nothing
 keys on either. `labels` rides the line because the same `unsupported` count reads
 completely differently against it: q38195 named 21 outlets over ONE grounded
 domain, aft.org. `groups` is the render footprint, which sits below `unsupported`
-because of the collapse. There is no `rewritten` or `stripped` field, because under
-this design `rewritten` always equals `unsupported` and the check never removes a
-bracket outright. The diagnostics line carries its
+because of the collapse, and since 2026-09-24 also counts groups rewritten only for
+a generic tag. There is no `rewritten` or `stripped` field, because rewritten items
+are always `unsupported` plus `generic` and the check never removes a bracket
+outright. The diagnostics line carries its
 denominator, `tier_tags`, next to it, because the marker is gated on
 `unsupported`: without the denominator a response that carried no outlet-named
 tier tag at all and one whose every tag was backed both archive as
 `unsupported_attributions=0`, so a model that quietly stopped tagging would read
-as a model that tagged accurately. `tier_tags` counts outlet-named items only
-(the generic tier words are excluded before matching), so a zero there means "no
-outlet-named tags"; the definitive check for whether any tag was written is a
-grep for `[A: ` over the archived section.
+as a model that tagged accurately. `tier_tags` counts outlet-named items only and
+`generic_tier_tags` the class-description items, so the two together are every
+checked tier item (both always recorded; the diagnostics line shows the nonzero
+ones).
 
 Measured over all 323 sections: 48 sections rewritten, 203 attributions kept, 478
 marked, 0 idempotency failures, and 0 sections where any text outside a bracket
@@ -558,27 +584,6 @@ distinct names (2.9%), all short acronyms or shared tokens. Rules, counts, both
 review sets and the similarity screen behind the false-strip review:
 `scratch/next_season_bundle_2026-09/item4_attribution_check/VALIDATION.md`; the 87%
 receipt is `scratch/residual_2026-08-31/gemini_search_audit/cutB_pattern.md` §3.2.
-
-**Grounding density, as telemetry only.** Every response that passes the floor
-below logs `GEMINI_GROUNDING_DENSITY: question=... chunks=... supports=...
-chars=...`, where `chars` is the raw model text (which is the density the audit
-measured); it is harvested as `gemini_grounding_density`. Post-floor the median
-response carries one grounding support per ~872 chars and 41% of passers carry
-three or fewer, which is the surface the floor cannot see. Nothing keys on these
-values and there is deliberately no density gate: q44944's decisive, later-verified
-ICE figure came out of a one-support response, so a gate would have suppressed the
-round's best find. The marker exists so "did embellishment move" is a query over the telemetry
-archive rather than a hand audit.
-
-**Grounded-chunk floor.** A response with no grounding evidence at all (zero
-`google_search` chunks AND no successful `url_context` read) is suppressed
-(returns `""`, logs `GEMINI_UNGROUNDED_SUPPRESSED`, records a
-`grounding: error(ungrounded_suppressed)` loss token) rather than passed through:
-ungrounded Gemini text is a demonstrated fabrication vector (Q38195, 2026-07-19:
-30 search queries, 0 grounding chunks, a confident fabricated contract table with
-fake `[primary]` tags reached forecasters). "No grounding evidence" includes a
-response carrying no candidates at all; that case used to return its text via an
-early exit that walked straight past this floor. There is now no path around it.
 
 This provider uses the operator's personal `GOOGLE_API_KEY` (a paid-tier Google
 AI Studio key). There is no Metaculus-donated key on the google-genai side: the
@@ -2299,7 +2304,7 @@ A provider's `details` dict carries two conventions, and they answer different
 questions. `details["sources"]` is the per-source outcome map, rendered into the
 `lost=` suffix. `details["counts"]` (`provider_diagnostics._counts_suffix`) is the
 second: an ordered `{name: number}` map of provider-INTERNAL quantities that are
-neither a source outcome nor a failure: Gemini's `tier_tags` /
+neither a source outcome nor a failure: Gemini's `tier_tags` / `generic_tier_tags` /
 `unsupported_attributions`, financial-data's `fx_identifiers_empty`, and the
 resolution-source rung counts. **A zero renders nothing**, so every healthy provider's
 `## Provider Diagnostics` line stays byte-identical to what it was before the map

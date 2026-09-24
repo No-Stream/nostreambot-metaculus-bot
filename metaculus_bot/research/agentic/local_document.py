@@ -39,6 +39,7 @@ from metaculus_bot.research.document_text import (
     digest_text,
     disclosed_page_text,
 )
+from metaculus_bot.research.source_documents import ParsedSource
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,8 @@ class HeldDocument:
     pdf: PdfText | None = None
     oversize: bool = False
     refused_landing: PlainFetchResult | None = None
+    source: ParsedSource | None = None
+    local_refusal: PlainFetchResult | None = None
 
     @property
     def has_text(self) -> bool:

@@ -74,6 +74,8 @@ _METHOD_TO_TIER: dict[str, str] = {
     "pdf_local": "fetched",
     "digest_local": "fetched",
     "known_api": "fetched",
+    "image_local": "fetched",
+    "local": "fetched",
     "search": "snippet",
     "news": "snippet",
 }
@@ -303,7 +305,10 @@ def _harvest_provenance(tool_name: str, arguments: dict[str, Any], outcome: Tool
     the driver's own rejected findings, so harvesting them would let a
     hallucinated URL launder itself into ``tool_seen_urls``.
     """
-    if tool_name in _INTERNAL_TOOL_NAMES:
+    # Navigation inventories expose possible members/sheets/images without
+    # reading their contents. Keep the inventory visible in the tool message,
+    # but never let its URLs or labels ground a finding or quote.
+    if tool_name in _INTERNAL_TOOL_NAMES or outcome.method == "local_navigation":
         return [], ""
     return _surfaced_urls(arguments, outcome), outcome.content_markdown
 

@@ -78,6 +78,72 @@ class TestProvenanceGate:
     a hard gate; the quote check only warns."""
 
     @pytest.mark.asyncio
+    async def test_local_navigation_inventory_cannot_ground_a_finding(self) -> None:
+        inventory_url = "https://agency.example/workbook.xlsx#sheet=Totals"
+        fake_llm = FakeLlm(
+            [
+                _response(tool_calls=[_plan_call()]),
+                _response(tool_calls=[_tool_call("inventory", "fetch", {"url": inventory_url})]),
+                _response(
+                    tool_calls=[
+                        _tool_call(
+                            "record",
+                            "record_findings",
+                            {"findings": [_finding(inventory_url, quote="Totals sheet inventory entry")]},
+                        )
+                    ]
+                ),
+                _response(tool_calls=[_tool_call("done", "conclude")]),
+            ]
+        )
+        inventory = _returns_method(
+            f"Totals sheet inventory entry: {inventory_url}", method="local_navigation", links=[inventory_url]
+        )
+
+        result = await run_agentic_loop(
+            "system",
+            "briefing with no URLs",
+            [_tool_spec("fetch", inventory)],
+            _config(max_conclude_gate_rejections=0),
+            llm_call=fake_llm,
+        )
+
+        assert result.telemetry.findings_count == 0
+        assert result.telemetry.provenance_rejections == 1
+        assert result.telemetry.quote_mismatch_warnings == 0
+
+    @pytest.mark.asyncio
+    async def test_local_navigation_does_not_erase_provenance_earned_by_search(self) -> None:
+        source_url = "https://agency.example/report"
+        fake_llm = FakeLlm(
+            [
+                _response(tool_calls=[_plan_call()]),
+                _response(tool_calls=[_tool_call("search", "search_web", {"query": "report"})]),
+                _response(tool_calls=[_tool_call("inventory", "inventory", {"url": source_url})]),
+                _response(
+                    tool_calls=[
+                        _tool_call("record", "record_findings", {"findings": [_finding(source_url, quote="Minutes")]})
+                    ]
+                ),
+                _response(tool_calls=[_tool_call("done", "conclude")]),
+            ]
+        )
+        search = _search_returning(f"{source_url} Minutes")
+        inventory = _returns_method(f"Navigation only: {source_url}", method="local_navigation", links=[source_url])
+
+        result = await run_agentic_loop(
+            "system",
+            "briefing with no URLs",
+            [_tool_spec("search_web", search), _tool_spec("inventory", inventory)],
+            _config(max_steps=6, max_conclude_gate_rejections=0),
+            llm_call=fake_llm,
+        )
+
+        assert result.telemetry.findings_count == 1
+        assert result.telemetry.provenance_rejections == 0
+        assert result.telemetry.quote_mismatch_warnings == 0
+
+    @pytest.mark.asyncio
     async def test_hallucinated_url_is_rejected_and_counted(self) -> None:
         fake_llm = FakeLlm(
             [
@@ -1587,9 +1653,9 @@ class TestResearchPlanGate:
         assert "plan_gaps=0" in marker
 
     @pytest.mark.asyncio
-    async def test_unaddressed_gaps_appear_in_budget_line(self) -> None:
-        """After a plan is set, the per-turn budget line lists the plan's gap ids
-        as the driver's outstanding work-list (W1 coarse accounting)."""
+    async def test_plan_gaps_appear_in_budget_line(self) -> None:
+        """After a plan is set, the per-turn budget line lists the plan's gap ids,
+        the work-list conclude's gap_accounting must cover (W1)."""
 
         async def search_web(**_: Any) -> ToolOutcome:
             return ToolOutcome(content_markdown="ran", method="search")
@@ -1617,8 +1683,9 @@ class TestResearchPlanGate:
 
         # The search result's budget line carries both gap ids.
         search_message = _tool_messages(result)[1]
-        budget_line = search_message["content"].splitlines()[-1]
-        assert "unaddressed_gaps=[gap-a, gap-b]" in budget_line
+        budget_line = next(line for line in search_message["content"].splitlines() if line.startswith("[budget: "))
+        assert "plan_gaps=[gap-a, gap-b]" in budget_line
+        assert "unaddressed_gaps" not in budget_line
 
     @pytest.mark.asyncio
     async def test_gap_list_capped_at_max_gaps(self) -> None:

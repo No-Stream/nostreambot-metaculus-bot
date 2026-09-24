@@ -87,11 +87,13 @@ class TestNativeSearchDefaults:
     want to revert.
     """
 
-    def test_native_search_default_model_is_gpt_5_6_terra(self):
-        """Locks the default OpenRouter model to ``openai/gpt-5.6-terra``
+    def test_native_search_default_model_is_gpt_6_sol(self):
+        """Locks the default OpenRouter model to ``openai/gpt-6-sol``
         (2026-07-17 sol→terra flip per the blind research-role audit,
-        scratch/research_role_audit_2026-07-17/ — terra 1st, sol 2nd)."""
-        assert NATIVE_SEARCH_DEFAULT_MODEL == "openai/gpt-5.6-terra"
+        scratch/research_role_audit_2026-07-17/ — terra 1st, sol 2nd; then the
+        2026-09-22 GPT-6 migration, where Terra has no GPT-6 successor so the
+        role moved to Sol)."""
+        assert NATIVE_SEARCH_DEFAULT_MODEL == "openai/gpt-6-sol"
 
     def test_native_search_reasoning_effort_default_is_low(self):
         """Low effort gives ~4.5× faster wall-clock vs medium on the v3 bench

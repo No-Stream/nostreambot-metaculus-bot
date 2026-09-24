@@ -11,15 +11,16 @@ Three rules, one class each, all in ``metaculus_bot/mantic.py``:
   ``MANTIC_POST_DROPPED`` line before re-raising, keeping fail-fast; cli reads the counter into the
   alertable arithmetic (pinned in ``tests/cli/test_cli_exit_status.py``).
 - **The tournament preflight** (items 5 and 20). Two authenticated GETs before any spend, neither
-  retried: the tournament list logs ``MANTIC_TOURNAMENTS`` (Series 2 discovery), then the configured
+  retried: the tournament list logs ``MANTIC_TOURNAMENTS`` (new-season discovery), then the configured
   tournament's own route decides whether the token's ``user_permission`` allows forecasting. The
   detail route, because the list omits an ``unlisted`` project (a new season before its first
   question) while a slug no tournament has 404s there.
 
 ``tests/test_mantic_client.py`` owns the recorded preseason fixture and the parsing seams; this module
 reuses its fixture loader and never opens a socket (the autouse egress guard in conftest would refuse).
-The live tournament list below is the ``GET /api/projects/tournaments/`` of 2026-09-08, reduced to the
-fields the preflight reads; the detail payload carries the same fields and more.
+The live tournament list below is the ``GET /api/projects/tournaments/`` of 2026-09-08 with Series 2
+(opened 2026-09-23) as the ongoing one, reduced to the fields the preflight reads; the detail payload
+carries the same fields and more. ``series-3`` stands in for a season the constants do not name yet.
 """
 
 from __future__ import annotations
@@ -78,8 +79,10 @@ def _tournament(
     }
 
 
-# The live list (module docstring): three bots-only tournaments, the preseason the only ongoing one.
+# The live list (module docstring): bots-only tournaments, the configured one the only ongoing one.
+_NEXT_SEASON_SLUG = "series-3"
 LIVE_TOURNAMENTS = [
+    _tournament("preseason-2", is_ongoing=False),
     _tournament("series-1", is_ongoing=False),
     _tournament("practice-series-1", is_ongoing=False),
     _tournament(MANTIC_TOURNAMENT_ID, is_ongoing=True),
@@ -98,7 +101,7 @@ def _serve_preflight(
     monkeypatch: pytest.MonkeyPatch, tournaments: list[dict[str, Any]], configured: dict[str, Any] | None = None
 ) -> MagicMock:
     """The preflight's two GETs in order: the tournament list, then the configured tournament's detail
-    (``configured`` defaults to the live preseason project)."""
+    (``configured`` defaults to the live configured project)."""
     detail = _tournament(MANTIC_TOURNAMENT_ID, is_ongoing=True) if configured is None else configured
     return _serve(monkeypatch, json_response(tournaments), json_response(detail))
 
@@ -399,10 +402,10 @@ class TestGetTournament:
         _serve(monkeypatch, json_response(_NOT_FOUND_BODY, status=404))
 
         with pytest.raises(ApiIdentityError, match="status=404") as excinfo:
-            client.get_tournament("series-2")
+            client.get_tournament(_NEXT_SEASON_SLUG)
 
         message = str(excinfo.value)
-        assert "'series-2'" in message
+        assert f"'{_NEXT_SEASON_SLUG}'" in message
         assert "MANTIC_TOURNAMENT_ID" in message
 
     def test_a_rejected_token_fails_shut_naming_the_token_variable(
@@ -445,38 +448,41 @@ class TestPreflightManticTournaments:
             preflight_mantic_tournaments(client, MANTIC_TOURNAMENT_ID)
 
         [record] = _marker_lines(caplog, "MANTIC_TOURNAMENTS")
-        assert record.getMessage() == "MANTIC_TOURNAMENTS: ongoing=preseason-2 configured=preseason-2 new=none"
+        assert (
+            record.getMessage()
+            == f"MANTIC_TOURNAMENTS: ongoing={MANTIC_TOURNAMENT_ID} configured={MANTIC_TOURNAMENT_ID} new=none"
+        )
         assert record.levelno == logging.INFO
         assert _requested_urls(fake_get) == [_TOURNAMENTS_URL, _CONFIGURED_TOURNAMENT_URL]
 
     def test_the_registered_spec_harvests_the_emitted_line(
         self, client: ManticClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ):
-        _serve_preflight(monkeypatch, [*LIVE_TOURNAMENTS, _tournament("series-2", is_ongoing=True)])
+        _serve_preflight(monkeypatch, [*LIVE_TOURNAMENTS, _tournament(_NEXT_SEASON_SLUG, is_ongoing=True)])
         with caplog.at_level(logging.INFO, logger=_MANTIC_LOGGER):
             preflight_mantic_tournaments(client, MANTIC_TOURNAMENT_ID)
         [record] = _marker_lines(caplog, "MANTIC_TOURNAMENTS")
 
         [harvested] = parse_log_text(_LOG_PREFIX + record.getMessage() + "\n", **_HARVEST_META)["mantic_tournaments"]
 
-        assert harvested["ongoing"] == "preseason-2,series-2"
+        assert harvested["ongoing"] == f"{MANTIC_TOURNAMENT_ID},{_NEXT_SEASON_SLUG}"
         assert harvested["configured"] == MANTIC_TOURNAMENT_ID
-        assert harvested["new"] == "series-2"
+        assert harvested["new"] == _NEXT_SEASON_SLUG
         assert "qid" not in harvested
 
     def test_a_new_ongoing_bots_only_tournament_is_named_at_warning(
         self, client: ManticClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ):
-        """The Series 2 shape: a second ongoing bots-only slug the constants have not been re-pointed at."""
-        _serve_preflight(monkeypatch, [*LIVE_TOURNAMENTS, _tournament("series-2", is_ongoing=True)])
+        """The season hand-over shape: a second ongoing bots-only slug the constants have not been re-pointed at."""
+        _serve_preflight(monkeypatch, [*LIVE_TOURNAMENTS, _tournament(_NEXT_SEASON_SLUG, is_ongoing=True)])
 
         with caplog.at_level(logging.INFO, logger=_MANTIC_LOGGER):
             preflight_mantic_tournaments(client, MANTIC_TOURNAMENT_ID)
 
         [record] = _marker_lines(caplog, "MANTIC_TOURNAMENTS")
         assert (
-            record.getMessage()
-            == "MANTIC_TOURNAMENTS: ongoing=preseason-2,series-2 configured=preseason-2 new=series-2"
+            record.getMessage() == f"MANTIC_TOURNAMENTS: ongoing={MANTIC_TOURNAMENT_ID},{_NEXT_SEASON_SLUG} "
+            f"configured={MANTIC_TOURNAMENT_ID} new={_NEXT_SEASON_SLUG}"
         )
         assert record.levelno == logging.WARNING
 
@@ -493,14 +499,14 @@ class TestPreflightManticTournaments:
         [record] = _marker_lines(caplog, "MANTIC_TOURNAMENTS")
         assert (
             record.getMessage()
-            == "MANTIC_TOURNAMENTS: ongoing=humans-welcome,preseason-2 configured=preseason-2 new=none"
+            == f"MANTIC_TOURNAMENTS: ongoing=humans-welcome,{MANTIC_TOURNAMENT_ID} configured={MANTIC_TOURNAMENT_ID} new=none"
         )
         assert record.levelno == logging.INFO
 
     def test_an_ended_configured_tournament_renders_ongoing_none_and_still_passes(
         self, client: ManticClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ):
-        """After 2026-09-20 the preseason stops being ongoing; the stale-slug red exit is cli's job
+        """After its end date the configured tournament stops being ongoing; the stale-slug red exit is cli's job
         (``_check_tournament_dates``), not this gate's, which only asks about permission."""
         ended = _tournament(MANTIC_TOURNAMENT_ID, is_ongoing=False)
         _serve_preflight(monkeypatch, [ended], configured=ended)
@@ -509,7 +515,7 @@ class TestPreflightManticTournaments:
             preflight_mantic_tournaments(client, MANTIC_TOURNAMENT_ID)
 
         [record] = _marker_lines(caplog, "MANTIC_TOURNAMENTS")
-        assert record.getMessage() == "MANTIC_TOURNAMENTS: ongoing=none configured=preseason-2 new=none"
+        assert record.getMessage() == f"MANTIC_TOURNAMENTS: ongoing=none configured={MANTIC_TOURNAMENT_ID} new=none"
 
     @pytest.mark.parametrize("permission", ["viewer", None, ""])
     def test_a_token_that_may_not_forecast_fails_shut_after_the_discovery_line(
@@ -549,17 +555,22 @@ class TestPreflightManticTournaments:
     def test_an_unlisted_configured_tournament_passes_off_the_detail_route(
         self, client: ManticClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ):
-        """The Series 2 hand-over: the operator re-points the slug while Mantic still has the project
+        """The season hand-over: the operator re-points the slug while Mantic still has the project
         ``unlisted``, so it is absent from the list. Absence there is not evidence the project does
         not exist; the detail route answers for it and the run proceeds."""
-        fake_get = _serve_preflight(monkeypatch, LIVE_TOURNAMENTS, configured=_tournament("series-2", is_ongoing=True))
+        fake_get = _serve_preflight(
+            monkeypatch, LIVE_TOURNAMENTS, configured=_tournament(_NEXT_SEASON_SLUG, is_ongoing=True)
+        )
 
         with caplog.at_level(logging.INFO, logger=_MANTIC_LOGGER):
-            preflight_mantic_tournaments(client, "series-2")
+            preflight_mantic_tournaments(client, _NEXT_SEASON_SLUG)
 
         [record] = _marker_lines(caplog, "MANTIC_TOURNAMENTS")
-        assert record.getMessage() == "MANTIC_TOURNAMENTS: ongoing=preseason-2 configured=series-2 new=preseason-2"
-        assert _requested_urls(fake_get) == [_TOURNAMENTS_URL, f"{_TOURNAMENTS_URL}series-2/"]
+        assert (
+            record.getMessage()
+            == f"MANTIC_TOURNAMENTS: ongoing={MANTIC_TOURNAMENT_ID} configured={_NEXT_SEASON_SLUG} new={MANTIC_TOURNAMENT_ID}"
+        )
+        assert _requested_urls(fake_get) == [_TOURNAMENTS_URL, f"{_TOURNAMENTS_URL}{_NEXT_SEASON_SLUG}/"]
 
     def test_a_slug_no_tournament_has_fails_shut_after_the_discovery_line(
         self, client: ManticClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
@@ -572,9 +583,9 @@ class TestPreflightManticTournaments:
             caplog.at_level(logging.INFO, logger=_MANTIC_LOGGER),
             pytest.raises(ApiIdentityError, match="status=404") as excinfo,
         ):
-            preflight_mantic_tournaments(client, "series-2")
+            preflight_mantic_tournaments(client, _NEXT_SEASON_SLUG)
 
-        assert "'series-2'" in str(excinfo.value)
+        assert f"'{_NEXT_SEASON_SLUG}'" in str(excinfo.value)
         assert "MANTIC_TOURNAMENT_ID" in str(excinfo.value)
         assert len(_marker_lines(caplog, "MANTIC_TOURNAMENTS")) == 1
 

@@ -77,9 +77,13 @@ Read straight off `/api/projects/tournaments/preseason-2/` on 2026-09-08: projec
 So `MANTIC_TOURNAMENT_END_DATE` is that `forecasting_end_date` on project 4, API-verified
 2026-09-08.
 
-No Series 2 project exists on that API yet. The valid slugs as of 2026-09-08 are preseason-2,
-series-1 and practice-series-1, and an unknown slug answers HTTP 400. Re-point
-`MANTIC_TOURNAMENT_ID` when Series 2 opens.
+Re-pointed to Series 2 on 2026-09-24, read off `/api/projects/tournaments/series-2/`: project
+id 5, `start_date` 2026-09-23T00:00:00Z, `forecasting_end_date` equal to `close_date`
+2026-12-16T23:59:00Z, `score_type` spot_baseline_tournament, `bot_leaderboard_status` bots_only,
+`visibility` normal. So `MANTIC_TOURNAMENT_ID` is `series-2` and `MANTIC_TOURNAMENT_END_DATE` is
+2026-12-16. On that date it held five open `[Practice]` questions (posts 663 to 667), all
+closing 2026-10-23T18:00Z; question submissions had not opened. The Preseason 2 reading above
+is kept as the record of the previous season. An unknown slug answers HTTP 400.
 
 ### MANTIC_FETCH_QUESTION_CEILING
 
@@ -478,7 +482,8 @@ the targeted search on the stacking path. Effort stays at the env default of low
 
 Changed 2026-07-17 from sol to terra per the blind research-role audit in
 `scratch/research_role_audit_2026-07-17/`: terra won the native-search role first, sol second, luna
-third, with the verdict "MARGINAL EDGE".
+third, with the verdict "MARGINAL EDGE". Changed again 2026-09-22, terra to `gpt-6-sol`: GPT-6 shipped
+with no Terra successor, so every Terra role moved to Sol 6 at the same (low) effort.
 
 ### NATIVE_SEARCH_MAX_TOKENS
 
@@ -564,12 +569,30 @@ average, so this bounds pathological multi-URL questions.
 
 Response byte cap. The CISA KEV JSON is about 1.5 MB, so 5 MiB is headroom.
 
+### LOCAL_SOURCE_MAX_EXPANDED_BYTES, LOCAL_SOURCE_MAX_ENTRIES, LOCAL_SOURCE_MAX_SHEETS, LOCAL_SOURCE_MAX_CELLS, LOCAL_SOURCE_MAX_CHARS, LOCAL_SOURCE_CACHE_MAX_BYTES
+
+Bounds for local ZIP, spreadsheet, and Word extraction in `research/source_documents.py` and
+the shared ladder's process-run cache. The response still has the existing 5 MiB page-byte cap;
+after that, a source may expand to at most 20 MiB, contain at most 128 archive members, 32
+worksheets, 250,000 tabular cells, and 2 million extracted characters. Parsed
+local-source text and retained image bodies share a 64 MiB cache budget and are
+evicted in LRU order. Parsers refuse a source that crosses a limit rather than
+returning a partial parse.
+
+The parser reads ZIP members as streams and never extracts files to disk. It reads text-like
+members, CSV/TSV, `.xlsx`/`.xlsm`, `.xls`, and `.docx`; nested archives and legacy `.doc` are not
+recursively or locally read. See `docs/architecture.md` "Local source and image bodies".
+
 ### RESOLUTION_SOURCE_PER_URL_MAX_CHARS, RESOLUTION_SOURCE_TOTAL_MAX_CHARS
 
 The per-URL cap sits at the elbow of the full-extraction distribution (p50 2.2k, p75 5.2k) and cut
 truncation from 48% to 21% on the 2026-07-09 smoke run, at roughly 1.5k tokens per URL. The total
 carries headroom so the per-URL cap binds: the maximum observed section was about 11.1k at 6k per
 URL, and 18k is about 4.5k tokens worst case.
+
+The 6,000-character per-URL budget includes provenance/chart/embed leads, section labels, digest
+headers, and truncation markers. Those disclosures consume part of the allowance rather than being
+appended beyond it, including for local-source excerpts and rescued reads.
 
 ### RESOLUTION_SOURCE_MIN_SECTION_CHARS
 
@@ -798,7 +821,8 @@ docs/research.md "Page digest".
 
 ### PAGE_DIGEST_EXTRACTOR_MODEL, PAGE_DIGEST_EXTRACTOR_EFFORT
 
-`openrouter/openai/gpt-5.6-luna` at reasoning effort `medium`, the operator's choice on 2026-09-09:
+`openrouter/openai/gpt-6-luna` (gpt-5.6-luna -> gpt-6-luna on 2026-09-22, the GPT-6 release; effort
+stays medium pending a decision) at reasoning effort `medium`, the operator's choice on 2026-09-09:
 "luna is dirt cheap and medium will still be fast enough". `google/gemini-3.8-flash` is the noted
 alternative. The slug carries the `openrouter/` prefix because `build_llm_with_openrouter_fallback`
 routes the donated-versus-personal key off that prefix, exactly as `FINANCIAL_CLASSIFIER_MODEL` does; a
@@ -824,6 +848,14 @@ ceiling that binds costs one cheap luna prompt and serves the BM25 digest that a
 digest on an unmeasured hunch. The call is bounded by `min(PAGE_DIGEST_EXTRACTOR_TIMEOUT_S,
 budget_seconds - elapsed - PAGE_DIGEST_WALL_MARGIN_S)`, where `elapsed` is the BM25 thread hop's own
 time, so a caller with less wall left than this gets a shorter call and never a longer one.
+
+2026-09-22: 20 -> 30 s (operator). By then the live record was 2 of 5 gpt-5.6-luna digest calls timing out
+(2026-09-11), and the 45 s wall no longer looked like the real constraint: `resolution_source` runs concurrently
+with AskNews (research-archive latency median 61 s, 10th percentile 44 s) and native search (median 69 s), so its
+own wall rarely lengthens the research phase, and the `min(...)` above still clips the call to whatever that wall
+leaves. The same day gpt-6-luna ran real digest calls in 1.4 to 4.8 s at low and medium effort, with no
+fallbacks (on archived pages cut to 6,000 chars, so shorter than prod's pre-filtered prompt); the OpenRouter
+`openai/fast` priority tier made no visible difference. Receipts: `scratch/model_migration_2026-09-22/`.
 
 ### PAGE_DIGEST_WALL_MARGIN_S
 
@@ -1059,7 +1091,7 @@ blocklist, with no donated attempt and no 429, pending the Metaculus-side BYOK f
 
 The grounded-search model, verified live on the native google-genai SDK on 2026-09-03 with three calls
 from `scripts/probes/gemini_verify.py`: the response reported `model_version` gemini-3.8-flash, the
-`google_search` tool returned grounding chunks with a web search query, `thinking_level` was accepted,
+`google_search` tool returned a web search query, `thinking_level` was accepted,
 and `url_context` retrieved a robots-allowed host. Grounding still needs billing enabled on the Google AI
 Studio project.
 
@@ -1082,6 +1114,14 @@ fetch, model, and so on), each about 15 to 20 s. A full 10-round chain takes 150
 tight and produced observed timeouts on legitimate deep-research calls; 360 s gives twice the headroom over
 the worst-case AFC chain. Gap-fill runs overlap with forecaster LLM calls, so a higher timeout adds zero
 wall-clock cost. The observed p99 of non-AFC calls is about 52 s.
+
+### GEMINI_SEARCH_LINK_RESOLVE_TIMEOUT_S
+
+Ten seconds is the per-call wall for resolving all cited Google search redirect links after the Gemini
+response arrives. The resolver runs all unique links concurrently through the existing HTTP transport,
+with a session total timeout. The provider uses `min(GEMINI_SEARCH_LINK_RESOLVE_TIMEOUT_S, remaining)`
+where `remaining` is what is left of `GEMINI_SEARCH_TIMEOUT`; if no wall remains, it skips resolution
+and treats every cited link as unverified.
 
 ### GEMINI_SEARCH_THINKING_LEVEL
 
@@ -1136,9 +1176,10 @@ fails soft: the forecast proceeds with first-pass research alone if any stage er
 
 Non-grounded gap-listing. It reads the first-pass research and emits a JSON list of up to
 `GAP_FILL_MAX_GAPS` factual gaps under the tight `GAP_FILL_ANALYZER_WALL_TIMEOUT` cap, which soft-fails
-silently on breach, so terra-low is the latency-safe choice: the task is decomposition rather than deep
+silently on breach, so low effort is the latency-safe choice: the task is decomposition rather than deep
 judgment. Grounded search resolution still uses google-genai directly via `gemini_search_provider`, because
-that path needs the search index.
+that path needs the search index. Changed 2026-09-22, terra to `gpt-6-sol`: GPT-6 shipped with no Terra
+successor, so every Terra role moved to Sol 6 at the same (low) effort.
 
 ### GAP_FILL_MAX_GAPS
 
@@ -1193,7 +1234,8 @@ Changed from sol to terra on 2026-07-20. Terra was preferred or within noise aga
 2026-07 blind role audits at roughly 40 to 50% lower cost, and these searches are about 44% of research spend
 (17 calls in the 2026-07-19 run), the single biggest research line item, so the cost cut is the dominant
 consideration. The 2026-07-09 bench had sol-low matching terra-low coverage 24 of 25; the blind audits plus the
-cost weight flip it.
+cost weight flip it. Changed again 2026-09-22, terra to `gpt-6-sol`: GPT-6 shipped with no Terra successor, so
+every Terra role moved to Sol 6 at the same (low) effort.
 
 ## Agentic gap-fill v2 (bounded research loop)
 
@@ -1203,13 +1245,41 @@ search, fetch and read tools. It runs concurrently with v1 during the overlap wi
 and soft-fails to `""` like v1. See `scratch_docs_and_planning/agentic_gap_fill_v2_plan.md` and
 `docs/agentic_gap_fill.md`.
 
+### GAP_FILL_IMAGE_MAX_SOURCE_PIXELS, GAP_FILL_IMAGE_MAX_EDGE, GAP_FILL_IMAGE_MAX_PIXELS, GAP_FILL_IMAGE_MAX_BYTES
+
+Bounds on raster images normalized for the same gap-fill driver: at most 25 megapixels decoded from the
+source, then at most 2,048 pixels on the longest side, 2 megapixels total, and 2 MiB for the normalized PNG.
+The download still uses the shared 5 MiB response cap. An explicit crop can reduce an image to fit the output
+limits, provided its full source fits the download and decode limits. The normalizer never crops automatically
+or enlarges a small image.
+
+### GAP_FILL_IMAGE_MAX_VIEWS
+
+At most four distinct normalized PNG hashes are delivered per question, counting crops as views. Repeated URLs
+or crops that normalize to an already delivered image reuse the existing image ID and do not consume another
+slot.
+
+### GAP_FILL_IMAGE_MAX_LEADS, GAP_FILL_IMAGE_LEADS_MAX_CHARS, GAP_FILL_IMAGE_METADATA_MAX_CHARS
+
+The HTML image-lead scanner keeps at most three candidate URLs per page. Each URL is capped at 1,000 characters;
+each untrusted alt text or figure caption is capped at 160 characters. The leads are navigation metadata only;
+they do not say the pixels were fetched or inspected.
+
+### GAP_FILL_V2_TOOL_BUDGET_LINE_RESERVE_CHARS
+
+Dispatch reserves up to 512 characters inside each tool reply for its remaining-budget line. It subtracts that
+space before truncating the tool body and clips the line to the space actually available, so it remains inside
+`LoopConfig.max_result_chars`.
+
 ### GAP_FILL_V2_DRIVER_MODEL, GAP_FILL_V2_DRIVER_EFFORT
 
 Driver model and effort picked by the blind five-arm replay eval on 2026-07-17,
 `scratch/driver_replay_2026-07-17/blind_judge_report.md`: terra-low ranked first (fetch-verified grounding,
 best source mix, 30 s wall, $0.36 per question), terra-medium second; sol-low burned budget on near-duplicate
 searches and came fifth; sonnet-5 cited unfetched URLs, which is disqualifying for a researcher. All candidates
-were openai or anthropic, so the loop's litellm binding routes via the donated OpenRouter key.
+were openai or anthropic, so the loop's litellm binding routes via the donated OpenRouter key. Changed
+2026-09-22, terra to `gpt-6-sol`: GPT-6 shipped with no Terra successor, so every Terra role moved to Sol 6 at
+the same (low) effort default.
 
 ### GAP_FILL_V2_READER_MODEL
 
@@ -1264,7 +1334,8 @@ decision-relevance, so the cap drops the least forecast-moving gaps.
 
 Binary-ish routing classification, asking whether this is a financial or economic question, under a 30 s
 timeout. The task is capability-saturated, so it rides the cheapest capable tier: mini to luna on 2026-08-03,
-when luna's markdown made it cheaper than mini.
+when luna's markdown made it cheaper than mini. luna -> GPT-6 luna on 2026-09-22 (the GPT-6 release), same tier
+logic.
 
 ### FINANCIAL_YFINANCE_LOOKBACK_DAYS, FINANCIAL_YFINANCE_RECENT_DAYS
 
@@ -1513,7 +1584,9 @@ The distribution mix over question types, ordered as (binary, numeric, multiple_
 ### LEAKAGE_DETECTOR_MODEL
 
 A mechanical leakage screen over research text, backtest-only. The task is saturated, so luna is the cheapest
-capable tier: mini to luna on 2026-08-03.
+capable tier: mini to luna on 2026-08-03; luna -> GPT-6 luna on 2026-09-22. Same day, the detector's `max_tokens=500`
+cap was removed and its effort raised to `high` (briefly `max` the same day): this backtest-only screen is not time-sensitive, and a max_tokens
+cap crashes calls for no good reason since reasoning tokens count against it (see `metaculus_bot/backtest/leakage.py`).
 
 ## Per-type stacking gates
 

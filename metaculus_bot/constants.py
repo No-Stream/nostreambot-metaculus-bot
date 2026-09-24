@@ -31,8 +31,8 @@ METACULUS_CUP_ID: str = "metaculus-cup-fall-2026"
 MANTIC_HOST: str = "competitions.mantic.com"
 MANTIC_SITE_URL: str = f"https://{MANTIC_HOST}"
 MANTIC_API_BASE_URL: str = f"{MANTIC_SITE_URL}/api"
-MANTIC_TOURNAMENT_ID: str = "preseason-2"
-MANTIC_TOURNAMENT_END_DATE: str = "2026-09-20"  # forecasting_end_date on project 4 (API-verified 2026-09-08)
+MANTIC_TOURNAMENT_ID: str = "series-2"
+MANTIC_TOURNAMENT_END_DATE: str = "2026-12-16"  # forecasting_end_date on project 5 (API-verified 2026-09-24)
 # Mantic advertises `next` past the last page. Receipt: docs/constants.md "MANTIC_FETCH_QUESTION_CEILING".
 MANTIC_FETCH_QUESTION_CEILING: int = 500
 # The bot's own account (``nostreambot-bot``, ``/api/users/81/``): an unauthenticated read has no ``my_forecasts``.
@@ -92,7 +92,7 @@ def check_tournament_dates(
     """Check if tournament dates are stale and warn/error accordingly; True when past the end date.
 
     - Warns, and returns True, once the current UTC date is past the tournament's end date. The
-      end date is the LAST open day, not the first dead one: Preseason 2 forecasts until 12:00 UTC
+      end date is the LAST open day, not the first dead one: Series 2 forecasts until 23:59 UTC
       on ``MANTIC_TOURNAMENT_END_DATE``, and a run in those hours publishes normally.
     - Raises TournamentExpiredError if past end date + TOURNAMENT_HARD_STOP_WEEKS
 
@@ -369,8 +369,9 @@ CONDITIONAL_STACKING_NUMERIC_NORMALIZED_THRESHOLD: float = 0.15
 # --- Native Search Provider ---
 NATIVE_SEARCH_ENABLED_ENV: str = "NATIVE_SEARCH_ENABLED"
 NATIVE_SEARCH_MODEL_ENV: str = "NATIVE_SEARCH_MODEL"
-# Critical-path research; sol->terra 2026-07-17. Receipt: docs/constants.md "NATIVE_SEARCH_DEFAULT_MODEL".
-NATIVE_SEARCH_DEFAULT_MODEL: str = "openai/gpt-5.6-terra"
+# Critical-path research; sol->terra 2026-07-17, terra->sol (GPT-6, no Terra successor) 2026-09-22.
+# Receipt: docs/constants.md "NATIVE_SEARCH_DEFAULT_MODEL".
+NATIVE_SEARCH_DEFAULT_MODEL: str = "openai/gpt-6-sol"
 NATIVE_SEARCH_MAX_TOKENS: int = 16_000  # no temperature / top_p: temperature=None, so litellm omits it
 # The litellm per-request timeout, 240->360 on 2026-05-17. Receipt: docs/constants.md "NATIVE_SEARCH_TIMEOUT".
 NATIVE_SEARCH_TIMEOUT: int = 360
@@ -401,6 +402,14 @@ RESOLUTION_SOURCE_HTTP_TIMEOUT: float = 20.0  # per-request (probe: 0-2s typical
 RESOLUTION_SOURCE_WALL_TIMEOUT: float = 45.0  # hard cap on the whole provider
 RESOLUTION_SOURCE_MAX_URLS: int = 5  # 58 URLs / 40 Qs ≈ 1.45 avg; bounds pathological multi-URL Qs
 RESOLUTION_SOURCE_MAX_RESPONSE_BYTES: int = 5 * 1024 * 1024  # CISA KEV JSON ~1.5 MB; 5 MiB headroom
+LOCAL_SOURCE_MAX_EXPANDED_BYTES: int = 20 * 1024 * 1024
+LOCAL_SOURCE_MAX_ENTRIES: int = 128
+LOCAL_SOURCE_MAX_SHEETS: int = 32
+LOCAL_SOURCE_MAX_CELLS: int = 250_000
+LOCAL_SOURCE_MAX_CHARS: int = 2_000_000
+LOCAL_SOURCE_CACHE_MAX_BYTES: int = 64 * 1024 * 1024
+LOCAL_SOURCE_READ_CHUNK_BYTES: int = 64 * 1024
+LOCAL_SOURCE_CSV_SNIFF_CHARS: int = 8192
 # The elbow of the full-extraction distribution. Receipt: docs/constants.md "RESOLUTION_SOURCE_PER_URL_MAX_CHARS".
 RESOLUTION_SOURCE_PER_URL_MAX_CHARS: int = 6000
 RESOLUTION_SOURCE_TOTAL_MAX_CHARS: int = 18000
@@ -456,11 +465,12 @@ URL_CONTEXT_SIZE_GATE_TOKENS: int = 100_000
 
 # --- Page digest (`research/page_digest.py`, the `page_digest_extractor` support role) ---
 
-# "Luna is dirt cheap and medium will still be fast enough" (operator). Receipt: docs/constants.md "PAGE_DIGEST_EXTRACTOR_MODEL".
-PAGE_DIGEST_EXTRACTOR_MODEL: str = "openrouter/openai/gpt-5.6-luna"
+# "Luna is dirt cheap and medium will still be fast enough" (operator). luna->GPT-6 luna 2026-09-22,
+# effort unchanged pending a decision. Receipt: docs/constants.md "PAGE_DIGEST_EXTRACTOR_MODEL".
+PAGE_DIGEST_EXTRACTOR_MODEL: str = "openrouter/openai/gpt-6-luna"
 PAGE_DIGEST_EXTRACTOR_EFFORT: str = "medium"
-# Luna-medium probed 13-76 s on 20-84k-token SEARCH prompts. Receipt: docs/constants.md "PAGE_DIGEST_EXTRACTOR_TIMEOUT_S".
-PAGE_DIGEST_EXTRACTOR_TIMEOUT_S: float = 20.0
+# 20 -> 30 s 2026-09-22; gpt-6-luna digests measured 1.4-4.8 s. Receipt: docs/constants.md "PAGE_DIGEST_EXTRACTOR_TIMEOUT_S".
+PAGE_DIGEST_EXTRACTOR_TIMEOUT_S: float = 30.0
 # Left to the caller's outer wait_for so the digest returns first. Receipt: docs/constants.md "PAGE_DIGEST_WALL_MARGIN_S".
 PAGE_DIGEST_WALL_MARGIN_S: float = 2.0
 # Under this a paid call cannot finish, so none is made. Receipt: docs/constants.md "PAGE_DIGEST_MIN_CALL_BUDGET_S".
@@ -528,6 +538,8 @@ GEMINI_USE_DONATED_OPENROUTER_KEY_ENV: str = "GEMINI_USE_DONATED_OPENROUTER_KEY"
 GEMINI_SEARCH_DEFAULT_MODEL: str = "gemini-3.8-flash"
 # 6 min: a 10-round AFC chain takes 150-200 s. Receipt: docs/constants.md "GEMINI_SEARCH_TIMEOUT".
 GEMINI_SEARCH_TIMEOUT: int = 360
+# Per-call wall for resolving all cited search links; use the remaining search wall. Receipt: docs/constants.md "GEMINI_SEARCH_LINK_RESOLVE_TIMEOUT_S".
+GEMINI_SEARCH_LINK_RESOLVE_TIMEOUT_S: float = 10.0
 # Explicit (operator, 2026-09-03); the default is HIGH. Receipt: docs/constants.md "GEMINI_SEARCH_THINKING_LEVEL".
 GEMINI_SEARCH_THINKING_LEVEL: str = "medium"
 # Per-attempt cap just under the outer wall. Receipt: docs/constants.md "GEMINI_SEARCH_HTTP_TIMEOUT_MS".
@@ -541,24 +553,36 @@ GAP_FILL_V2_READER_HTTP_ATTEMPTS: int = 2
 
 # Analyzer then parallel resolvers, failing soft to first-pass research alone.
 GAP_FILL_ENABLED_ENV: str = "GAP_FILL_ENABLED"
-# Non-grounded decomposition under a tight wall. Receipt: docs/constants.md "GAP_FILL_ANALYZER_MODEL".
-GAP_FILL_ANALYZER_MODEL: str = "openrouter/openai/gpt-5.6-terra"
+# Non-grounded decomposition under a tight wall. terra->sol (GPT-6, no Terra successor) 2026-09-22.
+# Receipt: docs/constants.md "GAP_FILL_ANALYZER_MODEL".
+GAP_FILL_ANALYZER_MODEL: str = "openrouter/openai/gpt-6-sol"
 # 5 -> 4 on 2026-07-20; do NOT go below 4. Receipt: docs/constants.md "GAP_FILL_MAX_GAPS".
 GAP_FILL_MAX_GAPS: int = 4
 GAP_FILL_ANALYZER_TIMEOUT: int = 120  # tight, so a hung analyzer cannot hold a research slot
 # Headroom over the request timeout. Receipt: docs/constants.md "GAP_FILL_ANALYZER_WALL_TIMEOUT".
 GAP_FILL_ANALYZER_WALL_TIMEOUT: int = 135
 GAP_FILL_MIN_RESEARCH_CHARS: int = 200  # under this every provider likely soft-failed
-# Moved off grounded Gemini 2026-06-25; sol->terra 2026-07-20. Receipt: docs/constants.md "GAP_FILL_RESOLVER_MODEL".
-GAP_FILL_RESOLVER_MODEL: str = "openai/gpt-5.6-terra"
+# Moved off grounded Gemini 2026-06-25; sol->terra 2026-07-20; terra->sol (GPT-6, no Terra successor)
+# 2026-09-22. Receipt: docs/constants.md "GAP_FILL_RESOLVER_MODEL".
+GAP_FILL_RESOLVER_MODEL: str = "openai/gpt-6-sol"
 GAP_FILL_RESOLVER_REASONING_EFFORT: str = "low"
 
 # --- Agentic gap-fill v2 (bounded research loop) ---
 
 # A bounded loop, concurrent with v1 and soft-failing to "". Receipt: docs/agentic_gap_fill.md.
 GAP_FILL_V2_ENABLED_ENV: str = "GAP_FILL_V2_ENABLED"
-# terra-low won the blind 5-arm replay eval 2026-07-17. Receipt: docs/constants.md "GAP_FILL_V2_DRIVER_MODEL".
-GAP_FILL_V2_DRIVER_MODEL: str = os.getenv("GAP_FILL_V2_DRIVER_MODEL") or "openai/gpt-5.6-terra"
+GAP_FILL_IMAGE_MAX_SOURCE_PIXELS: int = 25_000_000
+GAP_FILL_IMAGE_MAX_EDGE: int = 2048
+GAP_FILL_IMAGE_MAX_PIXELS: int = 2_000_000
+GAP_FILL_IMAGE_MAX_BYTES: int = 2 * 1024 * 1024
+GAP_FILL_IMAGE_MAX_VIEWS: int = 4
+GAP_FILL_IMAGE_MAX_LEADS: int = 3
+GAP_FILL_IMAGE_LEADS_MAX_CHARS: int = 1000
+GAP_FILL_IMAGE_METADATA_MAX_CHARS: int = 160
+GAP_FILL_V2_TOOL_BUDGET_LINE_RESERVE_CHARS: int = 512
+# terra-low won the blind 5-arm replay eval 2026-07-17; terra->sol (GPT-6, no Terra successor)
+# 2026-09-22, effort default unchanged at low. Receipt: docs/constants.md "GAP_FILL_V2_DRIVER_MODEL".
+GAP_FILL_V2_DRIVER_MODEL: str = os.getenv("GAP_FILL_V2_DRIVER_MODEL") or "openai/gpt-6-sol"
 GAP_FILL_V2_DRIVER_EFFORT: str = os.getenv("GAP_FILL_V2_DRIVER_EFFORT") or "low"
 # A wrong id, or a robots-gated host, kills the rung silently. Receipt: docs/constants.md "GAP_FILL_V2_READER_MODEL".
 GAP_FILL_V2_READER_MODEL: str = os.getenv("GAP_FILL_V2_READER_MODEL") or "gemini-3.8-flash"
@@ -576,8 +600,9 @@ GAP_FILL_V2_MAX_GAPS: int = _int_env("GAP_FILL_V2_MAX_GAPS", 4)
 # --- Financial Data Provider ---
 FINANCIAL_DATA_ENABLED_ENV: str = "FINANCIAL_DATA_ENABLED"
 FRED_API_KEY_ENV: str = "FRED_API_KEY"
-# Capability-saturated, so the cheapest capable tier. Receipt: docs/constants.md "FINANCIAL_CLASSIFIER_MODEL".
-FINANCIAL_CLASSIFIER_MODEL: str = "openrouter/openai/gpt-5.6-luna"
+# Capability-saturated, so the cheapest capable tier. luna->GPT-6 luna 2026-09-22.
+# Receipt: docs/constants.md "FINANCIAL_CLASSIFIER_MODEL".
+FINANCIAL_CLASSIFIER_MODEL: str = "openrouter/openai/gpt-6-luna"
 FINANCIAL_CLASSIFIER_TIMEOUT: int = 30
 # Never spent as a bare period="Nd". Receipt: docs/constants.md "FINANCIAL_YFINANCE_LOOKBACK_DAYS".
 FINANCIAL_YFINANCE_LOOKBACK_DAYS: int = 390
@@ -666,8 +691,9 @@ BACKTEST_DEFAULT_RESOLVED_AFTER: str = "2025-12-01"
 BACKTEST_DEFAULT_TOURNAMENT: str = "fall-aib-2025"
 BACKTEST_DEFAULT_MIN_FORECASTERS: int = 40
 BACKTEST_OVERFETCH_RATIO: int = 3
-# Saturated backtest-only screen, cheapest capable tier. Receipt: docs/constants.md "LEAKAGE_DETECTOR_MODEL".
-LEAKAGE_DETECTOR_MODEL: str = "openrouter/openai/gpt-5.6-luna"
+# Saturated backtest-only screen, cheapest capable tier. luna->GPT-6 luna 2026-09-22.
+# Receipt: docs/constants.md "LEAKAGE_DETECTOR_MODEL".
+LEAKAGE_DETECTOR_MODEL: str = "openrouter/openai/gpt-6-luna"
 
 # --- Per-type stacking gates ---
 

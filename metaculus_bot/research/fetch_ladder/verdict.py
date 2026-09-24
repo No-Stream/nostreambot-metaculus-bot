@@ -15,6 +15,7 @@ here rather than in the classifier: ``docs/architecture.md``, "What a verdict de
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
@@ -31,14 +32,37 @@ from metaculus_bot.research.resolution_fetch_result import (
     FetchStatus,
     FetchStatusReason,
 )
+from metaculus_bot.research.source_documents import is_local_source
 
 _HTML_CONTENT_TYPES = ("text/html", "application/xhtml+xml")
-_RAW_TEXT_CONTENT_TYPES = ("text/plain", "text/csv")
+_RAW_TEXT_CONTENT_TYPES = ("text/plain", "text/csv", "text/tab-separated-values", "text/tsv")
+_HTML_STRIPPED_TEXT_CONTENT_TYPES = ("text/plain", "text/csv")
 _IMAGE_CONTENT_TYPE_PREFIXES = ("image/",)
-_IMAGE_MAGIC_BYTES = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a")
+_IMAGE_MAGIC_BYTES = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a", b"BM")
 
 # Which branch of the classifier a body takes; only the gap-fill verdict routes to the two terminals.
-BodyRoute = Literal["html", "text", "document", "image", "unsupported"]
+BodyRoute = Literal["html", "text", "document", "source", "image", "invalid_image", "svg", "unsupported"]
+
+
+def _is_raster_body(body: bytes) -> bool:
+    stripped = body.lstrip()
+    return stripped.startswith(_IMAGE_MAGIC_BYTES) or (
+        len(stripped) >= 12 and stripped.startswith(b"RIFF") and stripped[8:12] == b"WEBP"
+    )
+
+
+def _is_svg(content_type: str, body: bytes) -> bool:
+    return "image/svg+xml" in content_type or body.lstrip().lower().startswith(b"<svg")
+
+
+def _is_strict_json_octet_stream(content_type: str, body: bytes) -> bool:
+    if content_type.partition(";")[0].strip().lower() != "application/octet-stream":
+        return False
+    try:
+        json.loads(body.decode("utf-8", errors="strict"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return True
 
 
 def looks_like_js_wall(text: str) -> bool:
@@ -178,7 +202,16 @@ class ResolutionSourceVerdict:
         return None
 
     def body_route(self, content_type: str, body: bytes) -> BodyRoute:
-        del body
+        if is_local_source(body, content_type):
+            return "source"
+        if _is_svg(content_type, body):
+            return "svg"
+        if _is_raster_body(body):
+            return "image"
+        if _is_image_content_type(content_type):
+            return "invalid_image"
+        if _is_strict_json_octet_stream(content_type, body):
+            return "text"
         if any(ct in content_type for ct in _HTML_CONTENT_TYPES):
             return "html"
         if (
@@ -216,14 +249,21 @@ class GapFillVerdict:
     """The driver's reading: the bytes decide the branch, and any non-empty extraction is content."""
 
     def unread_route(self, content_type: str) -> BodyRoute | None:
-        """The one read this caller skips: an image's bytes buy nothing a local rung can read."""
-        return "image" if _is_image_content_type(content_type) else None
+        """Read every body so supported raster bytes can be retained for same-agent viewing."""
+        del content_type
+        return None
 
     def body_route(self, content_type: str, body: bytes) -> BodyRoute:
         if _is_pdf_content_type(content_type) or body.lstrip().startswith(b"%PDF-"):
             return "document"
-        if _is_image_content_type(content_type) or body.lstrip().startswith(_IMAGE_MAGIC_BYTES):
+        if is_local_source(body, content_type):
+            return "source"
+        if _is_svg(content_type, body):
+            return "svg"
+        if _is_raster_body(body):
             return "image"
+        if _is_image_content_type(content_type):
+            return "invalid_image"
         if any(ct in content_type for ct in _HTML_CONTENT_TYPES) or b"<html" in body.lower():
             return "html"
         if (
@@ -231,6 +271,7 @@ class GapFillVerdict:
             or _is_xml_content_type(content_type)
             or any(ct in content_type for ct in _RAW_TEXT_CONTENT_TYPES)
             or not content_type
+            or _is_strict_json_octet_stream(content_type, body)
         ):
             return "text"
         return "unsupported"

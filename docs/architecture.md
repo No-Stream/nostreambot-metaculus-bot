@@ -907,13 +907,13 @@ the two callers differ in is the VERDICT on what came back, and that is one poli
 Which BRANCH a body takes. The fetcher routes on the Content-Type header, with the `%PDF-` sniff
 inside the fallback document branch, so a body labelled `text/html` is read as HTML whatever its
 bytes say. The driver routes on the bytes first, because a mislabeled document is common on the
-hosts it reaches: PDF magic or a declared PDF goes to the document branch, image magic or a
-declared image is refused as `unsupported_type` with the `image_needs_reader` reason (its own
-token, so the loop's adapter can escalate it to a model read), and an `<html` substring anywhere in
-the body routes to HTML even under an odd content type. Both callers route `application/xml`,
-`text/xml` and structured `+xml` media types to the raw-text reader, which preserves the XML tags.
-A declared image is the one body the driver refuses WITHOUT reading, which is what
-`verdict.unread_route` exists for.
+hosts it reaches: PDF magic or a declared PDF goes to the document branch, while image magic or a
+declared image is retained for gap-fill's local image viewer and is not read as text. Image
+`fetch(image_url)` and `read_document(image_url, ask)` immediately deliver pixels through the same
+local viewer path as `view_image`; none returns navigation instructions or uses the paid
+document-reader fallback. An `<html` substring anywhere in the body routes to HTML even under an
+odd content type. Both callers route `application/xml`, `text/xml` and structured `+xml` media types
+to the raw-text reader, which preserves the XML tags.
 
 Whether an HTML extraction counts as CONTENT. The fetcher publishes only text that clears the
 400-character chrome floor and the line-shape metric (`looks_like_page_chrome`,
@@ -929,6 +929,75 @@ own later ask-directed digest, and never withholds on a non-matching query. The 
 rides the `FetchResult`: `PdfText.pages` is the whole document (833,450 characters on the receipt
 file) against a 200,000-character archive cap, so one such field would truncate a whole question's
 archived payload to a preview.
+
+### Local source and image bodies
+
+The shared body classifier also recognizes bounded local source containers. ZIP signatures and
+ZIP/Office MIME types route to `research/source_documents.py`; OLE workbook bytes route to the
+legacy `.xls` reader, and valid UTF-8 JSON labelled `application/octet-stream` is accepted by the
+ordinary text route. The ZIP reader supports text members (`.txt`, `.md`, `.json`, `.xml`, `.log`),
+CSV/TSV, `.xlsx`/`.xlsm`, `.xls`, and `.docx`. It identifies OOXML workbook and Word packages
+before treating a ZIP as a generic archive. It never extracts members to disk or recursively
+opens nested archives. Legacy `.doc`, encrypted sources, unsupported archive members, malformed
+containers, and anything over a parser limit are disclosed as unreadable or unsupported.
+
+Parsing runs in a worker thread behind the shared two-slot document-parse semaphore. A cancelled
+caller leaves its slot held until that thread ends, so repeated timeouts cannot pile up abandoned
+parsers. The cache retains the complete bounded `ParsedSource`, not the selector result or digest;
+its 64 MiB byte budget also counts retained image bodies. Cache hits apply the current caller's
+selectors, query, and character budget again. For gap-fill
+`fetch`, a ZIP first returns an exact-name member inventory, and a selected workbook member first
+returns a sheet inventory. Both inventories are navigation only and do not count as fetched
+evidence. The driver selects a member or sheet to read and paginate its labeled text. For
+`read_document`, an unselected local source is searched across all readable sections; exact member
+and sheet selectors narrow the digest before its query-based excerpts are chosen. Resolution-source
+presentation applies its own query-based excerpt and 6,000-character cap.
+
+Spreadsheet readers return saved cell values. `.xlsx` and `.xlsm` formulas are paired with their
+cached results; the parser does not evaluate formulas and explicitly labels a missing cached value.
+`.xls` uses the saved values exposed by `xlrd` and carries the same notice. Active `.xls` percent
+format tokens display the stored value as a percentage; quoted or escaped literal percent signs
+preserve the stored number and include a format notice. ZIP directory entries remain in the
+inventory as unreadable because they have no file content. Word text follows document order through
+body paragraphs and tables, including nested tables, then reads each distinct non-empty default,
+first-page, and even-page header and footer. Labels identify the variant and section, such as
+`first-page header section 1`. Images, OCR, embedded objects, tracked-change content, text boxes,
+footnotes, and other unsupported Word parts are not rendered as text; the tool result carries an
+omission notice. General recursive archives, legacy `.doc`, Office rendering, and formula evaluation
+remain unsupported.
+
+The existing response limit is 5 MiB. Local-source limits are 20 MiB expanded content, 128 ZIP
+entries, 32 sheets, 250,000 cells, and 2 million extracted characters. The run cache shares a
+64 MiB LRU budget across parsed local-source text and retained image bodies. A parser limit
+refuses the source rather than returning a partial extraction. A local parser refusal is terminal
+in gap-fill: it does not invoke the paid `read_document` reader. Unsupported archive members are
+listed in the inventory and left unread.
+
+The classifier also extracts a small inventory of likely useful HTML image URLs from `<figure>`
+captions and descriptive `alt` text. Those leads carry untrusted page metadata only, not pixels or
+evidence; a `fetch` result labels them “pixels not read.” `view_image(url, crop=None)` fetches the
+selected image through the shared transport, then normalizes supported static PNG, JPEG, WebP,
+BMP, or GIF bytes to a metadata-free PNG. Direct `fetch(image_url)` and
+`read_document(image_url, ask)` calls deliver pixels immediately through that same view path; they
+do not return navigation instructions or invoke the paid document reader. SVG and all animated
+formats, including APNG, are refused. Source decoding is capped at 25 megapixels; delivery is
+capped at a 2,048-pixel longest edge, 2 megapixels, and 2 MiB. Normalization runs off the event loop
+behind the shared two-slot parser semaphore; cancellation keeps its slot occupied until the worker
+ends. Crop coordinates are `[left, top, right, bottom]` in displayed pixel orientation after EXIF
+transforms. The three tools share a budget of four distinct normalized PNG hashes per question,
+including crops; duplicate pixels reuse an ID and do not consume another slot.
+
+Image bytes stay outside the transcript. After each batch of tool replies, the loop appends
+byte-free image references; the next ordinary request to the same driver materializes those
+references as image input. The pixels therefore add input tokens to that driver request without a
+separate image-reader call. An image finding must name an image ID delivered on a previous model
+turn, its registered source or final URL, and the driver's visual observation. Delivery provenance
+proves which pixels were shown; it does not verify the interpretation. Visual findings label
+numeric readings as transcribed or estimated. Normalized PNGs are written as content-addressed
+`research_outputs/media/<sha256>.png` sidecars. The byte-free `images` manifest has one entry per
+PNG hash with an `asset_path`, representative metadata, exact-deduplicated source/crop observations,
+and separate unions of image URLs and parent-page URLs. Both research harvest paths verify and copy
+referenced sidecars into the canonical archive.
 
 ### The HTML extractor policy, and the one classification path
 
@@ -1192,6 +1261,8 @@ welcome.
 | Research fan-out | `metaculus_bot/research/orchestrator.py`, `research/providers.py` |
 | Outbound fetch transports | `research/http_fetch.py` (plain HTTP, redirects, per-host gates), `research/fetch_ladder/guard.py` (the SSRF preflight, the vetted DNS resolve, the aiohttp session), `research/impersonated_fetch.py` (the `curl_cffi` TLS-impersonating retry of a 403, with its own DNS pin and per-hop re-guard), `research/rendered_fetch.py` (headless Chromium), `research/url_context_reader.py` (one paid Gemini `url_context` read), `research/robots_policy.py` (the `Google-Extended` pre-check in front of that read) |
 | The shared fetch ladder and its `fetch_url` entry point | `research/fetch_ladder/` (`policy.py` the per-caller knobs, `verdict.py` what a caller makes of a body it read, `context.py` the per-URL and per-question bookkeeping, `run_cache.py` the complete process-run read artifacts, `classify.py` one body's classification, `direct_fetch.py` the redirect loop, `rungs.py` the seven rungs, `ladder.py` the dispatcher and the `fetch_url` entry point, `throttle.py` the shared interstitial detector, `digest.py` the digest seat, `guard.py` the outbound guard), `research/resolution_fetch_result.py` (the status, reason and route vocabularies), `research/document_cache.py` (the parses a run holds, which never ride a `FetchResult`), `research/derived_api.py`, `research/wayback.py` |
+| Local ZIP, CSV/TSV, Excel, and Word parsing and presentation | `research/source_documents.py` (bounded parse), `research/source_presentation.py` (member/sheet selection, navigation inventories, and query digests), `fetch_ladder/run_cache.py` (complete parsed-source cache artifact) |
+| Gap-fill image leads, normalized image views, and archive sidecars | `research/image_leads.py`, `research/image_assets.py`, `research/agentic/image_messages.py`, `research/image_persistence.py` |
 | Resolution-source fetcher: its adapter over that ladder | `research/resolution_source.py` (URL selection, the Datawrapper second phase, the provider factory, the telemetry emitter and the rung counts) |
 | Resolution-source text and section budgets | `research/resolution_presentation.py` |
 | Datawrapper response classification, freshness and dataset ordering | `research/resolution_datawrapper.py`; requests and question budgets remain in `research/resolution_source.py` |

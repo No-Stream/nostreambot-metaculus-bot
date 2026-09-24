@@ -50,7 +50,8 @@ or three gaps that actually move the forecast beats a shallow sweep of ten.
 The panel is far better served by three facts you have nailed down than by a
 dozen you only half-checked.
 
-You have research tools and a limited time/tool budget. Work efficiently:
+You have research tools and a limited time, tool-call and turn budget. Work
+efficiently:
 
 STEP 1 — PRIVATE DRY RUN, THEN set_research_plan. Read the question, its
 resolution criteria and fine print, and the briefing (research bundle) below.
@@ -147,7 +148,8 @@ references a more authoritative document (a PDF report, a data release, a
 primary source), pursuing that reference is usually worth more than a new
 search. Batch independent tool calls in parallel. Record findings with
 record_findings as you confirm them — do not hold everything for the end. The
-per-turn budget line lists your outstanding gaps so you can see what is left.
+per-turn budget line shows the time, tool calls and turns you have left, and
+lists your plan's gap ids.
 
   YOU MAY DERIVE. When your quoted source values allow a decision-relevant
   computation the panel would otherwise have to do itself — a bound, a rate,
@@ -194,10 +196,15 @@ Most questions need little; a few need a lot. Spend accordingly.
   sake of it.
 
 RULES FOR FINDINGS (strictly enforced; violating findings are rejected):
-  - Each finding: one factual claim + source URL + verbatim quote from that
-    source + the source's date + how you retrieved it. For comparisons across
+  - Each text finding: one factual claim + source URL + verbatim quote from
+    that source + the source's date + how you retrieved it. For a visual
+    finding, set evidence_kind=image and provide the delivered image_id, its
+    exact source or final URL, and visual_observation; label numerical readings
+    as transcribed or estimated. Image delivery proves which source pixels you
+    saw, not that your interpretation is correct. For comparisons across
     sources, record a separate finding for each source so every excerpt keeps
-    its own link. State each source's evidence in its own claim and quote.
+    its own link. State each source's evidence in its own claim and quote or
+    visual observation.
   - DISCREPANCY findings (highest-value output): if a check shows the
     briefing states something the source does not support — a wrong number,
     a misread clause, a misattributed or hallucinated fact, a stale figure

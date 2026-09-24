@@ -114,6 +114,10 @@ def _configure_process(run_mode: RunMode) -> None:
     # Per-question tracing at DEBUG; openai-agents is noisy at INFO. See docs/architecture.md "CLI startup wiring".
     logging.getLogger("metaculus_bot.forecaster").setLevel(logging.DEBUG)
     logging.getLogger("openai.agents").setLevel(logging.ERROR)
+    # Its only warnings are "hidden param cost 0.0 vs response object cost" (litellm has no price map for the
+    # current roster, so every call over 5 cents fires one) and a callback-registration notice; it books the
+    # larger cost regardless, and spend is accounted by credit_telemetry's CREDIT_ROLE_SPEND ledger.
+    logging.getLogger("forecasting_tools.ai_models.resource_managers.monetary_cost_manager").setLevel(logging.ERROR)
 
     # A single hung publish POST would block the whole batch. See docs/architecture.md "CLI startup wiring".
     apply_publish_hardening()

@@ -22,9 +22,24 @@ and planning docs named here may have moved out of the public repo. Neither is a
   it. Operator SKIPPED: remedies are a partial harvest, a budget-bounded acquire, or instrumentation only, and merging
   Tier-1's host map with gap-fill v2's waits on one. Timing surface, so nothing lands casually.
 - **AskNews DeepNews** as an optional heavy `search_news_deep` tool: blocked on checking its limits and pricing.
+- **LOW: migrate Gemini grounded search to Google's Interactions API** (`client.aio.interactions.create`, with
+  `url_citation` annotations on text), and consider the same migration for gap-fill v2 `read_document` and the
+  resolution-source `url_context` rung. The 2026-09-22 probe annotated 7/8 Interactions calls, all of which resolved,
+  while one call with four searches dropped annotations; the same-day `generate_content` control annotated 5/6, so
+  Interactions is not demonstrably better yet. Google staff named Interactions as the likely fix (forum thread
+  174074). It would remove roughly 3k output tokens of self-citation redirect URLs per call. Revisit if Google
+  confirms a fix or deprecates `generate_content`; receipt: `scratch/gemini_grounding_2026-09-22/README.md`.
 
 ## Open, priced levers not yet built
 
+- **HIGH PRIORITY: gap-fill v2 driver on gpt-6-luna at xhigh/max instead of gpt-6-sol at low.** The driver sends a
+  top-level `reasoning_effort`, which litellm 1.98's OpenRouter transform rewrites `max` -> `xhigh`, so the arm below
+  ran at xhigh; testing true `max` needs the `reasoning={"effort": ...}` form. One-question replay on 2026-09-22 (Q44229, `scratch/model_migration_2026-09-22/`): both finished inside the 540 s loop (luna 146 s, sol
+  85 s, 31-32 tool calls), and a blind Opus judge called it a tie leaning luna, low confidence. Luna read 882k prompt
+  tokens against sol's 711k at a twentieth of the input price, so the driver's spend drops by roughly an order of
+  magnitude. Needs a multi-question replay before switching; Sol stays for the season start.
+  Same-day native-search probe: luna at true `max` gave the brief a blind judge preferred, but took 278 s against
+  sol-low's 30 s; luna at `high` or `xhigh` there is the untested middle.
 - **Tail-consistency check on the numeric block**: when a rationale derives a sigma then declares a tighter left tail,
   widen it deterministically. +11.93 baseline points on the q44453 cohort, from arithmetic the models already did.
 - **Gap-fill v2 office-holder precedent rule**: on "will X assume office", retrieve how the current holder got the seat.
@@ -34,7 +49,9 @@ and planning docs named here may have moved out of the public repo. Neither is a
   Best-supported competitor lever, on weakened evidence: dissent-toward-truth 9% on misses against 21% on hits.
 - **Anchor-date discipline**: make a member state the date of the anchor it used. Weakened but not retired now that
   rendered values carry dates; do not quote q44553's +58 as an expected value.
-- **High versus xhigh reasoning effort** on the last xhigh forecaster slot, opus-4.8: paired A/B, $60 to $90.
+- **High versus xhigh reasoning effort** on the forecaster slots, both really xhigh only since 2026-09-22 (gpt-6-sol
+  high -> xhigh; the Anthropic slot's declared xhigh had been overridden to high by `verbosity: "high"` until then, see
+  docs/roster_history.md): paired A/B, $60 to $90.
 
 ## Open, recorded and not built
 
@@ -105,7 +122,14 @@ overcorrect, and its "exclude finance" advice is inverted on current data). Park
 evidence: the spread-triggered second forecast round (LOW since 2026-08-25 because stacking is prod-disabled, NOT
 because the gate is dead, since it fires on 15 of 30 triple questions), always-on crux extraction, the TS-anchor chart
 image A/B, claude-fable-5 for the Anthropic slots (pulled 2026-07-20 for `content=None` refusals, a reliability rather
-than a quality problem), a trimmed mean, and per-type weighting by historical performance.
+than a quality problem), and per-type weighting by historical performance. Trimmed mean (RUN 2026-09-15 on the five-
+and six-member eras, n=233 numeric-family: +1.6 [+0.1, +3.3] log/question pooled, all of it pre-flip, post-flip −0.01;
+degenerate at three members, so a null for the live roster). Pointwise mean at k≥5 is the one revivable item: the
+2026-09-15 replay at n=262 found +2.0 [−0.0, +4.3] pre-flip (six members, half the sum in two questions), −0.15
+post-flip and −0.43 on the triple, so revisit only if the roster grows back to five or more. The same run replicated
+the quantile-averaging loss at −7.4 [−13.4, −2.4], a tail effect, and attributed the median's edge over its average
+member to location consensus (+6.3 [+4.7, +7.9]) with the width effect a null (−0.5 [−2.3, +1.4]); the vendor-diversity
+delta at k=3 is a null on every type. Receipts: `scratch/aggregation_bench_2026-09-15/` in the artifacts repo.
 
 **Research architecture.** End-to-end per-forecaster agentic research: NO (2026-07-16, re-confirmed 2026-07-19: BTF-2's
 most accurate forecast was a strong prompt on good SHARED research, already this architecture, so the lever is

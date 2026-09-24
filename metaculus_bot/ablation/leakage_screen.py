@@ -90,9 +90,10 @@ Do not include any prose outside the JSON.
 def _build_detector_llm(model: str) -> GeneralLlm:
     """Construct a detector LLM with a generous token budget for reasoning models.
 
-    ``metaculus_bot.backtest.leakage.screen_research_for_leakage`` runs the
-    production screen at ``max_tokens=500`` against ``gpt-5.6-luna``, where the
-    cap bounds only the visible answer. The ablation default
+    ``metaculus_bot.backtest.leakage.screen_research_for_leakage`` used to run the
+    production screen at ``max_tokens=500`` against ``gpt-5.6-luna`` (now
+    ``gpt-6-luna`` at ``effort=max`` with no cap, 2026-09-22), where the
+    cap bounded only the visible answer. The ablation default
     ``glm-4.5-air:free`` is a reasoning model whose cap is the COMBINED
     reasoning-plus-content budget (https://docs.z.ai/guides/overview/concept-param),
     so at 500 it can exhaust the budget on reasoning and return ``content=None``

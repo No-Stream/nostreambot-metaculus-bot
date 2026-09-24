@@ -10,13 +10,14 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from metaculus_bot.constants import (
     GAP_FILL_V2_CONCLUDE_THRESHOLD,
     GAP_FILL_V2_MAX_TOOL_CALLS,
     GAP_FILL_V2_WALL_DEADLINE,
 )
+from metaculus_bot.research.image_assets import ImageView
 
 if TYPE_CHECKING:
     from metaculus_bot.research.agentic.llm import LlmCall
@@ -28,6 +29,9 @@ class ToolOutcome(BaseModel):
     method: str = ""
     status: str = "ok"
     truncated: bool = False
+    image_views: list[ImageView] = Field(default_factory=list)
+
+    model_config = {"arbitrary_types_allowed": True}
 
 
 @dataclass(slots=True)
@@ -44,7 +48,7 @@ class Finding(BaseModel):
 
     claim: str
     source_url: str
-    quote: str
+    quote: str = ""
     date: str = ""
     retrieved_how: str = ""
     topic: str = "general"
@@ -53,6 +57,20 @@ class Finding(BaseModel):
     derivation: str | None = None
     # Code-stamped at banking time from the URL's best method seen, never driver-claimed (W4).
     verification_tier: Literal["fetched", "snippet"] | None = None
+    evidence_kind: Literal["text", "image"] = "text"
+    image_id: str | None = None
+    visual_observation: str | None = None
+
+    @model_validator(mode="after")
+    def validate_evidence(self) -> Finding:
+        if self.evidence_kind == "text" and not self.quote:
+            raise ValueError("text evidence requires quote")
+        if self.evidence_kind == "image":
+            if not self.image_id:
+                raise ValueError("image evidence requires image_id")
+            if not self.visual_observation or not self.visual_observation.strip():
+                raise ValueError("image evidence requires visual_observation")
+        return self
 
 
 class GhostForecast(BaseModel):
@@ -180,3 +198,8 @@ class LoopResult:
     transcript: list[dict[str, Any]]
     # Present only when the plain ghost ran, so every v1 ghost has its pair.
     ghost_context: GhostContext | None = None
+    # Unique pixel payloads plus all source/final URL aliases needed by the asset manifest.
+    image_views: list[ImageView] = field(default_factory=list)
+    image_sources: dict[str, list[str]] = field(default_factory=dict)
+    # Every distinct byte-free source/crop observation, even when multiple inputs normalize to one PNG.
+    image_observations: dict[str, list[dict[str, Any]]] = field(default_factory=dict)

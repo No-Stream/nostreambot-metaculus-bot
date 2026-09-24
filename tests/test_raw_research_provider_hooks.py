@@ -110,10 +110,12 @@ async def test_gemini_search_emits_raw_response_with_qid(monkeypatch: pytest.Mon
 
     with (
         patch("metaculus_bot.research.gemini_search.genai.Client", return_value=client),
+        patch("metaculus_bot.research.gemini_search.resolve_search_redirects", new=AsyncMock(return_value={})),
         patch("metaculus_bot.research.gemini_search.record_raw_research") as rec,
     ):
         await gemini_search_provider()(_make_q())
 
+    # A single SDK call is archived once; there is no grounding retry anymore.
     rec.assert_called_once()
     assert rec.call_args.kwargs["provider"] == "gemini_search"
     assert rec.call_args.kwargs["qid"] == 555

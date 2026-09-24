@@ -12,8 +12,8 @@ from typing import ClassVar
 import pytest
 
 from metaculus_bot.prompts import (
-    _AUTO_ANNOTATED_CITATION_CLAUSE,
     _OUTSIDE_VENUE_MARKET_ODDS_BULLET,
+    _SEARCH_LINK_CITATION_CLAUSE,
     _SOURCE_TIER_TAG_INSTRUCTION,
     MARKET_SNAPSHOT_SECTION_HEADER,
     TS_ANCHOR_SECTION_HEADER,
@@ -46,6 +46,13 @@ class TestDriverSystemPromptSourceAttribution:
         assert "record a separate finding for each source so every excerpt keeps its own link" in collapsed
         assert "State each source's evidence in its own claim and quote" in collapsed
         assert "Put your comparison in claim" not in collapsed
+
+    def test_visual_evidence_names_delivery_fields_and_interpretation_limit(self) -> None:
+        collapsed = " ".join(build_system_prompt("2026-09-11").split())
+        assert "set evidence_kind=image" in collapsed
+        assert "delivered image_id, its exact source or final URL, and visual_observation" in collapsed
+        assert "label numerical readings as transcribed or estimated" in collapsed
+        assert "delivery proves which source pixels you saw, not that your interpretation is correct" in collapsed
 
 
 class TestGapFillAnalyzerPrompt:
@@ -410,45 +417,37 @@ class TestWebResearchPromptPrimarySources:
         assert "always name the market and the date you observed the price" in collapsed
         assert "usually days stale" in collapsed
 
-    def test_auto_annotated_style_bans_model_authored_citation_indices(self) -> None:
-        """Half of all archived gemini sections (173 of 323) carry the model's own
-        hierarchical [1.2.3] indices alongside the [N] markers our formatter splices
-        from real grounding metadata, so a forecaster cannot tell which brackets are
-        checkable. The formatter strips them; this tells the model not to write them.
-        Gemini-only: the markdown branch (native search) is untouched."""
-        auto = web_research_prompt("Q?", citation_style="auto_annotated")
+    def test_search_link_style_requires_verbatim_tool_urls(self) -> None:
+        """Gemini must emit the exact redirect URLs that the formatter resolves."""
+        search_links = web_research_prompt("Q?", citation_style="search_links")
         markdown = web_research_prompt("Q?", citation_style="markdown")
 
-        lowered = " ".join(auto.lower().split())
-        assert "do not write your own citation markers" in lowered
-        assert "[1.2.3]" in auto
+        expected_clause = (
+            "Cite every factual claim inline as a markdown link [source name](url), copying the url EXACTLY and in "
+            "full as the search tool gave it to you (search results come as vertexaisearch.cloud.google.com/"
+            "grounding-api-redirect/... links; copy those verbatim, never shorten, rewrite, or reconstruct them). "
+            "Only cite urls a tool returned. Do not write numeric citation markers like [1] or [1.2.3]. The SOURCE "
+            "TIER TAGS instruction below still applies alongside each link"
+        )
+
+        assert expected_clause == _SEARCH_LINK_CITATION_CLAUSE
+        assert expected_clause in search_links
+        assert "the tool will auto-annotate" not in search_links
         assert "[1.2.3]" not in markdown
-        assert "do not write your own citation markers" not in " ".join(markdown.lower().split())
+        assert "the tool will auto-annotate" not in markdown
 
-    def test_citation_index_ban_carves_out_the_source_tier_tags_it_ships_with(self) -> None:
-        """The ban and the SOURCE TIER TAGS block ride the SAME rendered prompt, 26 lines
-        apart, and the tier block orders exactly what the ban's second half appears to
-        forbid: a bracketed, model-authored source annotation. A literal reader that
-        over-complies stops tagging, which costs the forecaster prompts the tier signal
-        they weight on and leaves gemini_attribution's unsupported-attribution check
-        nothing to check — the direction nothing downstream guards, unlike the dotted
-        indices _strip_model_citation_indices removes. So the carve-out ships in the same
-        clause, and it says "still applies" rather than "required", because the tier
-        block's own closing line licenses leaving an unclear claim untagged."""
-        auto = web_research_prompt("Q?", citation_style="auto_annotated")
-        collapsed = " ".join(auto.split())
+    def test_search_link_clause_keeps_source_tier_tags(self) -> None:
+        """The search-link clause and tier-tag block are both present in Gemini's prompt."""
+        search_links = web_research_prompt("Q?", citation_style="search_links")
+        collapsed = " ".join(search_links.split())
 
-        assert "do NOT write your own citation markers" in collapsed
-        assert "This bans invented CITATION indices only" in collapsed
-        assert "the SOURCE TIER TAGS instruction below still applies" in collapsed
-        # The instruction the carve-out names, in the same prompt and BELOW the ban.
+        assert "The SOURCE TIER TAGS instruction below still applies alongside each link" in collapsed
         assert collapsed.index("SOURCE TIER TAGS instruction below") < collapsed.index(
             "SOURCE TIER TAGS: annotate each factual claim"
         )
-        assert '"[A: official]"' in collapsed
-        # Not phrased as a requirement, which would contradict the tier block's softener.
-        assert "requir" not in _AUTO_ANNOTATED_CITATION_CLAUSE.lower()
-        assert "leave a claim untagged if unsure" in collapsed
+        assert '"[B: Reuters]"' in collapsed
+        assert "otherwise leave the claim untagged" in collapsed
+        assert "the tool will auto-annotate" not in collapsed
 
     def test_vintage_clause_present_for_both_citation_styles(self) -> None:
         """qid 44872: gemini searched correctly, Google attached no grounding, and it
@@ -456,7 +455,7 @@ class TestWebResearchPromptPrimarySources:
         plans. The prompt had "say so explicitly" and "DO NOT hallucinate sources"
         and no date discipline at all, so nothing in it made an undated recollection
         look wrong. Shared by both consumers (native search + gemini) on purpose."""
-        for citation_style in ("markdown", "auto_annotated"):
+        for citation_style in ("markdown", "search_links"):
             for is_benchmarking in (False, True):
                 result = web_research_prompt(
                     "Will X happen?",
@@ -804,17 +803,32 @@ class TestSourceTierTagging:
         """Assert the shared source-tier instruction, whitespace collapsed so wrapping cannot matter."""
         collapsed = " ".join(prompt.split())
         assert "SOURCE TIER TAGS" in collapsed
-        # Inline tag examples using the shared vocabulary.
-        for example in ('"[A: official]"', '"[B: Reuters]"', '"[C: aggregator]"', '"[D: social]"'):
+        # Named-outlet examples: the old category examples ("[A: official]", "[C: aggregator]")
+        # taught class tags the attribution check cannot verify (Q14333 smoke, 2026-09-24:
+        # 10 of 12 Gemini tags were class descriptions).
+        for example in (
+            '"[A: BLS]"',
+            '"[A: Guinness World Records]"',
+            '"[B: Reuters]"',
+            '"[C: Wikipedia]"',
+            '"[D: Reddit]"',
+        ):
             assert example in collapsed, f"missing tag example {example}"
-        # The condensed A-D definitions mirror the forecaster ladder's vocabulary.
+        for category_example in ('"[A: official]"', '"[C: aggregator]"', '"[D: social]"'):
+            assert category_example not in collapsed, f"category example {category_example} is back"
         lowered = collapsed.lower()
+        assert "the specific outlet or publisher" in lowered
+        assert "a category is not a name" in lowered
+        assert "for a d-tier claim, name the platform or account where it appeared" in lowered
+        # The condensed A-D definitions mirror the forecaster ladder's vocabulary.
         assert "official / primary" in lowered
         assert "wire services and papers of record" in lowered
         assert "aggregators, advocacy or partisan outlets" in lowered
         assert "anonymous, social, rumor" in lowered
-        # Tag only when clear; never drop a low-tier fact.
-        assert "tag only when the tier is reasonably clear" in lowered
+        # Tag only when the outlet is nameable and the tier clear; never drop a low-tier fact.
+        assert "tag only when you can name the outlet and the tier is reasonably clear" in lowered
+        assert "otherwise leave the claim untagged" in lowered
+        assert "tag only when the tier is reasonably clear" not in lowered
         assert "never discard a fact because its tier is low" in lowered
 
     def test_web_research_prompt_carries_tier_tag_instruction(self) -> None:
@@ -823,6 +837,10 @@ class TestSourceTierTagging:
     def test_web_research_prompt_carries_tier_tag_instruction_when_benchmarking(self) -> None:
         """The tier-tag steer is orthogonal to the benchmarking carve-out."""
         self._assert_tier_tag_instruction(web_research_prompt("Will X happen?", is_benchmarking=True))
+
+    def test_search_link_prompt_carries_tier_tag_instruction(self) -> None:
+        """Gemini's self-cited search-link prompt is the one whose tags get checked."""
+        self._assert_tier_tag_instruction(web_research_prompt("Will X happen?", citation_style="search_links"))
 
     def test_summarizer_prompt_carries_tier_tag_instruction(self) -> None:
         self._assert_tier_tag_instruction(_summarizer_prompt())

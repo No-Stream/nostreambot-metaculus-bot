@@ -3450,11 +3450,46 @@ class TestGeminiUngroundedSuppressed:
         assert rec["queries"] == 0
 
 
+# Verbatim from research/gemini_search.py:_format_grounded_response; see docs/telemetry_markers.md "GEMINI_SELF_CITATION".
+GEMINI_SELF_CITATION_LINE = (
+    PFX
+    + "GEMINI_SELF_CITATION: question=38195 model=gemini-3.8-flash links=10 unique=8 resolved=7 "
+    + "unverified=1 sources=5"
+)
+
+
+class TestGeminiSelfCitation:
+    def test_fields(self):
+        rec = _parse_one(GEMINI_SELF_CITATION_LINE)
+        assert rec["marker"] == "gemini_self_citation"
+        assert rec["model"] == "gemini-3.8-flash"
+        assert rec["links"] == 10
+        assert rec["unique"] == 8
+        assert rec["resolved"] == 7
+        assert rec["unverified"] == 1
+        assert rec["sources"] == 5
+
+    def test_question_ref_is_a_question_id(self):
+        rec = _parse_one(GEMINI_SELF_CITATION_LINE)
+        assert rec["qid"] == 38195
+        assert rec["qid_kind"] == "question_id"
+
+    def test_absent_qid_coerces_to_none(self):
+        rec = _parse_one(
+            PFX + "GEMINI_SELF_CITATION: question=None model=gemini-3.8-flash links=0 unique=0 resolved=0 "
+            "unverified=0 sources=0"
+        )
+        assert rec["qid"] is None
+        assert rec["sources"] == 0
+
+
 # Verbatim from research/gemini_search.py; see docs/telemetry_markers.md "GEMINI_GROUNDING_DENSITY".
 GEMINI_GROUNDING_DENSITY_LINE = PFX + "GEMINI_GROUNDING_DENSITY: question=44944 chunks=4 supports=1 chars=3535"
 
 
 class TestGeminiGroundingDensity:
+    """Historical production marker retained so archived density lines remain parseable."""
+
     def test_fields(self):
         rec = _parse_one(GEMINI_GROUNDING_DENSITY_LINE)
         assert rec["marker"] == "gemini_grounding_density"
@@ -3475,14 +3510,17 @@ class TestGeminiGroundingDensity:
         assert rec["supports"] == 0
 
     def test_does_not_collide_with_the_suppression_marker(self):
-        """Both markers start GEMINI_ and are emitted from the same function; each spec must claim only its own
-        line or one of them would be double-counted in the archive."""
+        """Historical density and current suppression lines must claim only their own marker."""
         assert _parse_one(GEMINI_GROUNDING_DENSITY_LINE)["marker"] == "gemini_grounding_density"
         assert _parse_one(GEMINI_UNGROUNDED_LINE)["marker"] == "gemini_ungrounded_suppressed"
 
 
 # Verbatim from gemini_search.py:_check_attributions; see docs/telemetry_markers.md "GEMINI_UNSUPPORTED_ATTRIBUTION".
 GEMINI_UNSUPPORTED_ATTRIBUTION_LINE = (
+    PFX + "GEMINI_UNSUPPORTED_ATTRIBUTION: question=44953 tagged=2 unsupported=1 groups=2 labels=7 generic=3"
+)
+# The shape emitted before 2026-09-24, when generic tier tags passed through uncounted.
+GEMINI_UNSUPPORTED_ATTRIBUTION_PRE_GENERIC_LINE = (
     PFX + "GEMINI_UNSUPPORTED_ATTRIBUTION: question=44953 tagged=2 unsupported=1 groups=1 labels=7"
 )
 
@@ -3493,9 +3531,17 @@ class TestGeminiUnsupportedAttribution:
         assert rec["marker"] == "gemini_unsupported_attribution"
         assert rec["tagged"] == 2
         assert rec["unsupported"] == 1
-        assert rec["groups"] == 1
+        assert rec["groups"] == 2
         # The denominator: without it a bare ``unsupported=21`` cannot be told from a thin grounding record.
         assert rec["labels"] == 7
+        assert rec["generic"] == 3
+
+    def test_pre_generic_lines_still_parse(self):
+        """``generic`` was appended as an optional trailing field, so archived lines keep parsing."""
+        rec = _parse_one(GEMINI_UNSUPPORTED_ATTRIBUTION_PRE_GENERIC_LINE)
+        assert rec["marker"] == "gemini_unsupported_attribution"
+        assert (rec["tagged"], rec["unsupported"], rec["groups"], rec["labels"]) == (2, 1, 1, 7)
+        assert rec["generic"] is None
 
     def test_question_ref_is_a_question_id(self):
         rec = _parse_one(GEMINI_UNSUPPORTED_ATTRIBUTION_LINE)
@@ -3510,12 +3556,13 @@ class TestGeminiUnsupportedAttribution:
         assert rec["qid"] is None
         assert rec["unsupported"] == 21
 
-    def test_does_not_collide_with_its_two_gemini_siblings(self):
-        """All three start GEMINI_ and two of the three come out of the same function, so each spec must claim
+    def test_does_not_collide_with_its_gemini_siblings(self):
+        """All four start GEMINI_, so each spec must claim
         only its own line or the archive double-counts."""
         assert _parse_one(GEMINI_UNSUPPORTED_ATTRIBUTION_LINE)["marker"] == "gemini_unsupported_attribution"
         assert _parse_one(GEMINI_GROUNDING_DENSITY_LINE)["marker"] == "gemini_grounding_density"
         assert _parse_one(GEMINI_UNGROUNDED_LINE)["marker"] == "gemini_ungrounded_suppressed"
+        assert _parse_one(GEMINI_SELF_CITATION_LINE)["marker"] == "gemini_self_citation"
 
 
 # Verbatim from gemini_usage.py, shared by every Gemini surface; see docs/telemetry_markers.md "GEMINI_USAGE".
@@ -3553,7 +3600,7 @@ class TestGeminiUsage:
 
     def test_question_ref_is_a_question_id(self):
         rec = _parse_one(GEMINI_USAGE_GROUNDED_LINE)
-        # gemini_search.py passes question.id_of_question, same as its density sibling.
+        # gemini_search.py passes question.id_of_question, same as its self-citation sibling.
         assert rec["qid"] == 44944
         assert rec["qid_kind"] == "question_id"
 
@@ -3598,13 +3645,14 @@ class TestGeminiUsage:
         )
 
     def test_does_not_collide_with_its_gemini_siblings(self):
-        """Four markers now start GEMINI_ and three come out of gemini_search.py, so each spec must claim only
+        """Five markers now start GEMINI_ and four come out of gemini_search.py, so each spec must claim only
         its own line or the archive double-counts."""
         harvested = parse_log_text(
             "\n".join(
                 [
                     GEMINI_USAGE_GROUNDED_LINE,
                     GEMINI_GROUNDING_DENSITY_LINE,
+                    GEMINI_SELF_CITATION_LINE,
                     GEMINI_UNSUPPORTED_ATTRIBUTION_LINE,
                     GEMINI_UNGROUNDED_LINE,
                 ]
@@ -3614,6 +3662,7 @@ class TestGeminiUsage:
         )
         assert len(harvested["gemini_usage"]) == 1
         assert len(harvested["gemini_grounding_density"]) == 1
+        assert len(harvested["gemini_self_citation"]) == 1
         assert len(harvested["gemini_unsupported_attribution"]) == 1
         assert len(harvested["gemini_ungrounded_suppressed"]) == 1
 

@@ -55,6 +55,7 @@ from pathlib import Path
 # the same regex (QuestionIds.matches_archive_record), so a second copy here could drift
 # into accepting records the reader rejects.
 from metaculus_bot.performance_analysis.id_mapping import PAGE_URL_ID_PATTERN
+from metaculus_bot.research.image_persistence import ingest_record_images
 
 # Enumeration + persistence run through the shared core.
 from scripts.gha_artifacts import (
@@ -152,13 +153,15 @@ def download_research_artifacts(
     *,
     store_dir: Path | str | None = None,
     from_store: bool = False,
+    output_dir: Path | str = DEFAULT_OUTPUT_DIR,
 ) -> list[dict]:
-    """Persist every LIVE research artifact and return the JSONL records from the store.
+    """Persist every LIVE research artifact and return its JSONL records from the store.
 
     Delegates enumeration + persistence to the shared core (``select_artifacts`` +
     ``persisted_run_dirs``), then reads the per-question research JSONL from each
-    PERSISTED run dir (excluding the raw-research logs that ride alongside). Logs how
-    many artifacts were read, records added, and how many were EXPIRED/lost.
+    PERSISTED run dir (excluding the raw-research logs that ride alongside). Referenced
+    image sidecars are hash-verified and copied under ``output_dir/media/``. Logs how many
+    artifacts were read, records added, and how many were EXPIRED/lost.
 
     `since_days <= 0` (the default) disables the window and pulls every live artifact.
     ``from_store=True`` reads only what is already persisted and makes no network call.
@@ -184,6 +187,8 @@ def download_research_artifacts(
             downloaded += 1
             for jsonl_file in jsonl_files:
                 new_records = load_jsonl_records(jsonl_file)
+                for record in new_records:
+                    ingest_record_images(record, jsonl_file.parent, Path(output_dir))
                 records_added += len(new_records)
                 all_records.extend(new_records)
 
@@ -377,6 +382,10 @@ def build_archive(records: list[dict], output_dir: Path) -> None:
     comment backfill, newest within a class) stamped with its ``source``; ``by_qid/``
     holds every version verbatim, best-first.
     """
+    for record in records:
+        # Rebuild-only runs still verify media preserved by an earlier artifact harvest.
+        ingest_record_images(record, output_dir, output_dir)
+
     latest_dir = output_dir / "latest"
     by_qid_dir = output_dir / "by_qid"
     latest_dir.mkdir(parents=True, exist_ok=True)
@@ -498,6 +507,7 @@ def main():
                 since_days=args.since_days,
                 store_dir=args.store_dir,
                 from_store=args.from_store,
+                output_dir=output_dir,
             )
         )
 

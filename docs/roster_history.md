@@ -22,6 +22,39 @@ Last verified against the code on 2026-09-04.
 
 **All dates below are AUTHORING dates on the july15 branch; every one of them reached prod together in merge `b4e9df0` at 2026-07-21T17:07:37Z, which is the single era boundary** (see the merge-date rule under era-bucketing): 2026-07-15: Fable-5 joined the forecaster roster (was stacker-only; stacking disabled in prod made it idle) and opus-4.6 retired, keeping n=6 at a 2 Anthropic / 2 OpenAI / 1 Google / 1 xAI balance. 2026-07-20 (first change): Fable-5 PULLED from the forecaster roster and the stacker after it returned `message.content=None` on 4/4 attempts for Q14333's numeric forecast + a truncated no-JSON-block output on Q578 in the 2026-07-19 test_bot run (suspected content classifiers refusing certain question content: fast deterministic empty completions, not timeouts); opus-4.7 took the slot, keeping n=6. Reconsidering fable-5 is a tracked follow-up (FUTURE.md). 2026-07-20 (second change, current): dropped from 6 to the 3-member latest-per-vendor triple, removing gpt-5.5, opus-4.7, and grok-4.5. Two adversarially-verified analyses (`scratch/ensemble_3member_audit_2026-07-20/` + `scratch/ensemble_power_model_2026-07-20/`) found the triple non-inferior on binary/MC and only a fragile numeric lean toward the full roster (+3.24, 95% CI [-2.5, +9.1], P(loss>1pt/Q)=0.80, driven by 2 questions); accepted as a ship-and-watch bet (see FUTURE.md "Triple-era September re-read"). This second change supersedes the first as the roster in effect, but both landed in the same merge, so residual analysis sees ONE boundary at 2026-07-21T17:07:37Z. No prod run ever used the intermediate opus-4.7 roster.
 
+**2026-09-22 (GPT-6 / opus-5.5 migration):** OpenAI released GPT-6 (`openai/gpt-6-luna`, `openai/gpt-6-sol`,
+verified on a live OpenRouter model-list read the same day) and Anthropic released `anthropic/claude-opus-5.5`.
+Forecaster roster: `gpt-5.6-sol` -> `gpt-6-sol` with effort `high` -> `xhigh` (operator; checked against
+`FORECASTER_SOFT_DEADLINE` by a single prod-prompt timing probe), `claude-opus-4.8` -> `claude-opus-5.5` at declared effort `xhigh`, with `extra_body={"verbosity": "high"}`
+REMOVED from both Anthropic slots (forecaster and stacker). On Anthropic models OpenRouter maps both `verbosity` and
+`reasoning.effort` onto the single `output_config.effort`, and "`verbosity` wins if both are passed" (OpenRouter's
+Claude 4.7 migration guide). `verbosity: "high"` had been on the Anthropic slots since at least 2026-02, so the
+2026-07-15 "xhigh" bump on the Anthropic forecaster and stacker most likely never took effect: **for era and effort
+analysis, read every Anthropic slot before this merge as running at effort `high`**, and this merge as its first
+real `xhigh`. A test now forbids sending `verbosity` beside `reasoning` on any forecaster or stacker. The
+Terra tier got no GPT-6 successor, so every Terra-tier support role (summarizer, disagreement analyzer, native
+search, gap-fill analyzer, gap-fill resolver, gap-fill v2 driver) moved to Sol 6 at the same effort it ran at
+(`low`). Every Luna-tier support role (parser, market ranker, market query author, page-digest extractor,
+financial classifier, leakage detector) moved to `gpt-6-luna` at the same effort. The backtest-only leakage
+detector additionally moved from effort `low` with a `max_tokens=500` cap to effort `high` (first `max`, lowered the same day by the operator) with the cap removed
+entirely (operator: this screen is not time-sensitive, and a `max_tokens` cap crashes calls for no good reason
+since the reasoning tokens count against it). The same reasoning dropped the small caps on the financial classifier
+(500) and both prediction-market stages (3,000 / 1,500); their timeouts bound a runaway. The 32k/64k caps in
+`UTILITY_MODEL_CONFIG` / `REASONING_MODEL_CONFIG` stay: they sit far above any measured completion. Ablation prod-mirror entries (`ablation/forecaster_lineup.py`,
+`ablation/run_stacker.py`) followed the same swaps; `opus-4.6` in the free-tier-vs-prod ablation comparison was
+left untouched. GPT-6's effort enum is documented by OpenAI as `none/low/medium/high/xhigh/max`
+(developers.openai.com/api/docs/models/gpt-6-luna), and a live probe on 2026-09-22 confirmed OpenRouter's OpenAI
+route now accepts `max` on gpt-6-luna and gpt-6-sol (reasoning tokens rose with each tier; a bogus value 400s). The
+same day's probes timed one prod numeric forecaster prompt at xhigh (gpt-6-sol 72.5 s, opus-5.5 25.5 s, both well
+inside `FORECASTER_SOFT_DEADLINE`; that opus figure was taken with `verbosity: "high"` still sent, i.e. at effective
+`high`. Rerun without it at true `xhigh`: 48.7 s and 2,770 reasoning tokens against 798 before, the direct evidence that
+verbosity had been overriding the declared effort).
+gpt-6-luna at `max` against gpt-6-sol at `low` on one question: with prod's 16k / 32k caps luna spent the whole
+budget on reasoning and returned nothing, and uncapped it finished native search in 278 s (sol 30 s) and the AskNews
+summarizer in 438 s (sol 15 s, over the summarizer's 300 s wall). A blind Opus judge preferred luna's native-search
+brief (medium confidence) and sol's summary (concision), neither difference material, so both roles stay on sol.
+Receipts: `scratch/model_migration_2026-09-22/`.
+
 ## Support models
 
 A support model sits in one of two places, and the boundary is who builds the client. `llm_configs.py` holds the module-level `GeneralLlm` objects and config dicts, meaning every role the forecaster pipeline constructs once at import time; those are the four bullets below. `constants.py` holds a bare model-id string for each support role whose consuming module builds its own client at call time, kept beside that role's env-var name, timeout and price note; those are the list after them. The strings cannot be moved into `llm_configs.py`. `constants.py` is a foundation leaf under the pyproject import-linter contract, importing `llm_configs.py` from it is a genuine circular import through `fallback_openrouter.py`, and `llm_configs.py` reads no environment variables, which several of these roles need. `tests/test_model_name_locations.py` pins the full set of files allowed to hold a model-id literal, so neither list can quietly grow a third home.
