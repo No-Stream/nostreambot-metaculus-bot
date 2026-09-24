@@ -66,6 +66,12 @@ __all__ = [
 ]
 
 _MARKDOWN_LINK_RE = re.compile(r"\[(?P<label>(?:[^\[\]]|\[[^\[\]]*\])*)\]\((?P<url>https?://[^)\s]+)\)")
+# A link whose label IS a source-tier tag (``[A: NOAA](url)``), optionally inside one more
+# bracket pair (``[[A: NOAA](url)]``); the conditional group takes the closing bracket only
+# when it took the opening one.
+_TIER_TAG_LINK_LABEL_RE = re.compile(
+    r"(?P<outer>\[)?\[(?P<tag>[A-D]: [^\[\]\n]+)\]\((?P<url>https?://[^)\s]+)\)(?(outer)\])"
+)
 _RAW_SEARCH_REDIRECT_RE = re.compile(
     rf"https?://{re.escape(SEARCH_REDIRECT_HOST)}{re.escape(SEARCH_REDIRECT_PATH_PREFIX)}\S+"
 )
@@ -267,6 +273,18 @@ def _check_attributions(text: str, sources: Sequence[tuple[int, str, str]], *, q
     return checked.text
 
 
+def _bracket_tier_tag_link_labels(text: str) -> str:
+    """Rewrite a tier-tag link label to ``[[A: NOAA]](url)``, which renders ``[A: NOAA] [N]``.
+
+    Once the prompt asked tags to name the outlet, Gemini started using the tag as the link's
+    "source name" (4 of 5 responses in the 2026-09-24 named-tag probe, 95 of about 101 tags).
+    A plain label renders without its brackets (``A: NOAA [1]``) and a wrapped one as
+    ``[A: NOAA [1]]``; the attribution check's bracket grammar sees neither, and the
+    forecaster's ladder reads tags in the ``[A: ...]`` shape.
+    """
+    return _TIER_TAG_LINK_LABEL_RE.sub(lambda match: f"[[{match.group('tag')}]]({match.group('url')})", text)
+
+
 def _rewrite_cited_links(
     text: str,
     matches: Sequence[re.Match[str]],
@@ -335,6 +353,7 @@ def _format_grounded_response(
     read_urls = {
         url for status, url in url_entries if status == URL_RETRIEVAL_SUCCESS and url and not is_search_redirect(url)
     }
+    text = _bracket_tier_tag_link_labels(text)
     matches = list(_MARKDOWN_LINK_RE.finditer(text))
     cited_urls = [match.group("url") for match in matches]
     text, sources, verified_urls, unverified_urls = _rewrite_cited_links(

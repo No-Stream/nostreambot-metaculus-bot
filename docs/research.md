@@ -507,18 +507,32 @@ generic when every identity token is in `_DESCRIPTOR_TOKENS`, a vocabulary built
 from the archive's and the probes' descriptive tags; a slash-joined tag keeps its
 named half (`[A: official / GRG]` is checked as GRG). Replayed over the archive,
 420 generic tags flip to rewritten and no named tag changes verdict
-(`scratch/attribution_named_tags_2026-09-24/`). Matching of named tags is biased
+(`scratch/attribution_named_tags_2026-09-24/`). Once tags name the outlet, Gemini
+tends to make the tag the link label (`[A: NOAA](url)`, sometimes inside one more
+bracket pair): 4 of 5 responses in the 2026-09-24 named-tag probe, about 95 of 101
+tags. Rendered as a plain label that loses its brackets (`A: NOAA [1]`) and escapes
+the check, so the formatter first rewrites a tier-tag label to the double-bracket
+form (`gemini_search._bracket_tier_tag_link_labels`), which renders `[A: NOAA] [1]`.
+The probe's tags were then 101 named, 0 generic, and after both fixes about 97% of
+the rescorable ones backed by their own source list. Matching of named tags is biased
 hard toward KEEPING, because a false
 strip discards real provenance while a false keep merely leaves one tag standing.
 Any one of six rules credits a name: it concatenates into the domain
 (`Golf Channel` / golfchannel.com); all of its identity tokens appear in the
 domain (`The Guardian` / guardian.co.uk); the token sets intersect on a token
 that is not a class word (`LSE Blogs` / lse.ac.uk, while a shared "research" alone
-cannot credit `Research Institute of Foo` against demographic-research.org); the domain's registrable core sits inside the name, the sub-brand
-shape (`Chosunbiz` / chosun.com); a single-token name is a subsequence of the
-label (`WaPo` / washingtonpost.com: single-token only, since a subsequence test
-over a multiword name credits almost anything); or the domain core abbreviates the
-name (`Times of Central Asia` / timesca.com). A response with no renderable
+cannot credit `Research Institute of Foo` against demographic-research.org); a
+domain core sits inside the name, the sub-brand shape (`Chosunbiz` / chosun.com);
+a single-token name is a subsequence of the label (`WaPo` / washingtonpost.com:
+single-token only, since a subsequence test over a multiword name credits almost
+anything); or a domain core abbreviates the name (`Times of Central Asia` /
+timesca.com). The domain cores are every label left of the public suffix
+(`research/public_suffix.registrable_domain`), each read by its first alphanumeric
+run, less stop and class words: `nhc` and `noaa` for nhc.noaa.gov, `colostate` for
+tropical.colostate.edu, `grg` for grg-supercentenarians.org. Self-cited sources list
+full hostnames, and until 2026-09-24 only the first label counted, which read
+tropical.colostate.edu as `tropical` and stripped 9 correctly linked `Colorado
+State University` tags in the named-tag probe. A response with no renderable
 verified source label is skipped rather than blanket-marked (q44802): with no
 evidence base, a rewrite would dress our own render failure as the model's
 embellishment.

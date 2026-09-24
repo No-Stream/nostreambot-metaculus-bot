@@ -46,6 +46,7 @@ from metaculus_bot.research.bracket_groups import (
     join_group_items,
     rebuild_group,
 )
+from metaculus_bot.research.public_suffix import registrable_domain
 
 __all__ = ["AttributionCheck", "rewrite_unsupported_attributions"]
 
@@ -210,18 +211,27 @@ def _identity_tokens(text: str) -> list[str]:
     return [token for token in _NON_ALNUM_RE.split(text.lower()) if token and token not in _STOP_TOKENS]
 
 
-def _domain_core(label: str) -> str:
-    """The registrable name of a label's domain: ``lse`` for ``lse.ac.uk``.
+def _domain_cores(label: str) -> list[str]:
+    """Every name-bearing label of a domain left of its public suffix: ``["lse"]`` for
+    ``lse.ac.uk``, ``["nhc", "noaa"]`` for ``nhc.noaa.gov``, ``["grg"]`` for
+    ``grg-supercentenarians.org``.
 
     A label renders as ``<title> — <domain>`` when the chunk carries both, so the domain
-    is the last dash-separated segment; every label in the archived corpus is a bare
-    domain, which is the same segment.
+    is the last dash-separated segment. Self-cited sources list full hostnames, and the
+    identity can sit in either part (``tropical.colostate.edu``, ``nhc.noaa.gov``), so each
+    label counts. Stop and class words (``www``, ``news``) and cores shorter than
+    ``_MIN_DOMAIN_CORE_CHARS`` never do: they sit inside far too many outlet names.
     """
-    domain = label.rsplit(" — ", 1)[-1]
-    parts = [part for part in _NON_ALNUM_RE.split(domain.lower()) if part]
-    if parts and parts[0] == "www":
-        parts = parts[1:]
-    return parts[0] if parts else ""
+    host = label.rsplit(" — ", 1)[-1].strip().lower()
+    domain = registrable_domain(host) or host
+    name_labels = [*host.removesuffix(domain).split("."), domain.split(".", 1)[0]]
+    # A hyphenated label reads by its first run: ``grg`` for grg-supercentenarians.org.
+    cores = [next(iter(_NON_ALNUM_RE.split(name_label)), "") for name_label in name_labels]
+    return [
+        core
+        for core in cores
+        if len(core) >= _MIN_DOMAIN_CORE_CHARS and core not in _STOP_TOKENS and core not in _DESCRIPTOR_TOKENS
+    ]
 
 
 def _is_subsequence(needle: str, haystack: str) -> bool:
@@ -264,13 +274,13 @@ def _name_matches_label(name: str, label: str) -> bool:
     2. every identity token appears in the domain (``The Guardian`` / guardian.co.uk);
     3. the token sets intersect on a token that is not a class word (``LSE Blogs`` /
        lse.ac.uk, but not ``Research Institute of Foo`` / demographic-research.org);
-    4. the domain's registrable core sits inside the name — the sub-brand shape
+    4. a domain core (any label left of the public suffix) sits inside the name — the sub-brand shape
        (``Chosunbiz`` / chosun.com, ``iHeartRadio`` / iheart.com);
     5. a single-token name is a subsequence of the label — the name-abbreviates-the-outlet
        shape (``WaPo`` and ``WashPost`` / washingtonpost.com, ``RCP`` /
        realclearpolling.com, ``GEF`` / global-energy-flow.com). Restricted to single-token
        names because a subsequence test over a multiword name credits almost anything;
-    6. the domain core abbreviates the name — the same relation the other way round
+    6. a domain core abbreviates the name — the same relation the other way round
        (``Times of Central Asia`` / timesca.com).
     """
     name_squashed = _squash(name)
@@ -284,12 +294,12 @@ def _name_matches_label(name: str, label: str) -> bool:
         return True
     if (set(name_tokens) - _DESCRIPTOR_TOKENS) & set(_identity_tokens(label)):
         return True
-    core = _domain_core(label)
-    if len(core) >= _MIN_DOMAIN_CORE_CHARS and core in name_squashed:
+    cores = _domain_cores(label)
+    if any(core in name_squashed for core in cores):
         return True
     if len(name_tokens) == 1 and len(name_squashed) >= 2 and _is_subsequence(name_squashed, label_squashed):
         return True
-    return len(core) >= _MIN_DOMAIN_CORE_CHARS and _is_prefix_concatenation(core, name_tokens)
+    return any(_is_prefix_concatenation(core, name_tokens) for core in cores)
 
 
 def _is_generic_descriptor(name: str) -> bool:

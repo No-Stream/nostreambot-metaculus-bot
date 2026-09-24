@@ -396,6 +396,56 @@ async def test_attribution_check_uses_resolved_domains(
     assert "GEMINI_UNSUPPORTED_ATTRIBUTION: question=6007" in caplog.text
 
 
+@pytest.mark.parametrize(
+    "cited",
+    [
+        # 2026-09-24 named-tag probe: once tags name the outlet, Gemini makes the tag the link
+        # label (3 of 5 responses), sometimes inside an extra bracket (2 of 5). Rendered as
+        # plain labels these became "A: NOAA [1]" and "[A: NOAA [1]]", which the attribution
+        # check's bracket grammar cannot see.
+        "[A: NOAA]({redirect})",
+        "[[A: NOAA]({redirect})]",
+        "[[A: NOAA]]({redirect})",
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_tier_tag_used_as_a_link_label_renders_as_a_checked_tag(
+    monkeypatch: pytest.MonkeyPatch,
+    cited: str,
+) -> None:
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    text = f"Zero major hurricanes so far {cited.format(redirect=_SEARCH_REDIRECT)}. Six storms [B: Reuters]."
+    fake_client = _make_client_with_response(_make_response(text))
+
+    with (
+        patch("metaculus_bot.research.gemini_search.genai.Client", return_value=fake_client),
+        patch(
+            "metaculus_bot.research.gemini_search.resolve_search_redirects",
+            new=AsyncMock(return_value={_SEARCH_REDIRECT: "https://www.nhc.noaa.gov/text"}),
+        ),
+    ):
+        out = await gemini_search.invoke_gemini_grounded("prompt", qid=6011)
+
+    assert "Zero major hurricanes so far [A: NOAA] [1]." in out
+    assert "Six storms [unverified attribution]." in out
+    assert pop_provider_detail(6011, "gemini_search")["counts"] == {
+        "tier_tags": 2,
+        "generic_tier_tags": 0,
+        "unsupported_attributions": 1,
+    }
+
+
+def test_ordinary_link_labels_and_bracketed_prose_are_left_alone() -> None:
+    text = (
+        f"See [the NHC outlook]({_SEARCH_REDIRECT}) and [notes: see [A: NOAA]({_SEARCH_REDIRECT}) above]. "
+        f"Q: why? [Reuters]({_SEARCH_REDIRECT})"
+    )
+    assert gemini_search._bracket_tier_tag_link_labels(text) == (
+        f"See [the NHC outlook]({_SEARCH_REDIRECT}) and [notes: see [[A: NOAA]]({_SEARCH_REDIRECT}) above]. "
+        f"Q: why? [Reuters]({_SEARCH_REDIRECT})"
+    )
+
+
 @pytest.mark.asyncio
 async def test_generic_tier_tags_are_rewritten_and_counted(
     monkeypatch: pytest.MonkeyPatch,

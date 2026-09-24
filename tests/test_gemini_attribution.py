@@ -80,6 +80,24 @@ class TestSupportedAttributionsAreKept:
             text = f"The bill passed its second reading [B: {name}]."
             assert _rewrite(text, [label]) == text, name
 
+    def test_every_label_left_of_the_public_suffix_is_a_core(self) -> None:
+        # 2026-09-24 named-tag probe: self-cited sources list full hostnames. The identity can
+        # sit in the registrable name (tropical.colostate.edu: 9 correctly linked Colorado
+        # State University tags, the key source on Q45571, were stripped when only the first
+        # label counted) or in the subdomain (nhc.noaa.gov), so both are tried.
+        for name, label in (
+            ("Colorado State University", "tropical.colostate.edu"),
+            ("Colorado State University", "engr.source.colostate.edu"),
+            ("National Hurricane Center", "nhc.noaa.gov"),
+            # A hyphenated registered name reads by its first run, as before.
+            ("Gerontology Research Group", "grg-supercentenarians.org"),
+        ):
+            text = f"The outlook calls for two major hurricanes [A: {name}] [1]."
+            assert _rewrite(text, [label]) == text, (name, label)
+
+    def test_a_class_word_subdomain_is_not_a_core(self) -> None:
+        assert UNVERIFIED_ATTRIBUTION_MARKER in _rewrite("The poll moved [B: CBS News].", ["news.sky.com"])
+
     def test_title_side_of_a_label_counts(self) -> None:
         # Every archived label is a bare domain, matching the formatter's source-domain labels.
         # The formatter previously rendered ``<title> — <domain>`` when a chunk carried both,

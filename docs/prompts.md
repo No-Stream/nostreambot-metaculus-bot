@@ -168,7 +168,10 @@ style (85% of tags), so it predates self-citation. A category cannot be checked 
 retrieval record, which let the model claim tier A while naming nothing; Gemini's output now has
 such tags rewritten to `[unverified attribution]` (`research/gemini_attribution.py`). The rule is
 shared, so GPT native search and the AskNews summarizer name outlets too, though only Gemini's tags
-are checked. The A to D definitions did not change. Pins: `TestSourceTierTagging` in
+are checked. The A to D definitions did not change. The 2026-09-24 named-tag probe (5 Gemini
+responses on Q14333 and Q45571, `scratch/attribution_named_tags_2026-09-24/`) found 101 named tags
+and 0 class tags, against 85% class tags on the old prompt; the model often makes the tag the link
+label, which the Gemini formatter normalizes (see `docs/research.md`). Pins: `TestSourceTierTagging` in
 `tests/prompts/test_research_clauses.py` (named examples present, category examples absent).
 
 ### `OUTSIDE_VENUE_MARKET_ODDS_POLICY` and `_OUTSIDE_VENUE_MARKET_ODDS_BULLET`
