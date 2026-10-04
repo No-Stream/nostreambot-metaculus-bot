@@ -41,7 +41,11 @@ GITHUB_DISPATCH_URL = (
 )
 GITHUB_DISPATCH_BODY = '{"ref":"main"}'
 GITHUB_API_VERSION = "2022-11-28"
+# Setup API call timeout; independent of cron-job.org's timeout when calling GitHub.
 REQUEST_TIMEOUT_SECS = 30
+# Allow a slow GitHub acknowledgment without retrying an ambiguously accepted POST.
+# Requires an account execution-time limit of at least 300s; see docs/operations.md.
+DISPATCH_TIMEOUT_SECS = 300
 # cron-job.org rate-limits PUT /jobs to one request per second.
 WRITE_SPACING_SECS = 1.0
 
@@ -51,7 +55,7 @@ REQUEST_METHOD_POST = 1
 SCHEDULE_EVERY = [-1]
 SCHEDULE_TIMEZONE = "UTC"
 SCHEDULE_FIELDS = ("timezone", "hours", "mdays", "minutes", "months", "wdays")
-NOTIFICATION_FIELDS = ("onFailure", "onSuccess", "onDisable")
+NOTIFICATION_FIELDS = ("onFailure", "onFailureCount", "onSuccess", "onDisable")
 
 MANTIC_WORKFLOW_FILE = "run_bot_on_mantic.yaml"
 
@@ -102,6 +106,7 @@ def build_job_payload(job: DispatchJob, gh_token: str) -> dict[str, Any]:
         "enabled": job.enabled,
         "saveResponses": False,
         "requestMethod": REQUEST_METHOD_POST,
+        "requestTimeout": DISPATCH_TIMEOUT_SECS,
         "schedule": {
             "timezone": SCHEDULE_TIMEZONE,
             "hours": SCHEDULE_EVERY,
@@ -119,7 +124,7 @@ def build_job_payload(job: DispatchJob, gh_token: str) -> dict[str, Any]:
             },
             "body": GITHUB_DISPATCH_BODY,
         },
-        "notification": {"onFailure": True, "onSuccess": False, "onDisable": True},
+        "notification": {"onFailure": True, "onFailureCount": 1, "onSuccess": False, "onDisable": True},
     }
 
 
@@ -132,6 +137,7 @@ def _comparable(job: Mapping[str, Any]) -> dict[str, Any]:
         "enabled": job["enabled"],
         "saveResponses": job["saveResponses"],
         "requestMethod": job["requestMethod"],
+        "requestTimeout": job.get("requestTimeout", -1),
         "schedule": {
             name: schedule[name] if name == "timezone" else sorted(schedule[name]) for name in SCHEDULE_FIELDS
         },
