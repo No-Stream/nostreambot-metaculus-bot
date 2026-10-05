@@ -586,6 +586,12 @@ MARKER_SPECS: list[MarkerSpec] = [
         ),
     ),
     MarkerSpec(
+        "run_status_json",
+        # Why: archives the exact privacy-safe status artifact. Receipt: docs/telemetry_markers.md "RUN_STATUS_JSON".
+        re.compile(r"RUN_STATUS_JSON:\s*(?P<payload>\{.*\})$"),
+        raw_fields=frozenset({"payload"}),
+    ),
+    MarkerSpec(
         "run_alertable_summary",
         # Why: fires on every path; "clean" is the token. Receipt: docs/telemetry_markers.md "RUN_ALERTABLE_SUMMARY".
         re.compile(

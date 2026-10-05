@@ -265,6 +265,7 @@ async def manifold_search(session: Any, query: str, *, width: int) -> list[Marke
         max_attempts=MANIFOLD_MAX_ATTEMPTS,
         retryable_statuses=(429, 500, 502, 503, 504),
         label=f"Manifold q={query[:40]!r}",  # HARNESS-SCAN-EXEMPT-subsampling  # log-label truncation
+        component="manifold",
     )
     if payload is None:
         return None

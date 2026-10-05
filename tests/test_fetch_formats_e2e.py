@@ -200,7 +200,7 @@ async def test_archive_inventory_then_late_member_query_banks_grounded_finding_w
             "system",
             "brief",
             tools,
-            _config(max_steps=6, max_conclude_gate_rejections=0),
+            _config(max_steps=6, max_conclude_gate_rejections=0, wall_deadline_s=10.0),
             llm_call=fake_llm,
         )
 
@@ -210,6 +210,7 @@ async def test_archive_inventory_then_late_member_query_banks_grounded_finding_w
         malformed = await _tool("read_document", tools).handler(url=urls["/broken.zip"], ask="anything")
         cached_inventory = await _tool("fetch", tools).handler(url=urls["/data.zip"])
 
+    assert not result.telemetry.deadline_hit
     inventory = _tool_content(result, "inventory")
     query = _tool_content(result, "query")
     assert "method: local_navigation" in inventory

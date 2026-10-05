@@ -68,6 +68,7 @@ from metaculus_bot.research.providers import (
     native_search_provider,
 )
 from metaculus_bot.research.section_format import _demote_inner_headings, assemble_provider_sections
+from metaculus_bot.run_status import RUN_STATUS
 from metaculus_bot.time_budget import QuestionTimeBudget
 
 # Re-export for out-of-package callers. See docs/research.md "Orchestrator implementation notes".
@@ -154,6 +155,13 @@ class ResearchOrchestrator:
             research, provider_results, asknews_raw = await self._run_providers_parallel(
                 question, providers, time_budget=time_budget
             )
+            for provider_result in provider_results:
+                RUN_STATUS.record_provider_result(
+                    name=provider_result.name,
+                    status=provider_result.status,
+                    error_type=provider_result.error_type,
+                    details=provider_result.details,
+                )
             if any(pr.status == "deadline" for pr in provider_results):
                 # Off the fast path nothing else counts this. See docs/research.md "Orchestrator implementation notes".
                 self._record_research_budget_cut(question, fast_path=fast_path)

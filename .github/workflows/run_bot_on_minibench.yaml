@@ -18,6 +18,8 @@ concurrency:
 # Daily job to run the simple forecast bot
 jobs:
   forecast_job:
+    outputs:
+      title: ${{ steps.run_summary.outputs.title }}
     runs-on: ubuntu-latest # determines the machine that will run the job - keep as is
     # Backstop only; the per-step caps below are the real hang defense. Sized above the
     # bot's OWN contract rather than off the measured distribution: constants.py caps a
@@ -70,6 +72,7 @@ jobs:
         if: steps.playwright_install.outcome == 'failure'
         run: echo "::warning title=Playwright install failed::Chromium install failed — gap-fill v2 rendered-fetch rung will degrade to plain fetch this run. Transient apt/CDN blips are common; investigate only if this recurs."
       - name: Run bot
+        id: run_bot
         shell: bash
         # Repo is public, so uploaded artifacts are effectively public. Log content
         # (question URLs, predictions, degradation counters) is already public via
@@ -93,6 +96,7 @@ jobs:
           # Unbuffered stdout/stderr so log lines stream in real time and nothing
           # is lost if the run crashes before a buffer flush.
           PYTHONUNBUFFERED: '1'
+          FORECAST_RUN_STATUS_PATH: run_logs/status.json
           METACULUS_TOKEN: ${{ secrets.METACULUS_TOKEN }} # replace this with the name of the variable under which you stored your own Metaculus token
           PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
           # Exa semantic search (gap-fill v2's search_web tool; also the legacy
@@ -196,3 +200,40 @@ jobs:
             run_logs/
           retention-days: 90
           if-no-files-found: ignore
+      - name: Explain run outcome
+        id: run_summary
+        if: always()
+        timeout-minutes: 5
+        run: |
+          if [ -f scripts/forecast_run_summary.py ]; then
+            python3 scripts/forecast_run_summary.py --status run_logs/status.json
+          else
+            echo 'Forecast status unknown: checkout/setup failed; no source, model, or publication evidence.' >> "$GITHUB_STEP_SUMMARY"
+            echo 'title=Forecast status unknown; checkout/setup failed' >> "$GITHUB_OUTPUT"
+            echo '::error title=Forecast status unavailable::Checkout/setup failed before the summary renderer was available.'
+            exit 1
+          fi
+        env:
+          FORECAST_JOB_STATUS: ${{ job.status }}
+          BOT_STEP_OUTCOME: ${{ steps.run_bot.outcome }}
+          PLAYWRIGHT_STEP_OUTCOME: ${{ steps.playwright_install.outcome }}
+
+  report_status:
+    name: ${{ needs.forecast_job.outputs.title || 'Forecast status unknown; check setup or cancellation' }}
+    needs: forecast_job
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report forecasting result
+        timeout-minutes: 1
+        env:
+          FORECAST_RESULT: ${{ needs.forecast_job.result }}
+          STATUS_TITLE: ${{ needs.forecast_job.outputs.title || 'Forecast status unknown; check setup or cancellation' }}
+        run: |
+          printf '%s\n' "$STATUS_TITLE" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Forecasting job: %s\n' "$FORECAST_RESULT" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$FORECAST_RESULT" != "success" ]; then
+            echo "::error title=Forecasting run failed::See the forecasting job summary for source, model, and publication evidence."
+            exit 1
+          fi

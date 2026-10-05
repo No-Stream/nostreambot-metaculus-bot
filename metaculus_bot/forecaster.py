@@ -83,6 +83,7 @@ from metaculus_bot.research.providers import (
     ResearchCallable,
 )
 from metaculus_bot.research.timeseries_anchor import _session_charts
+from metaculus_bot.run_status import RUN_STATUS
 from metaculus_bot.stacking_route import route_after_forecasts
 from metaculus_bot.time_budget import (
     QuestionTimeBudget,
@@ -391,6 +392,7 @@ class TemplateForecaster(CompactLoggingForecastBot):
             logger.info(f"📊 {bot_name}: Processing {len(questions)} questions...")
 
         reset_pchip_stats()
+        RUN_STATUS.reset(stage="runtime")
         self._research.reset_run_degradation_counters()
         # The publish wrapper and the close gate have no handle back to the bot, so their counters are module-scoped.
         reset_publish_attempt_failures()
@@ -400,11 +402,13 @@ class TemplateForecaster(CompactLoggingForecastBot):
 
         log_pchip_summary()
 
+        degradation = self._degradation_snapshot()
+        RUN_STATUS.record_degradation_snapshot(degradation)
         if self.aggregation_strategy == AggregationStrategy.CONDITIONAL_STACKING:
-            logger.info(format_conditional_stacking_summary(self._degradation_snapshot()))
+            logger.info(format_conditional_stacking_summary(degradation))
 
         # Any non-zero counter reddens CI via cli.py, after every publishable question has already published.
-        logger.info(format_degradation_summary(self._degradation_snapshot()))
+        logger.info(format_degradation_summary(degradation))
         self._emit_forecaster_drop_telemetry()
         # Emitted even at zero, so "no provider degraded" is a recorded fact rather than an absent line.
         self._research.log_provider_degradation_summary()
@@ -512,6 +516,7 @@ class TemplateForecaster(CompactLoggingForecastBot):
         """
         self._forecaster_drops.append(ForecasterDrop(model=model, qid=qid, cause=cause))
         self._forecasters_dropped_count += 1
+        RUN_STATUS.record_model_drop(cause)
 
     def _emit_forecaster_drop_telemetry(self) -> None:
         """Emit this run's per-model drop attribution (see drop_telemetry)."""
@@ -564,6 +569,7 @@ class TemplateForecaster(CompactLoggingForecastBot):
             tasks.append(task)
             task_model[task] = self._forecaster_llms[idx].model if idx < len(self._forecaster_llms) else "unknown"
         n_total = len(tasks)
+        RUN_STATUS.record_model_attempt(n_total)
         remaining = time_budget.remaining_s()
         wait_timeout = max(0.0, remaining)
         done_set, pending_set = await asyncio.wait(tasks, timeout=wait_timeout, return_when=asyncio.ALL_COMPLETED)
@@ -597,6 +603,7 @@ class TemplateForecaster(CompactLoggingForecastBot):
             exc = task.exception()
             if exc is None:
                 valid_predictions.append(cast(ReasonedPrediction[PredictionTypes], task.result()))
+                RUN_STATUS.record_model_success()
             else:
                 errors.append(f"{type(exc).__name__}: {exc}")
                 exceptions.append(exc)

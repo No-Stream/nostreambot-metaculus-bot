@@ -155,13 +155,15 @@ def _run_bot_env(workflow: dict) -> dict[str, str]:
     flag set on the checkout or uv-setup step would satisfy a flattened assertion while the
     bot process never saw it.
     """
-    env: dict[str, str] = {}
-    for job in workflow["jobs"].values():
-        env.update(job.get("env") or {})
-        bot_steps = [step for step in job.get("steps", []) if "main.py" in str(step.get("run", ""))]
-        assert len(bot_steps) == 1, f"expected exactly one step invoking main.py, got {len(bot_steps)}"
-        env.update(bot_steps[0].get("env") or {})
-    return env
+    bot_steps = [
+        (job, step)
+        for job in workflow["jobs"].values()
+        for step in job.get("steps", [])
+        if "main.py" in str(step.get("run", ""))
+    ]
+    assert len(bot_steps) == 1, f"expected exactly one step invoking main.py, got {len(bot_steps)}"
+    job, step = bot_steps[0]
+    return {**(job.get("env") or {}), **(step.get("env") or {})}
 
 
 def _upload_step(workflow: dict) -> dict:

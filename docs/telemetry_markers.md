@@ -73,6 +73,7 @@ incidents behind the design.
 | `GAP_FILL_SKIPPED_FOR_BUDGET` | `research/gap_fill_stages.py` | Per-question gap-fill skip when both passes were dropped up front. |
 | `GAP_FILL_CUT_FOR_BUDGET` (matches `GAP_FILL_V1_CUT_FOR_BUDGET` / `GAP_FILL_V2_CUT_FOR_BUDGET`) | `research/gap_fill_stages.py` | Per-question mid-phase gap-fill cut. |
 | `PAID_PERSONAL_KEY_FALLBACK` (matches the log line `PAID PERSONAL-KEY FALLBACK`) | `fallback_openrouter.py:record_donated_key_fallback` | Per-call donated-to-personal key fallback WARN. |
+| `RUN_STATUS_JSON` | `run_status.py:write_run_status_from_environment` | Exact safe structured status JSON for source, model, and publication evidence. |
 | `RUN_ALERTABLE_SUMMARY` (matches the log line `Run completed ... with N alertable ...`) | `cli.py` | The end-of-run alertable breakdown, emitted on every path. |
 | `ONLY_POSTS` | `cli.py:_tournament_source` | The `--only-posts` smoke filter, one line per run that set it. |
 | `QUESTION_CAP_FORFEIT` | `forecaster.py:forecast_questions` | The `max_questions_per_run` cap. |
@@ -1128,6 +1129,25 @@ already in `DEGRADATION_COUNTERS` and the cli summary, but only this line names 
 back and with what error, which is what separates "one flaky Gemini call" from "every forecaster
 ran on the paid key". `error` captures greedily to end-of-line because it holds the exception's
 `str`.
+
+### RUN_STATUS_JSON
+
+`run_status.py:write_run_status_from_environment` emits the exact JSON payload written to the
+workflow-configured `FORECAST_RUN_STATUS_PATH`, after the file write succeeds. The parser stores
+`payload` verbatim; decode that JSON to read its `schema_version`, `outcome`, `causes`, `models`,
+and `publishing` fields. This run-level marker has no question id, and its labels are allowlisted
+before serialization, so it contains no exception messages, credentials, URLs, or query text.
+The existing telemetry harvest preserves it after Actions' 90-day log and artifact expiry.
+
+Schema 1 represents unmeasured counts as `null`, and observed attempts separately from observed
+successes. Each cause identifies its counting unit: logical HTTP lookups, source checks,
+provider calls, models, publications, or legacy alerts. A shared HTTP request can affect several
+source checks; their counts stay separate and must not be added together. A source cause's
+affected count does not establish the outcome of its remaining
+attempts; model timeouts are a subset of model drops. Publication counts describe logical
+forecast and comment submissions across their existing retries, with success recorded only
+after the wrapped client returns successfully. The CLI still decides the process exit status.
+See [forecast_alerts.md](forecast_alerts.md) for the renderer, example, and notification limits.
 
 ### RUN_ALERTABLE_SUMMARY
 

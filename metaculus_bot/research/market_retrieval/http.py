@@ -23,6 +23,7 @@ import aiohttp
 
 from metaculus_bot.research.http_fetch import read_body_capped, read_body_snippet
 from metaculus_bot.research.market_retrieval.types import MarketMatch, SettlementSource, _FetchTally
+from metaculus_bot.run_status import RUN_STATUS
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +170,13 @@ class _RetryableStatus:
     status: int
 
 
+@dataclass(frozen=True, slots=True)
+class _NonRetryableStatus:
+    """One terminal HTTP status that should be returned to the caller as no data."""
+
+    status: int
+
+
 async def _read_one_attempt(
     session: Any,
     url: str,
@@ -177,7 +185,7 @@ async def _read_one_attempt(
     client_timeout: aiohttp.ClientTimeout,
     retryable: set[int],
     label: str,
-) -> Any | _RetryableStatus | None:
+) -> Any | _RetryableStatus | _NonRetryableStatus | None:
     """One GET: the parsed body, ``None`` on a non-retryable outcome, or a ``_RetryableStatus``.
 
     Split out of ``http_get_with_backoff`` so the retry bookkeeping and the response reading are
@@ -191,7 +199,7 @@ async def _read_one_attempt(
         if status != 200:
             snippet = await read_body_snippet(resp)
             logger.warning(f"{label} HTTP {status} non-retryable: {snippet}")
-            return None
+            return _NonRetryableStatus(status)
         return await read_json_capped(resp, label)
 
 
@@ -203,6 +211,7 @@ async def http_get_with_backoff(
     max_attempts: int,
     retryable_statuses: Iterable[int] | None = None,
     label: str,
+    component: str | None = None,
 ) -> Any | None:
     """GET ``url`` with ``max_attempts`` and one bounded backoff between retries.
 
@@ -219,6 +228,8 @@ async def http_get_with_backoff(
     """
     retryable: set[int] = set(retryable_statuses or (403, 429, 500, 502, 503, 504))
     timeout = aiohttp.ClientTimeout(total=PLATFORM_HTTP_TIMEOUT, sock_read=PLATFORM_HTTP_TIMEOUT)
+    if component is not None:
+        RUN_STATUS.record_source_lookup_attempt(component)
 
     for attempt in range(max_attempts):
         try:
@@ -226,25 +237,69 @@ async def http_get_with_backoff(
                 session, url, params, client_timeout=timeout, retryable=retryable, label=label
             )
         except (TimeoutError, aiohttp.ClientError) as exc:
-            if attempt + 1 >= max_attempts:
-                logger.warning(f"{label} transient error after {attempt + 1} attempts: {exc}")
-                return None
-            logger.warning(
-                f"{label} transient error: {exc}; retry {attempt + 2}/{max_attempts} "
-                f"after {HTTP_RETRY_BACKOFF_SECS:.2f}s"
-            )
-            await asyncio.sleep(HTTP_RETRY_BACKOFF_SECS)
+            if await _retry_transport_error(exc, attempt=attempt, max_attempts=max_attempts, label=label):
+                continue
+            _record_transport_error(component, exc)
+            return None
+        should_retry, response = await _process_fetch_outcome(
+            outcome,
+            attempt=attempt,
+            max_attempts=max_attempts,
+            label=label,
+            component=component,
+        )
+        if should_retry:
             continue
-        if not isinstance(outcome, _RetryableStatus):
-            return outcome
+        return response
+    return None
+
+
+async def _retry_transport_error(
+    exc: TimeoutError | aiohttp.ClientError, *, attempt: int, max_attempts: int, label: str
+) -> bool:
+    if attempt + 1 >= max_attempts:
+        logger.warning(f"{label} transient error after {attempt + 1} attempts: {exc}")
+        return False
+    logger.warning(
+        f"{label} transient error: {exc}; retry {attempt + 2}/{max_attempts} after {HTTP_RETRY_BACKOFF_SECS:.2f}s"
+    )
+    await asyncio.sleep(HTTP_RETRY_BACKOFF_SECS)
+    return True
+
+
+async def _process_fetch_outcome(
+    outcome: Any | _RetryableStatus | _NonRetryableStatus | None,
+    *,
+    attempt: int,
+    max_attempts: int,
+    label: str,
+    component: str | None,
+) -> tuple[bool, Any | None]:
+    if isinstance(outcome, _RetryableStatus):
         if attempt + 1 >= max_attempts:
             logger.warning(f"{label} HTTP {outcome.status} after {attempt + 1} attempts; giving up")
-            return None
+            if component is not None:
+                RUN_STATUS.record_source_http_failure(component, http_status=outcome.status)
+            return False, None
         logger.warning(
             f"{label} HTTP {outcome.status}; retry {attempt + 2}/{max_attempts} after {HTTP_RETRY_BACKOFF_SECS:.2f}s"
         )
         await asyncio.sleep(HTTP_RETRY_BACKOFF_SECS)
-    return None
+        return True, None
+    if isinstance(outcome, _NonRetryableStatus):
+        if component is not None:
+            RUN_STATUS.record_source_http_failure(component, http_status=outcome.status)
+        return False, None
+    if outcome is None and component is not None:
+        RUN_STATUS.record_source_failure(component, error_type="provider_failure")
+    return False, outcome
+
+
+def _record_transport_error(component: str | None, exc: TimeoutError | aiohttp.ClientError) -> None:
+    if component is None:
+        return
+    error_type = "timeout" if isinstance(exc, TimeoutError) else "connection_error"
+    RUN_STATUS.record_source_failure(component, error_type=error_type)
 
 
 def flatten_results(results: Sequence[Any], platform: str) -> tuple[list[MarketMatch], _FetchTally]:

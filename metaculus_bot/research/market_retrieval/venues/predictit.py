@@ -48,6 +48,7 @@ async def predictit_prefetch(session: Any) -> list[dict[str, Any]] | None:
         {},
         max_attempts=PREDICTIT_MAX_ATTEMPTS,
         label="PredictIt prefetch",
+        component="predictit",
     )
     if payload is None:
         return None
