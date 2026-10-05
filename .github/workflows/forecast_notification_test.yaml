@@ -2,6 +2,9 @@ name: Forecast notification fixture
 
 on:
   workflow_dispatch:
+  push:
+    branches: [notification-fixture-20261005]
+    paths: [.github/workflows/forecast_notification_test.yaml]
 
 permissions:
   contents: read
