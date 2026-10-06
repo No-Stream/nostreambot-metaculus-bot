@@ -334,15 +334,17 @@ def _latest_value_lines(
     partial_suffix = " — today's bar, in progress" if raw_last_ts.date() == ceiling == _today_utc() else ""
     last = float(derived.iloc[-1])
     freq: Freq = clock.freq
+    field_prefix = f"{freq} {route.value_field}, " if route.value_field is not None else ""
     if route.derivation != "level":
         parts: list[str] = [
             f"**{route.label}** — latest derived value {_fmt(last)} "
-            f"({_DERIVED_TARGET_DESC[route.derivation]}; from raw level {_fmt(raw_last)} "
+            f"({field_prefix}{_DERIVED_TARGET_DESC[route.derivation]}; from raw level {_fmt(raw_last)} "
             f"as of {raw_last_date}{partial_suffix}; effective series frequency: {freq})"
         ]
     else:
         parts = [
-            f"**{route.label}** — latest {_fmt(last)} (as of {raw_last_date}{partial_suffix}; series frequency: {freq})"
+            f"**{route.label}** — latest {_fmt(last)} "
+            f"({field_prefix}as of {raw_last_date}{partial_suffix}; series frequency: {freq})"
         ]
     if route.note:
         parts.append(f"- Note: {route.note}")
@@ -378,9 +380,9 @@ def _band_section_lines(
     parts: list[str] = []
     last = float(derived.iloc[-1])
     y = derived.to_numpy(dtype="float64")
-    # A forward-window-max question (from title framing OR a High-column yfinance spec)
+    # A forward-window-max question (from title framing OR a High-column yfinance route)
     # resolves on the max over the window, not the period-end level.
-    is_max = route.is_max or route.spec.column == "High"
+    is_max = route.is_max or route.value_field == "High"
     band: tuple[float, float, float] | None = None
     cadence_ok = clock_matches_cadence(clock, pd.DatetimeIndex(derived.index))
     if not cadence_ok and route.model_target:
@@ -509,11 +511,13 @@ def _render_spread(
     last_b = float(series_b.iloc[-1])
     date_a = pd.DatetimeIndex(series_a.index)[-1].strftime("%Y-%m-%d")
     date_b = pd.DatetimeIndex(series_b.index)[-1].strftime("%Y-%m-%d")
+    field_prefix_a = f"{clock.freq} {route.value_field}, " if route.value_field is not None else ""
+    field_prefix_b = f"{clock.freq} {route.value_field_b}, " if route.value_field_b is not None else ""
     parts: list[str] = [
         f"**Relative-return spread: {route.label} vs {route.label_b}** "
         f"(ret[{route.label}] − ret[{route.label_b}] over the forecast window, in percentage points)",  # noqa: RUF001  # minus sign is deliberate math typography in rendered research
-        f"- {route.label} latest: {_fmt(last_a)} (as of {date_a})",
-        f"- {route.label_b} latest: {_fmt(last_b)} (as of {date_b})",
+        f"- {route.label} latest: {_fmt(last_a)} ({field_prefix_a}as of {date_a})",
+        f"- {route.label_b} latest: {_fmt(last_b)} ({field_prefix_b}as of {date_b})",
     ]
     parts.append(_history_lines(series_a, TS_ANCHOR_NATIVE_TABLE_ROWS, f"{route.label} recent"))
     parts.append(_history_lines(series_b, TS_ANCHOR_NATIVE_TABLE_ROWS, f"{route.label_b} recent"))

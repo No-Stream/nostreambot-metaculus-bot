@@ -325,19 +325,19 @@ _TEMPLATE_REGISTRY: tuple[_TemplateEntry, ...] = (
         ("bitcoin", "btc-usd", "price of btc"),
         "BTC-USD",
         "yfinance",
-        "Bitcoin price ($; daily High on max/highest questions)",
+        "Bitcoin price ($)",
     ),
     _TemplateEntry(
         ("gold price", "price of gold", "spot gold", "gold futures"),
         "GC=F",
         "yfinance",
-        "Gold front-month futures ($/oz; daily High on max/highest questions)",
+        "Gold front-month futures ($/oz)",
     ),
     _TemplateEntry(
         ("silver price", "price of silver", "spot silver", "silver futures"),
         "SI=F",
         "yfinance",
-        "Silver front-month futures ($/oz; daily High on max/highest questions)",
+        "Silver front-month futures ($/oz)",
     ),
     _TemplateEntry(
         ("case-shiller", "case shiller", "national home price", "home price index", "house price index"),
@@ -394,6 +394,19 @@ class _Route:
     derivation: Derivation = "level"  # how the raw series maps to the resolved quantity
     scale: float = 1.0  # unit conversion inside the derivation (BOPGTB ÷1000, PAYEMS diff ×1000)
     note: str = ""
+
+    @property
+    def value_field(self) -> YfColumn | None:
+        """The yfinance column the value comes from, named in the render; ``None`` for a source without columns."""
+        return _value_field(self.spec)
+
+    @property
+    def value_field_b(self) -> YfColumn | None:
+        return None if self.spec_b is None else _value_field(self.spec_b)
+
+
+def _value_field(spec: SeriesSpec) -> YfColumn | None:
+    return spec.column if spec.source == "yfinance" else None
 
 
 def _extract_url_identifiers(criteria: str, fine_print: str) -> tuple[list[str], list[str]]:
@@ -560,7 +573,15 @@ def _single_url_route(
         )
         return None, "url_change_vs_level_guard"
     if entry is None:
-        return _Route(kind="single", spec=spec, label=series_id, is_max=is_max), "url_single"
+        return (
+            _Route(
+                kind="single",
+                spec=spec,
+                label=series_id,
+                is_max=is_max,
+            ),
+            "url_single",
+        )
     return _route_from_entry(entry, spec, is_max=is_max), "url_single"
 
 
