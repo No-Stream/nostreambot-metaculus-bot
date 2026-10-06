@@ -3907,7 +3907,7 @@ class TestMarkerNotInsideNoqaDirective:
 
 # Verbatim formatter shape from numeric/roundtrip.py.
 PERCENTILE_ROUNDTRIP_LINE = PFX + (
-    "PERCENTILE_ROUNDTRIP: question=700 model=test member qtype=discrete platform=metaculus "
+    "PERCENTILE_ROUNDTRIP: question=700 model=test member qtype=numeric grid=discrete platform=metaculus "
     "max_abs_drift=0.100981224 p=0.200000000 v=0 cdf_at_v=0.099018776 point_count=13"
 )
 
@@ -3919,7 +3919,8 @@ class TestPercentileRoundtrip:
         assert record["qid"] == 700
         assert record["qid_kind"] == "question_id"
         assert record["model"] == "test member"
-        assert record["qtype"] == "discrete"
+        assert record["qtype"] == "numeric"
+        assert record["grid"] == "discrete"
         assert record["platform"] == "metaculus"
         assert record["max_abs_drift"] == pytest.approx(0.100981224)
         assert record["p"] == 0.2

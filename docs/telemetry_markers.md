@@ -1562,7 +1562,8 @@ Emitted at INFO by `numeric/roundtrip.py:format_percentile_roundtrip_marker`, fr
 `forecaster_runners.py:build_guarded_numeric_distribution` after the member build (including
 PCHIP, smoothing and max-step clipping), using the original declared percentiles before
 sanitization. The line carries `question` (question id), `model` (the member's model name),
-`qtype=numeric|discrete|date`, `platform=metaculus|mantic`, `max_abs_drift`, `p`, `v`,
+`qtype=numeric|date` (matching `MEMBER_FORECAST`), `grid=continuous|discrete`,
+`platform=metaculus|mantic`, `max_abs_drift`, `p`, `v`,
 `cdf_at_v`, and `point_count`. `qid_kind` is `question_id`; the archive stem is
 `percentile_roundtrip`.
 
@@ -1570,20 +1571,22 @@ For each original stated `(p, v)`, signed drift is `cdf_at_v - p`, in probabilit
 `max_abs_drift` is the largest absolute drift. The recorded `p`, `v`, and `cdf_at_v` identify
 that worst point (the first in declaration order breaks ties). Sanitized anchors do not replace
 the originals, and duplicate values remain separate points. Continuous numeric and date
-questions use point evaluation with linear interpolation in value space on the built CDF's actual
-grid. Outside the grid, evaluation uses the endpoint probability because a published CDF cannot
-describe where the mass within an open tail lies.
+questions use point evaluation with `numpy.interp` in value space on the built CDF's actual grid.
+Outside the grid, NumPy returns the endpoint probability because a published CDF cannot describe
+where the mass within an open tail lies.
 
 Discrete questions use the actual grid values as bin edges, including for logarithmic grids.
-For a value `v` in a bin `[lo, hi)`, the CDF heights at its edges define an interval
-`[cdf(lo), cdf(hi)]`; a value exactly on an edge belongs to the bin above it. Drift is zero
+For a value `v` in a bin `(lo, hi]`, the CDF heights at its edges define an interval
+`[cdf(lo), cdf(hi)]`; the first bin also includes its lower edge. A value exactly on an interior
+edge belongs to the bin below it, and the last edge belongs to the last in-range bin. Drift is zero
 when `p` lies inside this interval, in which case `cdf_at_v` is recorded as `p`. Otherwise,
 `cdf_at_v` is the nearest interval endpoint and signed drift remains `cdf_at_v - p`; a negative
-drift means the bin and all lower bins contain less mass than the forecaster stated. Below the
-grid, compare against the tail interval `[0, cdf[0]]`; above it, compare against
-`[cdf[-1], 1]`. Mantic quantitative questions also use this rule because the Mantic client
-rewrites them to `DiscreteQuestion` (see `numeric/config.py:grid_is_outcome_space`). The Mantic
-tail-floor effect is logged separately by `NUMERIC_AGGREGATE`'s raw versus floored tail fields.
+drift means the bin and all lower bins contain less mass than the forecaster stated. Strictly below
+the first edge, compare against the tail interval `[0, cdf[0]]`; strictly above the last edge,
+compare against `[cdf[-1], 1]`. Mantic quantitative questions also use this rule because the
+Mantic client rewrites them to `DiscreteQuestion` (see `numeric/config.py:grid_is_outcome_space`).
+The Mantic tail-floor effect is logged separately by `NUMERIC_AGGREGATE`'s raw versus floored tail
+fields.
 
 Members without original percentile anchors, such as PMF members, emit no marker. Member
 telemetry precedes the unit guard, as `MEMBER_FORECAST` does; join survivors when restricting an

@@ -171,11 +171,7 @@ class TestRenderSingle:
         history is the only band there is — but rendering it as a "52-week range" states a
         recency the numbers don't have (a 2019 high reads as this year's)."""
         series = _daily_positive_series("^DEAD", end="2024-06-28", years=2)
-        route = _Route(
-            kind="single",
-            spec=SeriesSpec(source="yfinance", series_id="^DEAD"),
-            label="Dead index",
-        )
+        route = _Route(kind="single", spec=SeriesSpec(source="yfinance", series_id="^DEAD"), label="Dead index")
 
         out, _ = _render_single(series, route=route, ceiling=date(2026, 6, 30), calendar_days=14)
 
@@ -241,11 +237,7 @@ class TestRenderSingle:
         fallback already renames the range, but the header's latest value — the number
         the band is applied to — needs its own staleness flag, in render and run logs."""
         series = _daily_positive_series("^DEAD", end="2024-06-28", years=2)
-        route = _Route(
-            kind="single",
-            spec=SeriesSpec(source="yfinance", series_id="^DEAD"),
-            label="Dead index",
-        )
+        route = _Route(kind="single", spec=SeriesSpec(source="yfinance", series_id="^DEAD"), label="Dead index")
 
         with caplog.at_level(logging.WARNING):
             out, _ = _render_single(series, route=route, ceiling=date(2026, 6, 30), calendar_days=14)
@@ -297,7 +289,7 @@ class TestRoutedValueFieldRendering:
             _daily_positive_series("^VIX"), route=route, ceiling=date(2026, 6, 30), calendar_days=14
         )
 
-        assert "(daily High, as of 2026-06-30; series frequency: daily)" in out.splitlines()[0]
+        assert "(High, as of 2026-06-30; series frequency: daily)" in out.splitlines()[0]
 
     def test_ordinary_question_names_routed_close_field(self):
         route = route_question(_make_numeric_q(question_text="What will the price of gold be on the date?"))
@@ -309,7 +301,7 @@ class TestRoutedValueFieldRendering:
             _daily_positive_series("GC=F"), route=route, ceiling=date(2026, 6, 30), calendar_days=14
         )
 
-        assert "(daily Close, as of 2026-06-30; series frequency: daily)" in out.splitlines()[0]
+        assert "(Close, as of 2026-06-30; series frequency: daily)" in out.splitlines()[0]
 
     def test_unregistered_url_cited_ticker_names_routed_close_field(self):
         route = route_question(
@@ -326,7 +318,21 @@ class TestRoutedValueFieldRendering:
             _daily_positive_series("ALFA"), route=route, ceiling=date(2026, 6, 30), calendar_days=14
         )
 
-        assert "(daily Close, as of 2026-06-30; series frequency: daily)" in out.splitlines()[0]
+        assert "(Close, as of 2026-06-30; series frequency: daily)" in out.splitlines()[0]
+
+    def test_derived_yfinance_target_names_column_without_repeating_frequency(self):
+        route = _Route(
+            kind="single",
+            spec=SeriesSpec(source="yfinance", series_id="TEST=F", column="High"),
+            label="Test monthly high",
+            derivation="monthly_avg",
+        )
+
+        out, _ = _render_single(_weekly_series("TEST=F"), route=route, ceiling=date(2026, 6, 30), calendar_days=30)
+
+        first_line = out.splitlines()[0]
+        assert "(High, monthly average of the higher-frequency series; from raw level " in first_line
+        assert "daily High" not in first_line
 
     def test_paired_route_names_close_field_for_both_legs(self):
         route = route_question(
@@ -351,8 +357,8 @@ class TestRoutedValueFieldRendering:
 
         cl_latest_line = next(line for line in out.splitlines() if line.startswith("- CL=F latest: "))
         gspc_latest_line = next(line for line in out.splitlines() if line.startswith("- ^GSPC latest: "))
-        assert cl_latest_line.endswith("(daily Close, as of 2026-06-30)")
-        assert gspc_latest_line.endswith("(daily Close, as of 2026-06-30)")
+        assert cl_latest_line.endswith("(Close, as of 2026-06-30)")
+        assert gspc_latest_line.endswith("(Close, as of 2026-06-30)")
 
     def test_fred_latest_line_keeps_existing_format(self):
         route = route_question(

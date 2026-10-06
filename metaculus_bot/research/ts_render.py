@@ -334,7 +334,7 @@ def _latest_value_lines(
     partial_suffix = " — today's bar, in progress" if raw_last_ts.date() == ceiling == _today_utc() else ""
     last = float(derived.iloc[-1])
     freq: Freq = clock.freq
-    field_prefix = f"{freq} {route.value_field}, " if route.value_field is not None else ""
+    field_prefix = f"{route.value_field}, " if route.value_field is not None else ""
     if route.derivation != "level":
         parts: list[str] = [
             f"**{route.label}** — latest derived value {_fmt(last)} "
@@ -511,8 +511,8 @@ def _render_spread(
     last_b = float(series_b.iloc[-1])
     date_a = pd.DatetimeIndex(series_a.index)[-1].strftime("%Y-%m-%d")
     date_b = pd.DatetimeIndex(series_b.index)[-1].strftime("%Y-%m-%d")
-    field_prefix_a = f"{clock.freq} {route.value_field}, " if route.value_field is not None else ""
-    field_prefix_b = f"{clock.freq} {route.value_field_b}, " if route.value_field_b is not None else ""
+    field_prefix_a = f"{route.value_field}, " if route.value_field is not None else ""
+    field_prefix_b = f"{route.value_field_b}, " if route.value_field_b is not None else ""
     parts: list[str] = [
         f"**Relative-return spread: {route.label} vs {route.label_b}** "
         f"(ret[{route.label}] − ret[{route.label_b}] over the forecast window, in percentage points)",  # noqa: RUF001  # minus sign is deliberate math typography in rendered research

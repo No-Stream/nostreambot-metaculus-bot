@@ -402,6 +402,7 @@ class _Route:
 
     @property
     def value_field_b(self) -> YfColumn | None:
+        """The yfinance column for the second spread leg, or ``None`` when it has no second leg."""
         return None if self.spec_b is None else _value_field(self.spec_b)
 
 
@@ -573,15 +574,7 @@ def _single_url_route(
         )
         return None, "url_change_vs_level_guard"
     if entry is None:
-        return (
-            _Route(
-                kind="single",
-                spec=spec,
-                label=series_id,
-                is_max=is_max,
-            ),
-            "url_single",
-        )
+        return _Route(kind="single", spec=spec, label=series_id, is_max=is_max), "url_single"
     return _route_from_entry(entry, spec, is_max=is_max), "url_single"
 
 
