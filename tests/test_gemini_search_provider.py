@@ -23,6 +23,8 @@ _FIXTURE = Path(__file__).parent / "fixtures" / "gemini_selfcite_responses.txt"
 def _make_q(text: str) -> MagicMock:
     q = MagicMock()
     q.question_text = text
+    q.resolution_criteria = "Resolves YES if X happens."
+    q.fine_print = "Per the official registry."
     q.options = None
     return q
 
@@ -204,6 +206,24 @@ async def test_prompt_carries_the_mc_ballot(monkeypatch: pytest.MonkeyPatch) -> 
 
     prompt = fake_client.aio.models.generate_content.await_args.kwargs["contents"]
     assert "Options (in resolution order): Mir Kim | Hunter Feuerstein | Other" in prompt
+
+
+@pytest.mark.asyncio
+async def test_prompt_carries_resolution_criteria(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Grounded search is told to read the question's resolution sources, so it must be shown
+    them: before, the criteria and fine print (where those URLs live) never reached it."""
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
+    fake_client = _make_client_with_response(_make_response("research text"))
+    question = _make_q("How many plague cases will Russia confirm by January 15?")
+    question.resolution_criteria = "The highest cumulative count of confirmed cases reported by Rospotrebnadzor."
+    question.fine_print = "Source: https://www.rospotrebnadzor.ru/ press releases."
+
+    with patch("metaculus_bot.research.gemini_search.genai.Client", return_value=fake_client):
+        await gemini_search.gemini_search_provider(is_benchmarking=False)(question)
+
+    prompt = fake_client.aio.models.generate_content.await_args.kwargs["contents"]
+    assert "The highest cumulative count of confirmed cases reported by Rospotrebnadzor." in prompt
+    assert "https://www.rospotrebnadzor.ru/" in prompt
 
 
 # ---------------------------------------------------------------------------

@@ -11,6 +11,8 @@ def _make_q(text: str) -> MagicMock:
     contract. Tests only care about question_text on this path."""
     q = MagicMock()
     q.question_text = text
+    q.resolution_criteria = "Resolves YES if X happens."
+    q.fine_print = "Per the official registry."
     return q
 
 
@@ -242,6 +244,35 @@ async def test_native_search_provider_prompt_carries_the_mc_ballot() -> None:
 
     assert captured_prompt is not None
     assert "Options (in resolution order): Mir Kim | Hunter Feuerstein | Other" in captured_prompt
+
+
+@pytest.mark.asyncio
+async def test_native_search_provider_prompt_carries_resolution_criteria() -> None:
+    """The first-pass search must see what the question actually resolves on: from the title
+    alone, Mantic 717 (2026 Prague coalition) researched the previous election's coalition."""
+    captured_prompt: str | None = None
+
+    class MockLlm:
+        def __init__(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.model = kwargs.get("model", "mock")
+
+        async def invoke(self, prompt: str) -> str:
+            nonlocal captured_prompt
+            captured_prompt = prompt
+            return "Mock research response"
+
+    question = _make_q("Will Prague's coalition agreement be signed by December 1?")
+    question.resolution_criteria = "Resolves YES if the coalition agreement after the October 2026 election is signed."
+    question.fine_print = "Signature by all coalition party leaders is required."
+
+    with patch("metaculus_bot.research.providers.build_llm_with_openrouter_fallback", MockLlm):
+        from metaculus_bot.research.providers import native_search_provider
+
+        await native_search_provider()(question)
+
+    assert captured_prompt is not None
+    assert "after the October 2026 election is signed" in captured_prompt
+    assert "Signature by all coalition party leaders is required." in captured_prompt
 
 
 @pytest.mark.asyncio

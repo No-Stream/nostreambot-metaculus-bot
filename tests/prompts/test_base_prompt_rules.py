@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+import metaculus_bot.prompts as prompts_module
 from metaculus_bot.prompts import (
     _HISTORY_DISCHARGED_RULE,
     _SOFT_CLOCK_RULE,
@@ -56,7 +57,7 @@ class TestForecastingWindowAnchor:
         assert "Forecasting window" in result
         assert "days ago" in result
         assert "days from now" in result
-        assert "BEFORE the open date" in result
+        assert prompts_module.EVENT_WINDOW_RULE in result
 
     def test_binary_pre_open_rule_is_stated_twice_not_three_times(self) -> None:
         """The pre-open footgun has cost the bot badly, so the rule is deliberately stated
@@ -65,7 +66,7 @@ class TestForecastingWindowAnchor:
         statement, a 447-char 0a restatement with the 1945-detonation worked example, was
         retired as pure repetition (its receipt is the window line's own docstring)."""
         result = binary_prompt(_binary_q(), research="r")
-        assert "BEFORE the open date" in result
+        assert prompts_module.EVENT_WINDOW_RULE in result
         assert "POST-OPEN event" in result
         assert "1945" not in result
         assert "pre-dating the open date" not in result
@@ -95,7 +96,7 @@ class TestForecastingWindowAnchor:
         assert "2025-03-01" in result
         assert "2027-03-01" in result
         assert "Forecasting window" in result
-        assert "BEFORE the open date" in result
+        assert prompts_module.EVENT_WINDOW_RULE in result
 
     def test_multiple_choice_asserts_on_missing_timestamps(self) -> None:
         q = _mc_q()
@@ -114,7 +115,7 @@ class TestForecastingWindowAnchor:
         assert "2024-06-01" in result
         assert "2026-06-01" in result
         assert "Forecasting window" in result
-        assert "BEFORE the open date" in result
+        assert prompts_module.EVENT_WINDOW_RULE in result
 
     def test_numeric_asserts_on_missing_timestamps(self) -> None:
         q = _numeric_q()
@@ -918,3 +919,19 @@ class TestResolutionMetricEcho:
         )
         for p in (binary, mc, numeric):
             assert "Resolution-metric echo" not in p
+
+
+class TestForecastingWindowCarriesEventWindowRule:
+    """The forecaster's window block states the shared event-window rule: the resolution criteria
+    govern, an occurrence question counts only post-open events, and a cumulative or
+    stated-period measure counts everything in its period. Shared with the AskNews summarizer so
+    the two cannot disagree again (the summarizer once had a blanket post-open cutoff)."""
+
+    def test_window_block_ends_with_the_rule(self) -> None:
+        output = prompts_module._forecasting_window_str(_binary_q())
+        assert output.endswith(f"Forecasting window: open date → resolution date. {prompts_module.EVENT_WINDOW_RULE}")
+
+    def test_old_unconditional_wording_is_gone(self) -> None:
+        output = prompts_module._forecasting_window_str(_binary_q())
+        assert "interpret it as asking about the open→resolution window" not in output
+        assert "Events occurring BEFORE the open date do NOT resolve this question YES" not in output

@@ -28,6 +28,7 @@ from metaculus_bot.prompts import (
 )
 from tests.prompt_builders import (
     MANTIC_PAGE_URL,
+    METACULUS_PAGE_URL,
     _binary_q,
     _date_prompt_text,
     _date_q,
@@ -36,6 +37,7 @@ from tests.prompt_builders import (
     _numeric_prompt_text,
     _numeric_q,
     _open_upper_date_q,
+    _pmf_q,
     _stacked_prompt_texts,
 )
 
@@ -348,3 +350,45 @@ class TestScoringGridClause:
 
     def test_date_without_granularity_names_no_grid(self) -> None:
         assert "scoring grid" not in _flat(_date_prompt_text(_open_upper_date_q()))
+
+
+class TestDiscreteBinEdgesClause:
+    """A discrete question's prompt names its bin edges, on both platforms. Models wrote "0 to 1"
+    to mean zero on an integer count grid whose zero bin is [-0.5, 0.5], so percentiles meant for
+    zero landed in bin 1: on Mantic 708 members stated 45%, 46% and 30% at zero but their built
+    distributions held 34%, 39% and 22%. Metaculus discrete questions got no grid information at
+    all before this."""
+
+    @pytest.mark.parametrize("page_url", [METACULUS_PAGE_URL, MANTIC_PAGE_URL])
+    def test_integer_count_grid_names_half_integer_edges_and_lowest_bin_example(self, page_url: str) -> None:
+        question = _pmf_q(
+            cdf_size=36, lower_bound=-0.5, upper_bound=34.5, nominal_lower=0.0, nominal_upper=34.0, page_url=page_url
+        )
+        flat = " ".join(_numeric_text(question).split())
+        assert "Bin edges: -0.5, 0.5, 1.5, …, 34.5." in flat
+        assert "a percentile just past a bin's upper edge already falls in the next bin" in flat
+        assert "to give the lowest bin 40%, every percentile up to the 40th must lie between -0.5 and 0.5" in flat
+
+    def test_non_integer_width_grid_renders_its_own_edges(self) -> None:
+        question = _pmf_q(cdf_size=11, lower_bound=0.0, upper_bound=50.0, nominal_lower=0.0, nominal_upper=50.0)
+        flat = " ".join(_numeric_text(question).split())
+        assert "Bin edges: 0, 5, 10, …, 50." in flat
+        assert "must lie between 0 and 5" in flat
+
+    def test_continuous_numeric_question_has_no_bin_edges_clause(self) -> None:
+        flat = " ".join(_numeric_text(_numeric_q()).split())
+        assert "Bin edges:" not in flat
+
+    def test_log_scaled_discrete_grid_has_no_bin_edges_clause(self) -> None:
+        question = _pmf_q(
+            cdf_size=11, lower_bound=1.0, upper_bound=1000.0, nominal_lower=1.0, nominal_upper=1000.0, zero_point=0.0
+        )
+        flat = " ".join(_numeric_text(question).split())
+        assert "Bin edges:" not in flat
+
+    def test_stacking_numeric_prompt_does_not_carry_the_clause(self) -> None:
+        question = _pmf_q(cdf_size=36, lower_bound=-0.5, upper_bound=34.5, nominal_lower=0.0, nominal_upper=34.0)
+        stacked = stacking_numeric_prompt(
+            question, research="r", base_predictions=[], lower_bound_message="lbm", upper_bound_message="ubm"
+        )
+        assert "Bin edges:" not in stacked

@@ -15,6 +15,7 @@ from metaculus_bot.prompts import (
     _OUTSIDE_VENUE_MARKET_ODDS_BULLET,
     _SEARCH_LINK_CITATION_CLAUSE,
     _SOURCE_TIER_TAG_INSTRUCTION,
+    EVENT_WINDOW_RULE,
     MARKET_SNAPSHOT_SECTION_HEADER,
     TS_ANCHOR_SECTION_HEADER,
     binary_prompt,
@@ -371,20 +372,20 @@ class TestWebResearchPromptPrimarySources:
         assert hits >= 3, f"expected ≥3 of {self._EXAMPLE_DOMAINS} in prompt; got {hits}"
 
     def test_non_benchmarking_contains_primary_sources_block(self) -> None:
-        result = web_research_prompt("Will X happen?", is_benchmarking=False)
+        result = web_research_prompt("Will X happen?", resolution_criteria="rc", fine_print="fp", is_benchmarking=False)
         self._assert_primary_sources_block_present(result)
 
     def test_benchmarking_also_contains_primary_sources_block(self) -> None:
         """The primary-source steer is orthogonal to the benchmarking carve-out
         — it must apply during backtests too (Atlas-style sourcing helps
         regardless of whether prediction markets are banned)."""
-        result = web_research_prompt("Will X happen?", is_benchmarking=True)
+        result = web_research_prompt("Will X happen?", resolution_criteria="rc", fine_print="fp", is_benchmarking=True)
         self._assert_primary_sources_block_present(result)
 
     def test_benchmarking_warning_still_present_when_benchmarking(self) -> None:
         """Regression: adding the primary-sources block must not displace the
         benchmarking warning."""
-        result = web_research_prompt("Will X happen?", is_benchmarking=True)
+        result = web_research_prompt("Will X happen?", resolution_criteria="rc", fine_print="fp", is_benchmarking=True)
         lowered = result.lower()
         assert "benchmarking run" in lowered
         assert "data leakage" in lowered
@@ -392,8 +393,8 @@ class TestWebResearchPromptPrimarySources:
     def test_market_odds_bullet_only_when_not_benchmarking(self) -> None:
         """Regression: the FOCUS AREAS market-odds bullet must still appear only when
         is_benchmarking=False (backtests must not see market data at all)."""
-        non_bench = web_research_prompt("Q?", is_benchmarking=False)
-        bench = web_research_prompt("Q?", is_benchmarking=True)
+        non_bench = web_research_prompt("Q?", resolution_criteria="rc", fine_print="fp", is_benchmarking=False)
+        bench = web_research_prompt("Q?", resolution_criteria="rc", fine_print="fp", is_benchmarking=True)
 
         assert _OUTSIDE_VENUE_MARKET_ODDS_BULLET in non_bench
         assert _OUTSIDE_VENUE_MARKET_ODDS_BULLET not in bench
@@ -407,7 +408,7 @@ class TestWebResearchPromptPrimarySources:
         FedWatch q45401, Metaculus q20683). So the bullet is narrowed, not removed:
         the outside venues stay named, the four covered ones are ruled out, and the
         price must carry an observation date."""
-        prompt = web_research_prompt("Q?", is_benchmarking=False)
+        prompt = web_research_prompt("Q?", resolution_criteria="rc", fine_print="fp", is_benchmarking=False)
         collapsed = " ".join(prompt.split())
 
         for outside_venue in ("Metaculus", "Good Judgment Open", "CME FedWatch", "bookmakers"):
@@ -419,8 +420,10 @@ class TestWebResearchPromptPrimarySources:
 
     def test_search_link_style_requires_verbatim_tool_urls(self) -> None:
         """Gemini must emit the exact redirect URLs that the formatter resolves."""
-        search_links = web_research_prompt("Q?", citation_style="search_links")
-        markdown = web_research_prompt("Q?", citation_style="markdown")
+        search_links = web_research_prompt(
+            "Q?", resolution_criteria="rc", fine_print="fp", citation_style="search_links"
+        )
+        markdown = web_research_prompt("Q?", resolution_criteria="rc", fine_print="fp", citation_style="markdown")
 
         expected_clause = (
             "Cite every factual claim inline as a markdown link [source name](url), copying the url EXACTLY and in "
@@ -438,7 +441,9 @@ class TestWebResearchPromptPrimarySources:
 
     def test_search_link_clause_keeps_source_tier_tags(self) -> None:
         """The search-link clause and tier-tag block are both present in Gemini's prompt."""
-        search_links = web_research_prompt("Q?", citation_style="search_links")
+        search_links = web_research_prompt(
+            "Q?", resolution_criteria="rc", fine_print="fp", citation_style="search_links"
+        )
         collapsed = " ".join(search_links.split())
 
         assert "The SOURCE TIER TAGS instruction below still applies alongside each link" in collapsed
@@ -459,6 +464,8 @@ class TestWebResearchPromptPrimarySources:
             for is_benchmarking in (False, True):
                 result = web_research_prompt(
                     "Will X happen?",
+                    resolution_criteria="rc",
+                    fine_print="fp",
                     citation_style=citation_style,
                     is_benchmarking=is_benchmarking,
                 )
@@ -472,7 +479,9 @@ class TestWebResearchPromptPrimarySources:
         denominator) on reference-class questions — prioritizing niche,
         regional, or conditional rates and skipping common knowledge."""
         for is_benchmarking in (False, True):
-            result = web_research_prompt("Will X happen?", is_benchmarking=is_benchmarking)
+            result = web_research_prompt(
+                "Will X happen?", resolution_criteria="rc", fine_print="fp", is_benchmarking=is_benchmarking
+            )
             assert "reference-class reasoning" in result
             assert "historical frequency with its source and denominator" in result
             assert "niche, regional, or conditional" in result
@@ -596,8 +605,10 @@ class TestPredictionMarketFraming:
         suppressed upstream during backtests. Since the bullet was narrowed (it now
         names venues on both sides of the line), a benchmarking prompt must name
         none of them."""
-        non_bench = web_research_prompt("Will X happen?", is_benchmarking=False)
-        bench = web_research_prompt("Will X happen?", is_benchmarking=True)
+        non_bench = web_research_prompt(
+            "Will X happen?", resolution_criteria="rc", fine_print="fp", is_benchmarking=False
+        )
+        bench = web_research_prompt("Will X happen?", resolution_criteria="rc", fine_print="fp", is_benchmarking=True)
 
         assert "crowd odds" in non_bench
         assert "crowd odds" not in bench
@@ -770,7 +781,9 @@ class TestResearchPromptsCarryMcOptions:
     _LINE = "Options (in resolution order): Mir Kim | Hunter Feuerstein | Other"
 
     def test_web_research_prompt_names_the_ballot(self) -> None:
-        assert self._LINE in web_research_prompt("Who wins?", options=self._BALLOT)
+        assert self._LINE in web_research_prompt(
+            "Who wins?", resolution_criteria="rc", fine_print="fp", options=self._BALLOT
+        )
 
     def test_summarizer_prompt_names_the_ballot(self) -> None:
         assert self._LINE in _summarizer_prompt(options=self._BALLOT)
@@ -788,7 +801,9 @@ class TestResearchPromptsCarryMcOptions:
     @pytest.mark.parametrize("options", [None, [], ()])
     def test_non_mc_questions_carry_no_options_line(self, options) -> None:
         """Binary and numeric questions have no ballot, and an empty "Options" header invites one."""
-        assert "Options (in resolution order)" not in web_research_prompt("Will X happen?", options=options)
+        assert "Options (in resolution order)" not in web_research_prompt(
+            "Will X happen?", resolution_criteria="rc", fine_print="fp", options=options
+        )
         assert "Options (in resolution order)" not in _summarizer_prompt(options=options)
 
 
@@ -832,15 +847,23 @@ class TestSourceTierTagging:
         assert "never discard a fact because its tier is low" in lowered
 
     def test_web_research_prompt_carries_tier_tag_instruction(self) -> None:
-        self._assert_tier_tag_instruction(web_research_prompt("Will X happen?", is_benchmarking=False))
+        self._assert_tier_tag_instruction(
+            web_research_prompt("Will X happen?", resolution_criteria="rc", fine_print="fp", is_benchmarking=False)
+        )
 
     def test_web_research_prompt_carries_tier_tag_instruction_when_benchmarking(self) -> None:
         """The tier-tag steer is orthogonal to the benchmarking carve-out."""
-        self._assert_tier_tag_instruction(web_research_prompt("Will X happen?", is_benchmarking=True))
+        self._assert_tier_tag_instruction(
+            web_research_prompt("Will X happen?", resolution_criteria="rc", fine_print="fp", is_benchmarking=True)
+        )
 
     def test_search_link_prompt_carries_tier_tag_instruction(self) -> None:
         """Gemini's self-cited search-link prompt is the one whose tags get checked."""
-        self._assert_tier_tag_instruction(web_research_prompt("Will X happen?", citation_style="search_links"))
+        self._assert_tier_tag_instruction(
+            web_research_prompt(
+                "Will X happen?", resolution_criteria="rc", fine_print="fp", citation_style="search_links"
+            )
+        )
 
     def test_summarizer_prompt_carries_tier_tag_instruction(self) -> None:
         self._assert_tier_tag_instruction(_summarizer_prompt())
@@ -851,7 +874,7 @@ class TestSourceTierTagging:
         the forecaster ladder doesn't recognize."""
         collapsed_instruction = " ".join(_SOURCE_TIER_TAG_INSTRUCTION.split())
         for prompt in (
-            web_research_prompt("Q?", is_benchmarking=False),
+            web_research_prompt("Q?", resolution_criteria="rc", fine_print="fp", is_benchmarking=False),
             _summarizer_prompt(),
         ):
             assert collapsed_instruction in " ".join(prompt.split())
@@ -1026,3 +1049,59 @@ class TestGapFillAnalyzerGradeFields:
     def test_grade_rule_sits_beside_the_schema_it_defines(self) -> None:
         flat = _flat(self._analyzer())
         assert flat.index("null results are search outcomes") < flat.index("grade every gap") < flat.index('{"gaps": [')
+
+
+class TestWebResearchPromptCarriesCriteria:
+    """The first-pass search prompt carries the resolution criteria and fine print. From the title
+    alone, native search on Mantic 717 answered the previous election's coalition question, and on
+    Mantic 718 called the qualifying authorities unspecified when the criteria named them."""
+
+    def test_criteria_and_fine_print_are_in_the_prompt_after_the_question(self) -> None:
+        prompt = web_research_prompt(
+            "How many launches will the log list?",
+            resolution_criteria="Count entries in the Spaceflight Now launch log for 2026.",
+            fine_print="Failed and suborbital flights listed in the log count.",
+        )
+        assert "Count entries in the Spaceflight Now launch log for 2026." in prompt
+        assert "Failed and suborbital flights listed in the log count." in prompt
+        assert prompt.index("How many launches will the log list?") < prompt.index("RESOLUTION CRITERIA")
+        assert "research the exact event, period, units and sources defined here" in prompt
+
+    def test_criteria_present_in_both_citation_styles_and_when_benchmarking(self) -> None:
+        for citation_style in ("markdown", "search_links"):
+            for is_benchmarking in (False, True):
+                prompt = web_research_prompt(
+                    "Q?",
+                    resolution_criteria="RC-SENTINEL",
+                    fine_print="FP-SENTINEL",
+                    citation_style=citation_style,
+                    is_benchmarking=is_benchmarking,
+                )
+                assert "RC-SENTINEL" in prompt
+                assert "FP-SENTINEL" in prompt
+
+
+class TestEventWindowRule:
+    """Whether pre-open events count depends on what the question measures, and the resolution
+    criteria always govern. The summarizer used to say only events after the open date count,
+    which is wrong for a cumulative or full-year total (Mantic 718's cumulative plague count, the
+    Bundibugyo 2026 case total)."""
+
+    def test_rule_states_criteria_override_and_both_question_shapes(self) -> None:
+        collapsed = " ".join(EVENT_WINDOW_RULE.split())
+        assert "the resolution criteria always govern" in collapsed
+        assert "only occurrences after the question's open date count" in collapsed
+        assert "cumulative total or a value over a stated period" in collapsed
+        assert "including anything before the open date" in collapsed
+
+    def test_summarizer_carries_the_rule_and_not_the_old_blanket_cutoff(self) -> None:
+        prompt = _summarizer_prompt()
+        collapsed = " ".join(prompt.split())
+        assert EVENT_WINDOW_RULE in collapsed
+        assert "only events occurring AFTER" not in collapsed
+        assert "can trigger resolution" not in collapsed
+
+    def test_summarizer_pre_window_flag_excludes_events_the_criteria_count(self) -> None:
+        collapsed = " ".join(_summarizer_prompt().split())
+        assert "Explicitly flag any event from before 2026-03-15 that does NOT count under the rule above" in collapsed
+        assert "never flag an event the criteria count, such as a case inside a cumulative period" in collapsed

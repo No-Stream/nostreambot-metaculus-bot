@@ -20,7 +20,7 @@ from forecasting_tools import (
     NumericQuestion,
     clean_indents,
 )
-from forecasting_tools.data_models.questions import DateQuestion
+from forecasting_tools.data_models.questions import DateQuestion, DiscreteQuestion
 
 from metaculus_bot.constants import MC_PROB_MIN, PLATFORM_MANTIC, PMF_ABOVE_RANGE_KEY, PMF_BELOW_RANGE_KEY
 from metaculus_bot.numeric.config import (
@@ -123,8 +123,18 @@ def _benchmarking_warning(context: BenchmarkingContext = "search") -> str:
     )
 
 
+# Shared by the forecaster window block and the AskNews summarizer. Receipt: docs/prompts.md "EVENT_WINDOW_RULE".
+EVENT_WINDOW_RULE = (
+    "Which events count: the resolution criteria always govern. Where they are silent, use standard practice: "
+    "if the question asks whether an event occurs (e.g. 'will X happen by DATE'), only occurrences after the "
+    "question's open date count; if it measures a cumulative total or a value over a stated period (e.g. a "
+    "full-year count, or a running total reported by a date), everything inside that period counts, including "
+    "anything before the open date."
+)
+
+
 def _forecasting_window_str(question: MetaculusQuestion) -> str:
-    """Return a window-anchor block: open date, today, resolution date, deltas.
+    """Return a window-anchor block: open date, today, resolution date, deltas, and which events count.
 
     Prevents a common failure mode where bots treat questions like "Will a
     nuclear detonation occur in a Japanese city by 2030?" as already-resolved
@@ -132,12 +142,17 @@ def _forecasting_window_str(question: MetaculusQuestion) -> str:
     window is open_time → scheduled_resolution_time, not "all of history".
     Receipt: docs/prompts.md "_forecasting_window_str".
     """
+    return forecasting_window_at(question, datetime.now(UTC))
+
+
+def forecasting_window_at(question: MetaculusQuestion, today: datetime) -> str:
+    """``_forecasting_window_str`` with an explicit "today", for the ablation harness's mid-window replay."""
     # Typed as optional but always populated on a real API question, so a missing one is broken data.
     assert question.open_time is not None, "question.open_time is required"
     assert question.scheduled_resolution_time is not None, "question.scheduled_resolution_time is required"
 
     # tz-aware on both sides: ft 0.2.92 question datetimes are aware, and naive minus aware raises.
-    today = datetime.now(UTC)
+    today = _as_utc(today)
     open_time = _as_utc(question.open_time)
     scheduled_resolution_time = _as_utc(question.scheduled_resolution_time)
     elapsed_days = (today - open_time).days
@@ -148,11 +163,7 @@ def _forecasting_window_str(question: MetaculusQuestion) -> str:
         f"Question opened: {question.open_time.strftime('%Y-%m-%d')} ({elapsed_days} days ago)\n"
         f"Scheduled to resolve: {question.scheduled_resolution_time.strftime('%Y-%m-%d')} "
         f"({remaining_days} days from now)\n"
-        f"Forecasting window: open date → resolution date. "
-        f"Events occurring BEFORE the open date do NOT resolve this question YES "
-        f"unless the resolution criteria explicitly say they count. "
-        f"If the question uses forward-looking language ('will X occur by DATE'), "
-        f"interpret it as asking about the open→resolution window, not all of history."
+        f"Forecasting window: open date → resolution date. {EVENT_WINDOW_RULE}"
     )
 
 
@@ -248,6 +259,8 @@ _SEARCH_LINK_CITATION_CLAUSE = (
 def web_research_prompt(
     question_text: str,
     *,
+    resolution_criteria: str,
+    fine_print: str,
     options: Sequence[str] | None = None,
     is_benchmarking: bool = False,
     citation_style: CitationStyle = "markdown",
@@ -258,6 +271,8 @@ def web_research_prompt(
     Shared by the OpenRouter native-search provider (markdown citations) and
     the Gemini grounding provider (self-cited search links).
     ``options`` is the MC ballot (see ``_mc_options_line``); None on other types.
+    The criteria and fine print ride along because a title alone sent the search to the wrong event
+    (Mantic 717 researched the previous election's coalition): docs/prompts.md "web_research_prompt".
     """
     citation_clause = (
         "Include inline citations [source name](url) for all factual claims"
@@ -315,6 +330,10 @@ Where the question invites reference-class reasoning (how often events like this
 QUESTION:
 {question_text}{options_block}
 
+RESOLUTION CRITERIA (research the exact event, period, units and sources defined here, not a similar or earlier one):
+{resolution_criteria}
+{fine_print}
+
 {footer}"""
 
 
@@ -347,8 +366,7 @@ def asknews_summarizer_prompt(
         {resolution_criteria}
         {fine_print}
 
-        The question opened on {open_date}. Its forecasting window runs from that open date to resolution:
-        only events occurring AFTER {open_date} can trigger resolution.
+        The question opened on {open_date}. {EVENT_WINDOW_RULE}
 
         Below is raw news research. Your task is to produce a DETAILED and COMPREHENSIVE briefing that:
 
@@ -373,8 +391,10 @@ def asknews_summarizer_prompt(
         - NEVER paraphrase numbers, percentages, probabilities, dates, or quantitative data. Copy them EXACTLY.
           BAD:  "The Fed indicated a low-medium recession risk"
           GOOD: "The Fed's March 2025 report estimated a 30% probability of recession by Q4"
-        - Date every fact precisely. Explicitly flag any event that could otherwise be read as already
-          satisfying the resolution criteria: the FIRST time such a flag appears in the briefing, use the
+        - Date every fact precisely. Explicitly flag any event from before {open_date} that does NOT count
+          under the rule above but could otherwise be read as already satisfying the resolution criteria
+          (never flag an event the criteria count, such as a case inside a cumulative period): the FIRST
+          time such a flag appears in the briefing, use the
           full tag "[PRE-WINDOW — occurred before question open, cannot itself satisfy the criteria]";
           for every subsequent occurrence use the short tag "[PRE-WINDOW]" (same meaning). Keep such
           facts in the briefing as base-rate/context evidence.
@@ -1141,6 +1161,25 @@ def _scoring_grid_clause(question: NumericQuestion) -> str:
     return f"Scoring grid: {grid}. A percentile's value selects the bin it falls in, so detail finer than one bin is wasted."
 
 
+def _discrete_bin_edges_clause(question: NumericQuestion) -> str:
+    """Name a linear discrete grid's bin edges, with a worked example on its lowest bin; ``""`` otherwise.
+
+    Models wrote "0 to 1" for zero on a count grid whose zero bin is [-0.5, 0.5], so mass meant for
+    zero landed in bin 1 (Mantic 708: 45% stated, 34% built). Both platforms, since Metaculus discrete
+    questions carry no other grid description. Receipt: docs/prompts.md "_discrete_bin_edges_clause".
+    """
+    if not isinstance(question, DiscreteQuestion) or question.zero_point is not None:
+        return ""
+    width = grid_bin_width(question.lower_bound, question.upper_bound, question.cdf_size)
+    first_edges = [round(question.lower_bound + index * width, 10) for index in range(3)]
+    shown_edges = ", ".join(f"{edge:g}" for edge in first_edges)
+    return (
+        f"Bin edges: {shown_edges}, …, {question.upper_bound:g}. Each bin scores the outcomes between its edges, and "
+        "a percentile just past a bin's upper edge already falls in the next bin: e.g. to give the lowest bin 40%, "
+        f"every percentile up to the 40th must lie between {first_edges[0]:g} and {first_edges[1]:g}."
+    )
+
+
 def _bullet_lines(*sentences: str, indent: int = 8) -> str:
     """Render the non-empty ``sentences`` as ``•`` bullets at ``indent`` spaces, one per line."""
     return "\n".join(f"{' ' * indent}• {sentence}" for sentence in sentences if sentence)
@@ -1233,6 +1272,7 @@ def _numeric_percentile_blocks(question: NumericQuestion) -> _PercentileBlocks:
                 "If your reasoning uses billions/millions/thousands, convert to base unit numerically (e.g., 350B → "
                 "350000000000). No suffixes or scientific notation, just numbers.",
                 _scoring_grid_clause(question),
+                _discrete_bin_edges_clause(question),
             ),
         ]
     )
