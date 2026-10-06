@@ -71,6 +71,53 @@ def _write_status_for_renderer(tmp_path: Path) -> None:
     RUN_STATUS.write(tmp_path / "status.json")
 
 
+def test_source_tokens_render_clean_healthy_run_and_report_a_lost_source(tmp_path: Path) -> None:
+    RUN_STATUS.reset(stage="runtime")
+    for provider_name, sources in (
+        ("resolution_source", {"cmegroup.com": "ok"}),
+        ("financial_data", {"CL=F": "ok"}),
+        ("prediction_market", {"polymarket": "ok(3)"}),
+    ):
+        RUN_STATUS.record_provider_result(
+            name=provider_name,
+            status="ok",
+            error_type=None,
+            details={"sources": sources},
+        )
+    _record_successful_model_and_publication_counts()
+    RUN_STATUS.set_outcome("clean")
+
+    _write_status_for_renderer(tmp_path)
+    healthy_result, healthy_summary_path, healthy_output_path = _render_runtime_status(tmp_path, bot_outcome="success")
+    healthy_summary = healthy_summary_path.read_text(encoding="utf-8")
+
+    assert healthy_result.returncode == 0
+    assert "title=Published OK\n" in healthy_output_path.read_text(encoding="utf-8")
+    assert "provider failure" not in healthy_summary
+    assert "source checks affected" not in healthy_summary
+    assert "- Cause: none recorded." in healthy_summary
+
+    RUN_STATUS.reset(stage="runtime")
+    RUN_STATUS.record_provider_result(
+        name="resolution_source",
+        status="ok",
+        error_type=None,
+        details={"sources": {"cmegroup.com": "error(ungrounded_suppressed)"}},
+    )
+    _record_successful_model_and_publication_counts()
+    RUN_STATUS.set_outcome("degraded")
+
+    _write_status_for_renderer(tmp_path)
+    degraded_result, degraded_summary_path, degraded_output_path = _render_runtime_status(
+        tmp_path, bot_outcome="failure"
+    )
+    degraded_summary = degraded_summary_path.read_text(encoding="utf-8")
+
+    assert degraded_result.returncode == 0
+    assert "Published OK; Resolution source provider failure" in degraded_output_path.read_text(encoding="utf-8")
+    assert "Resolution source provider failure; 1/1 source checks affected" in degraded_summary
+
+
 def test_suppressed_credit_fallback_stays_green_in_exit_ladder_and_renderer(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

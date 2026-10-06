@@ -18,6 +18,7 @@ from typing import Literal, TypedDict
 
 from metaculus_bot.degradation_counters import DegradationSnapshot
 from metaculus_bot.http_status import http_status_from_exception
+from metaculus_bot.research.provider_diagnostics import is_lost_source
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +167,7 @@ def _source_token_evidence(source_status: str) -> tuple[bool, str, int | None]:
         if succeeded < attempted:
             return True, "provider_failure", None
         return True, "unknown", None
-    if source_status == "none" or source_status.startswith("ok("):
+    if not is_lost_source(source_status):
         return False, "unknown", None
 
     reason = (

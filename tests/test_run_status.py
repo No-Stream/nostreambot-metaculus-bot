@@ -4,7 +4,7 @@ import json
 from dataclasses import fields
 
 from metaculus_bot.degradation_counters import DegradationSnapshot
-from metaculus_bot.run_status import COUNT_UNITS, RunStatus
+from metaculus_bot.run_status import COUNT_UNITS, RunStatus, _source_token_evidence
 
 
 def test_run_status_serializes_counts_by_unit_without_error_text(tmp_path) -> None:
@@ -201,6 +201,17 @@ def test_malformed_partial_token_is_not_treated_as_a_healthy_check() -> None:
             "http_status": None,
         }
     ]
+
+
+def test_source_token_evidence_uses_shared_health_rule_and_preserves_lost_causes() -> None:
+    assert _source_token_evidence("ok") == (False, "unknown", None)
+    assert _source_token_evidence("ok(3)") == (False, "unknown", None)
+    assert _source_token_evidence("none") == (False, "unknown", None)
+    assert _source_token_evidence("partial(2/3)") == (True, "provider_failure", None)
+    assert _source_token_evidence("error(ungrounded_suppressed)") == (True, "provider_failure", None)
+    assert _source_token_evidence("http_403") == (True, "http_error", 403)
+    assert _source_token_evidence("error(http_503)") == (True, "http_error", 503)
+    assert _source_token_evidence("timeout") == (True, "timeout", None)
 
 
 def test_free_text_inside_source_token_never_reaches_the_status_payload() -> None:
