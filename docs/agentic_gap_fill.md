@@ -65,9 +65,10 @@ it notes several kinds of target:
 - **RESOLUTION** targets: if the resolution criteria name a specific source,
   metric, or clause, the driver quotes the operative language and current value
   from the authoritative source itself, not from news coverage of it.
-- **TIMING** is folded into every target: the question only resolves on events
-  inside its window, so the driver pins the exact date of each candidate trigger
-  and flags any event that pre-dates the question's open date.
+- **TIMING** is folded into every target: the window rule (`EVENT_WINDOW_RULE`,
+  in the window block the brief embeds) decides which events count, so the driver
+  pins the exact date of each candidate trigger and flags any event that pre-dates
+  the question's open date.
 - **BASE-RATE** targets: if the dry run leaned on a reference class, the driver
   decides whether to look up the real denominator and count. It researches
   conditional or niche or uncertain rates and skips common-knowledge ones.

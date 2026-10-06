@@ -23,6 +23,7 @@ from metaculus_bot.prompts import (
     stacking_multiple_choice_prompt,
     stacking_numeric_prompt,
 )
+from metaculus_bot.research.agentic.driver_prompt import build_system_prompt
 from metaculus_bot.research.gemini_attribution import UNVERIFIED_ATTRIBUTION_MARKER
 from tests.prompt_builders import (
     _binary_prompt_text,
@@ -62,12 +63,13 @@ class TestForecastingWindowAnchor:
     def test_binary_pre_open_rule_is_stated_twice_not_three_times(self) -> None:
         """The pre-open footgun has cost the bot badly, so the rule is deliberately stated
         TWICE: the forecasting-window line ("events before the open date do NOT resolve YES")
-        and the status-quo derivation's demand to name the specific POST-OPEN event. The third
+        and the status-quo derivation's demand to name a qualifying event under that window rule. The third
         statement, a 447-char 0a restatement with the 1945-detonation worked example, was
         retired as pure repetition (its receipt is the window line's own docstring)."""
         result = binary_prompt(_binary_q(), research="r")
         assert prompts_module.EVENT_WINDOW_RULE in result
-        assert "POST-OPEN event" in result
+        assert "name the specific qualifying event (one that counts under the window rule above" in result
+        assert "POST-OPEN event" not in result
         assert "1945" not in result
         assert "pre-dating the open date" not in result
         assert "open timestamp" not in result
@@ -578,7 +580,7 @@ class TestStatusQuoDerivation:
         # in the evening-local/next-day-UTC window.
         assert datetime.now(UTC).strftime("%Y-%m-%d") in prompt
         # Moving off the status quo requires naming a post-open trigger.
-        assert "post-open event" in lowered
+        assert "name the specific qualifying event" in lowered
         # And an explicit commitment about the window.
         assert "no qualifying event has yet occurred inside the window" in lowered
 
@@ -935,3 +937,20 @@ class TestForecastingWindowCarriesEventWindowRule:
         output = prompts_module._forecasting_window_str(_binary_q())
         assert "interpret it as asking about the open→resolution window" not in output
         assert "Events occurring BEFORE the open date do NOT resolve this question YES" not in output
+
+
+class TestPreOpenRulesAgreeWithEventWindowRule:
+    """Every research and forecaster text that talks about pre-open events defers to EVENT_WINDOW_RULE.
+    A blanket "pre-open events cannot count" anywhere (the status-quo steps, the AskNews soft-fail
+    banner, the v2 driver brief) told the model to drop in-period history on a cumulative question."""
+
+    def test_soft_fail_banner_defers_to_the_window_rule(self) -> None:
+        banner = prompts_module.SUMMARIZER_SOFT_FAIL_BANNER
+        assert "apply the window rule in the question block to decide whether a pre-open event counts" in banner
+        assert "unable to satisfy the criteria on their own" not in banner
+
+    def test_v2_driver_brief_states_the_window_rule_shapes(self) -> None:
+        collapsed = " ".join(build_system_prompt("2026-10-06").split())
+        assert "the window rule given below decides which events count" in collapsed
+        assert "a cumulative or stated-period measure counts its whole period" in collapsed
+        assert "the question only resolves on events inside its window" not in collapsed

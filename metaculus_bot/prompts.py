@@ -331,8 +331,10 @@ QUESTION:
 {question_text}{options_block}
 
 RESOLUTION CRITERIA (research the exact event, period, units and sources defined here, not a similar or earlier one):
-{resolution_criteria}
-{fine_print}
+{(resolution_criteria or "(none provided)").strip()}
+
+Fine print (often contains resolution sources):
+{(fine_print or "(none provided)").strip()}
 
 {footer}"""
 
@@ -444,7 +446,7 @@ SUMMARIZER_SOFT_FAIL_BANNER = (
     "> No per-article relevance gate ran, ordering is the raw feed's (oldest-first, "
     "historical before recent), and no [PRE-WINDOW] labels were applied. Date every "
     "fact yourself, check each article against the resolution criteria before using "
-    "it, and treat pre-open events as unable to satisfy the criteria on their own."
+    "it, and apply the window rule in the question block to decide whether a pre-open event counts."
 )
 
 
@@ -740,7 +742,7 @@ def binary_prompt(question: BinaryQuestion, research: str) -> str:
                • State in your own words: "This question is open and unresolved as of {
             _today_str()
         }. If nothing changed between now and resolution, how would it resolve?" Derive the answer from that platform state alone — an open question means the resolution criteria have not yet been satisfied (or a qualifying event is so recent that resolution simply lags — the resolution check in 0a below covers that case).
-               • To move off this status-quo answer, name the specific POST-OPEN event (or concretely expected in-window event) that changes it. Commit explicitly: either write "no qualifying event has yet occurred inside the window" or name the in-window trigger and its date.
+               • To move off this status-quo answer, name the specific qualifying event (one that counts under the window rule above, whether it has occurred or is concretely expected) that changes it. Commit explicitly: either write "no qualifying event has yet occurred inside the window" or name the in-window trigger and its date.
 
             0a) Resolution check
                • Does the research already contain evidence that the resolution condition has been met (or is now impossible to meet)? If so, assign a near-extreme probability (≥95% or ≤5%), briefly explain why, and skip to the final answer. Do not perform full reference-class analysis for questions whose answers are already deterministic from current evidence.
@@ -882,7 +884,7 @@ def multiple_choice_prompt(question: MultipleChoiceQuestion, research: str) -> s
             • State in your own words: "This question is open and unresolved as of {
             _today_str()
         }. If nothing changed between now and resolution, which option would it resolve to?" Derive the answer from that platform state alone — an open question means the resolution criteria have not yet been satisfied (with one exception: if a qualifying event is so recent that resolution simply lags, treat the criteria as effectively met and weight your distribution accordingly).
-            • To move probability mass off that status-quo option, name the specific POST-OPEN event (or concretely expected in-window event) that changes it. Commit explicitly: either write "no qualifying event has yet occurred inside the window" or name the in-window trigger and its date.
+            • To move probability mass off that status-quo option, name the specific qualifying event (one that counts under the window rule above, whether it has occurred or is concretely expected) that changes it. Commit explicitly: either write "no qualifying event has yet occurred inside the window" or name the in-window trigger and its date.
 
         PHASE 1: OUTSIDE VIEW (anchor on historical context above)
 
@@ -1171,14 +1173,19 @@ def _discrete_bin_edges_clause(question: NumericQuestion) -> str:
     if not isinstance(question, DiscreteQuestion) or question.zero_point is not None:
         return ""
     width = grid_bin_width(question.lower_bound, question.upper_bound, question.cdf_size)
-    first_edges = [round(question.lower_bound + index * width, 10) for index in range(3)]
-    shown_edges = ", ".join(f"{edge:g}" for edge in first_edges)
+    first_edges = [_plain_number(question.lower_bound + index * width) for index in range(3)]
+    last_edge = _plain_number(question.upper_bound)
     return (
-        f"Bin edges: {shown_edges}, …, {question.upper_bound:g}. A bin's probability is the share of your "
+        f"Bin edges: {', '.join(first_edges)}, …, {last_edge}. A bin's probability is the share of your "
         "distribution between its edges, and a percentile just past a bin's upper edge already falls in the next "
-        f"bin: e.g. with nothing below {first_edges[0]:g}, giving the lowest bin 40% means every percentile up to "
-        f"the 40th lies between {first_edges[0]:g} and {first_edges[1]:g}."
+        f"bin: e.g. with nothing below {first_edges[0]}, giving the lowest bin 40% means every percentile up to "
+        f"the 40th lies between {first_edges[0]} and {first_edges[1]}."
     )
+
+
+def _plain_number(value: float) -> str:
+    """Positional notation with trailing zeros trimmed, since the prompt forbids scientific notation."""
+    return np.format_float_positional(round(value, 10), trim="-")
 
 
 def _bullet_lines(*sentences: str, indent: int = 8) -> str:
@@ -1575,7 +1582,7 @@ def _continuous_prompt(
             - State in your own words: "This question is open and unresolved as of {_today_str()}. {
             axis.status_quo_question
         }
-            - To move your central estimate off that status-quo value, name the specific POST-OPEN event (or concretely expected in-window event) that changes it. Commit explicitly: either write "no qualifying event has yet occurred inside the window" or name the in-window trigger and its date.
+            - To move your central estimate off that status-quo value, name the specific qualifying event (one that counts under the window rule above, whether it has occurred or is concretely expected) that changes it. Commit explicitly: either write "no qualifying event has yet occurred inside the window" or name the in-window trigger and its date.
 
         (0a) {_RESOLUTION_METRIC_ECHO_HEADER}
 {_resolution_metric_echo_bullets("numeric")}

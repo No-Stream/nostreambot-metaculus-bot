@@ -35,7 +35,7 @@ class TestSharedRulesCarryOver:
     _SHARED = (
         "status-quo derivation",
         "open and unresolved as of",
-        "post-open event",
+        "name the specific qualifying event",
         "no qualifying event has yet occurred inside the window",
         "resolution-metric echo (named-series questions only)",
         "proximity to the primary record",

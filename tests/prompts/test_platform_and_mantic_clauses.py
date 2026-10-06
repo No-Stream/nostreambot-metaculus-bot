@@ -389,6 +389,19 @@ class TestDiscreteBinEdgesClause:
         assert "with nothing below -0.5, giving the lowest bin 40%" in flat
         assert "must lie between" not in flat
 
+    def test_large_magnitude_grid_renders_edges_without_scientific_notation(self) -> None:
+        """The axis block forbids scientific notation, so the edges it shows must not use it either."""
+        question = _pmf_q(
+            cdf_size=36,
+            lower_bound=-50000.0,
+            upper_bound=3450000.0,
+            nominal_lower=0.0,
+            nominal_upper=3400000.0,
+        )
+        flat = " ".join(_numeric_text(question).split())
+        assert "Bin edges: -50000, 50000, 150000, …, 3450000." in flat
+        assert "e+0" not in flat
+
     def test_continuous_numeric_question_has_no_bin_edges_clause(self) -> None:
         flat = " ".join(_numeric_text(_numeric_q()).split())
         assert "Bin edges:" not in flat

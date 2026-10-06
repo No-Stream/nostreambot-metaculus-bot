@@ -1066,6 +1066,11 @@ class TestWebResearchPromptCarriesCriteria:
         assert "Failed and suborbital flights listed in the log count." in prompt
         assert prompt.index("How many launches will the log list?") < prompt.index("RESOLUTION CRITERIA")
         assert "research the exact event, period, units and sources defined here" in prompt
+        assert "Fine print (often contains resolution sources):\nFailed and suborbital flights" in prompt
+
+    def test_empty_criteria_and_fine_print_say_none_provided(self) -> None:
+        prompt = web_research_prompt("Q?", resolution_criteria="", fine_print="")
+        assert prompt.count("(none provided)") == 2
 
     def test_criteria_present_in_both_citation_styles_and_when_benchmarking(self) -> None:
         for citation_style in ("markdown", "search_links"):
