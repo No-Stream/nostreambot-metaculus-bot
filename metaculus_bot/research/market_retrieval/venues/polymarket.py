@@ -15,8 +15,9 @@ renders as its own ``MarketChild`` sub-row instead, and the event's price legs a
 
 **An untouched leg quotes no price.** Gamma's ``outcomePrices`` default is ``["0.5","0.5"]``, so a
 placeholder ("Candidate A", "Party B", "Other") reads 0.5 with zero trading — 155 of the archive's
-1,839 ranked-era child outcomes. ``_priced_or_none`` blanks exactly that shape, everywhere this module reads a
-price, since a fabricated 0.5 that sorts to the front of a render is worse than no row at all.
+1,839 ranked-era child outcomes. ``_priced_or_none`` blanks that shape, and an untraded leg's midpoint
+of a degenerate book, everywhere this module reads a price, since a fabricated price that sorts to the
+front of a render is worse than no row at all.
 
 **ABSENT ``outcomePrices`` is Gamma's OTHER way of saying the same thing, and needs no fix**
 (investigated 2026-08-26 after a QA run flagged the sparsity; closed as no-defect). Re-running this
@@ -41,7 +42,11 @@ from typing import Any
 
 from metaculus_bot.research.market_retrieval.http import http_get_with_backoff, parse_iso, safe_float
 from metaculus_bot.research.market_retrieval.types import MarketChild, MarketMatch
-from metaculus_bot.research.market_retrieval.venues._shared import RULES_TEXT_MAX_CHARS, VENUE_SEARCH_LIMIT
+from metaculus_bot.research.market_retrieval.venues._shared import (
+    NO_PRICE_SPREAD,
+    RULES_TEXT_MAX_CHARS,
+    VENUE_SEARCH_LIMIT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +86,14 @@ def _polymarket_market_volume(market: dict[str, Any]) -> float | None:
     return total_volume if total_volume is not None else safe_float(market.get("volume"))
 
 
-def _priced_or_none(price: float | None, *, total_volume: float | None, open_interest: float | None) -> float | None:
+def _priced_or_none(
+    price: float | None,
+    *,
+    total_volume: float | None,
+    open_interest: float | None,
+    bid: float | None,
+    ask: float | None,
+) -> float | None:
     """Gamma's ``outcomePrices`` default is ``["0.5","0.5"]``, so an untouched leg quotes exactly 0.5.
 
     Returned as ``None`` — the leg has no price, and rendering 0.5 told a forecaster the crowd was
@@ -94,12 +106,22 @@ def _priced_or_none(price: float | None, *, total_volume: float | None, open_int
     open-interest arguments are for. Both are consulted rather than volume alone because a Gamma leg
     can omit ``volumeNum``/``volume`` entirely (59 archived children) while still carrying open
     interest.
+
+    An untraded leg is also priced at its book's MIDPOINT once anyone posts a quote, so a degenerate
+    book manufactures a price just as the default does: on 2026-10-06 a live event quoted 0.2495 off
+    a 0.001/0.498 book and rendered ``Ken Sema 0.50 [0.00-0.99]``. An untraded leg whose book is at
+    least ``NO_PRICE_SPREAD`` wide is refused the same way Kalshi refuses that midpoint. A traded leg
+    keeps its price on any book, because Gamma then reports the last trade.
     """
-    if price is None or price != POLYMARKET_UNTOUCHED_PRICE:
-        return price
+    if price is None:
+        return None
     if (total_volume or 0.0) > 0.0 or (open_interest or 0.0) > 0.0:
         return price
-    return None
+    if price == POLYMARKET_UNTOUCHED_PRICE:
+        return None
+    if bid is not None and ask is not None and ask - bid >= NO_PRICE_SPREAD:
+        return None
+    return price
 
 
 def polymarket_event_children(markets: Sequence[dict[str, Any]]) -> tuple[MarketChild, ...]:
@@ -128,7 +150,9 @@ def polymarket_event_children(markets: Sequence[dict[str, Any]]) -> tuple[Market
         total_volume = _polymarket_market_volume(market)
         open_interest = safe_float(market.get("openInterest"))
         raw_price = _prob_from_prices(market.get("outcomePrices"))
-        price = _priced_or_none(raw_price, total_volume=total_volume, open_interest=open_interest)
+        bid = safe_float(market.get("bestBid"))
+        ask = safe_float(market.get("bestAsk"))
+        price = _priced_or_none(raw_price, total_volume=total_volume, open_interest=open_interest, bid=bid, ask=ask)
         children.append(
             MarketChild(
                 title=str(title),
@@ -137,8 +161,8 @@ def polymarket_event_children(markets: Sequence[dict[str, Any]]) -> tuple[Market
                 open_interest=open_interest,
                 is_resolved=bool(market.get("closed")) or bool(market.get("resolved")),
                 close_time=parse_iso(market.get("endDate") or market.get("end_date_iso") or ""),
-                quote_low=safe_float(market.get("bestBid")),
-                quote_high=safe_float(market.get("bestAsk")),
+                quote_low=bid,
+                quote_high=ask,
                 price_withheld=price is None and raw_price is not None,
             )
         )
@@ -192,7 +216,7 @@ def _polymarket_single_market_legs(
     # legs as finally resolved (event-level fallbacks included) rather than the market's own
     # fields, so a placeholder leg inside a genuinely traded event keeps its price.
     raw_price = _prob_from_prices(market.get("outcomePrices"))
-    implied = _priced_or_none(raw_price, total_volume=total_volume, open_interest=open_interest)
+    implied = _priced_or_none(raw_price, total_volume=total_volume, open_interest=open_interest, bid=bid, ask=ask)
     return _EventLegs(
         implied=implied,
         bid=bid,
@@ -284,14 +308,16 @@ def _polymarket_market_match(market: dict[str, Any], rank: int) -> MarketMatch:
     # field as the event branch, so it takes the same untouched-default guard — a placeholder row
     # reaching the pool through this path is the same fabrication by another route.
     raw_price = _prob_from_prices(market.get("outcomePrices"))
-    implied = _priced_or_none(raw_price, total_volume=total_volume, open_interest=open_interest)
+    bid = safe_float(market.get("bestBid"))
+    ask = safe_float(market.get("bestAsk"))
+    implied = _priced_or_none(raw_price, total_volume=total_volume, open_interest=open_interest, bid=bid, ask=ask)
     return MarketMatch(
         platform="polymarket",
         market_title=market.get("question") or market.get("title") or "",
         market_url=f"https://polymarket.com/market/{slug}" if slug else "",
         implied_prob_yes=implied,
-        bid=safe_float(market.get("bestBid")),
-        ask=safe_float(market.get("bestAsk")),
+        bid=bid,
+        ask=ask,
         spread=None,
         volume_24h=safe_float(market.get("volume24hr")),
         close_time=parse_iso(market.get("endDate") or ""),

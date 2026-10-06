@@ -12,6 +12,7 @@ import pytest
 
 from metaculus_bot.prompts import (
     _CONTINUOUS_SCORING_RULE,
+    _DISCRETE_SCORING_RULE,
     _MANTIC_OUT_OF_RANGE_RATE_DATE,
     _MANTIC_OUT_OF_RANGE_RATE_QUANTITY,
     _MANTIC_SCORING_SENTENCE,
@@ -177,6 +178,22 @@ class TestContinuousScoringRule:
 
     def test_the_constant_carries_no_em_dash(self) -> None:
         assert "—" not in _CONTINUOUS_SCORING_RULE
+        assert "—" not in _DISCRETE_SCORING_RULE
+
+    @pytest.mark.parametrize("page_url", [METACULUS_PAGE_URL, MANTIC_PAGE_URL])
+    def test_a_discrete_question_is_told_it_is_scored_on_the_outcomes_bin(self, page_url: str) -> None:
+        """Both platforms score a discrete question on the bin the outcome lands in; the density-at-a-point
+        sentence was wrong for every Metaculus discrete question and every Mantic quantity."""
+        question = _pmf_q(
+            cdf_size=12, lower_bound=-0.5, upper_bound=10.5, nominal_lower=0.0, nominal_upper=10.0, page_url=page_url
+        )
+        stacked = stacking_numeric_prompt(
+            question, research="r", base_predictions=["a1"], lower_bound_message="l", upper_bound_message="u"
+        )
+        for prompt in (_numeric_text(question), stacked):
+            flat = _flat(prompt)
+            assert flat.count(_flat(_DISCRETE_SCORING_RULE)) == 1
+            assert "log density score" not in flat
 
 
 class TestSeriesVariantClause:

@@ -1000,11 +1000,13 @@ what survived a budget it could not see, and price-descending scrambles threshol
 ladders. And each venue BLANKS its own manufactured ~0.50 default at parse time, so
 a fabricated price reaches neither the ranker nor the render nor a disclosure figure
 (192 of 1,839 archived ranked-era child outcomes were in that class). Kalshi blanks
-on a book at least `KALSHI_NO_PRICE_SPREAD` wide: an empty book is
+on a book at least `NO_PRICE_SPREAD` wide (`venues/_shared.py`): an empty book is
 `0.0000`/`1.0000`, whose midpoint is a synthetic $0.50 nobody quoted, and the cell
 then renders the raw range `0.00-1.00`, which cannot be read as a point
-probability. Polymarket blanks on Gamma's `["0.5","0.5"]` placeholder when the leg
-carries no volume and no open interest. Manifold blanks (`_priced_or_none`) an
+probability. Polymarket blanks an untraded leg (no volume and no open interest) on
+Gamma's `["0.5","0.5"]` placeholder, and also on a book at least `NO_PRICE_SPREAD`
+wide, because Gamma prices an untraded leg at its book's midpoint (a live
+2026-10-06 leg quoted 0.2495 off a 0.001/0.498 book). Manifold blanks (`_priced_or_none`) an
 answer sitting at its untouched 0.5 prior with zero volume, in the ranker's
 candidate segment as well as in the children, where a defaulted price had been
 distorting selection upstream of the render.

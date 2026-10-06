@@ -672,7 +672,7 @@ class TestKalshiEventDerivations:
         ],
     )
     def test_the_no_price_spread_threshold_is_inclusive(self, bid: str, ask: str, priced: bool) -> None:
-        """`KALSHI_NO_PRICE_SPREAD` is the weakest number in this change — calibrated on eleven live
+        """`NO_PRICE_SPREAD` is the weakest number in this change — calibrated on eleven live
         strikes across the committed captures, whose real spreads run 0.01 to 0.10, so 0.40 sits 4x above
         the widest observed one. Its exact boundary is pinned here because the run-log `withheld=` field
         is what will retune it, and a silently-shifted comparison would make that measurement
@@ -706,7 +706,7 @@ class TestKalshiEventDerivations:
 
         for market in live:
             spread = float(market["yes_ask_dollars"]) - float(market["yes_bid_dollars"])
-            assert spread < venues.kalshi.KALSHI_NO_PRICE_SPREAD, market.get("yes_sub_title")
+            assert spread < venues.kalshi.NO_PRICE_SPREAD, market.get("yes_sub_title")
             assert venues.kalshi_strike_price(market) is not None, market.get("yes_sub_title")
 
     def test_the_dollar_conversion_deliberately_does_not_take_the_no_price_rule(self) -> None:
@@ -1195,6 +1195,69 @@ class TestPolymarket:
         assert rows is not None
         assert rows[0].implied_prob_yes is None
         assert rows[0].price_withheld is True
+
+    def test_an_untraded_leg_on_a_degenerate_book_reports_no_price(self) -> None:
+        """Gamma prices an untraded leg at its book's midpoint, not only at the exact 0.5 default. A live
+        2026-10-06 Conference League "Most Assists" event quoted Jens Jonsson at `0.2495` off a
+        0.001/0.498 book with no volume, OI or trade, and rendered legs like `Ken Sema 0.50 [0.00-0.99]`:
+        the same manufactured price the exact-0.5 guard exists for, by another number."""
+        market = {
+            "groupItemTitle": "Jens Jonsson",
+            "outcomePrices": json.dumps(["0.2495", "0.7505"]),
+            "bestBid": 0.001,
+            "bestAsk": 0.498,
+        }
+
+        child = venues.polymarket_event_children([market])[0]
+
+        assert child.implied_prob_yes is None
+        assert child.price_withheld is True
+        assert (child.quote_low, child.quote_high) == (0.001, 0.498)
+        traded = {"groupItemTitle": "Carlo Holse", "outcomePrices": json.dumps(["0.3"]), "volumeNum": 542.0}
+        event = {"title": "Most Assists", "slug": "most-assists", "markets": [market, traded]}
+        rows = venues.parse_polymarket_matches({"events": [event]}, width=60)
+        assert rows is not None
+        assert _rendered_child_prices(MarketSnapshot(matches=rows)) == ["0.30", "0.00-0.50"]
+
+    def test_an_untraded_leg_on_a_real_book_keeps_its_midpoint(self) -> None:
+        """A two-sided book narrower than `NO_PRICE_SPREAD` is a quote somebody posted, traded or not
+        (the same event's Takumi Minamino: 0.0355 off 0.001/0.07)."""
+        market = {
+            "groupItemTitle": "Takumi Minamino",
+            "outcomePrices": json.dumps(["0.0355"]),
+            "bestBid": 0.001,
+            "bestAsk": 0.07,
+        }
+
+        child = venues.polymarket_event_children([market])[0]
+
+        assert child.implied_prob_yes == pytest.approx(0.0355)
+        assert child.price_withheld is False
+
+    def test_a_traded_leg_on_a_wide_book_keeps_its_price(self) -> None:
+        """Once a leg has traded, Gamma's price on a wide book is the last trade, which is a real price."""
+        market = {
+            "groupItemTitle": "Orbelin Pineda",
+            "outcomePrices": json.dumps(["0.02"]),
+            "bestBid": 0.001,
+            "bestAsk": 0.6,
+            "volumeNum": 394.56,
+        }
+
+        child = venues.polymarket_event_children([market])[0]
+
+        assert child.implied_prob_yes == pytest.approx(0.02)
+
+    def test_parent_rows_take_the_degenerate_book_guard(self) -> None:
+        """Both parent-row paths (single-market event, top-level markets fallback) read the same price."""
+        market = {"question": "Long shot?", "outcomePrices": json.dumps(["0.2495"]), "bestBid": 0.001, "bestAsk": 0.498}
+        event = {"title": "Long shot?", "slug": "long-shot", "markets": [market]}
+
+        for payload in ({"events": [event]}, {"markets": [market]}):
+            rows = venues.parse_polymarket_matches(payload, width=60)
+            assert rows is not None
+            assert rows[0].implied_prob_yes is None
+            assert rows[0].price_withheld is True
 
     def test_a_settled_leg_is_marked_resolved_in_the_array_order(self) -> None:
         """A nested Polymarket market can individually be closed while the event stays open (Kalshi

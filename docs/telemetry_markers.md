@@ -358,8 +358,8 @@ end-anchored and a separate spec keeps this harvester change purely additive.
 
 Two fields carry the questions this exists to answer. `withheld` counts the prices the venue
 parsers refused as manufactured: an empty Kalshi book, a Polymarket placeholder leg at Gamma's
-`["0.5","0.5"]` default, or a Manifold answer at its untouched prior. The Kalshi half of that is
-gated on `KALSHI_NO_PRICE_SPREAD`, a threshold calibrated on eleven fixture strikes, so its prod
+`["0.5","0.5"]` default or an untraded Polymarket leg on a degenerate book, or a Manifold answer at
+its untouched prior. The Kalshi and degenerate-book halves of that are gated on `NO_PRICE_SPREAD`, a threshold calibrated on eleven fixture strikes, so its prod
 incidence has to be a query rather than a guess. `max_stage` and `ladder_chars` say whether the
 ladder's section allowance binds on real slates (0 means every outcome named, 99 the per-family
 hard bound).

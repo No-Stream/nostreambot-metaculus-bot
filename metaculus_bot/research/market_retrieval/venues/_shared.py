@@ -19,6 +19,17 @@ VENUE_SEARCH_LIMIT = 10
 # this bound only stops a pathological row from being carried around.
 RULES_TEXT_MAX_CHARS = 2000
 
+# A book this wide does not imply a price, so a venue reports none rather than its midpoint:
+# `kalshi_strike_price`, and Polymarket's untraded legs, whose Gamma price IS that midpoint (a live
+# 0.001/0.498 book quoted 0.2495). Calibration is thin and deliberately generous: the only committed
+# live-book captures quote real spreads of 0.01-0.10 (11 live strikes across the three Kalshi
+# fixtures), an empty book is `yes_bid 0.0000` / `yes_ask 1.0000` (spread 1.0), and the Kalshi module
+# documents empty books as 1,063 of 1,066 settled strikes versus 44 of 71,413 live ones. 0.40 sits 4x
+# above the widest observed real spread, so it fires on a degenerate book and not on a genuinely wide
+# quote. The `MARKET_CHILD_RENDER` marker's `withheld=` field reports how often it fires in prod, so
+# this can be tightened on measured data instead of guesswork.
+NO_PRICE_SPREAD = 0.40
+
 
 def child_render_order_key(child: MarketChild) -> tuple[bool, float]:
     """The FULL-ROW presentation order for child outcomes: open first, then price-descending.

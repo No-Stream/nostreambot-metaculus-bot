@@ -28,14 +28,17 @@ why the Kalshi catalogue pull reports ``complete`` rather than writing ``_KALSHI
 from __future__ import annotations
 
 from metaculus_bot.research.market_retrieval.venues import kalshi, manifold, polymarket, predictit
-from metaculus_bot.research.market_retrieval.venues._shared import RULES_TEXT_MAX_CHARS, VENUE_SEARCH_LIMIT
+from metaculus_bot.research.market_retrieval.venues._shared import (
+    NO_PRICE_SPREAD,
+    RULES_TEXT_MAX_CHARS,
+    VENUE_SEARCH_LIMIT,
+)
 from metaculus_bot.research.market_retrieval.venues.kalshi import (
     KALSHI_EVENT_FIELDS,
     KALSHI_EVENTS_URL,
     KALSHI_MARKET_FIELDS,
     KALSHI_NESTED_HEAD_ONLY_FIELDS,
     KALSHI_NESTED_TAIL_FIELDS,
-    KALSHI_NO_PRICE_SPREAD,
     KALSHI_PAGE_MAX_ATTEMPTS,
     KALSHI_PAGE_MAX_BYTES,
     KALSHI_RESOLVED_STATUSES,
@@ -102,7 +105,7 @@ __all__ = [  # noqa: RUF022  # grouped by venue with section comments, not alpha
     "KALSHI_NESTED_TAIL_FIELDS",
     "KALSHI_PAGE_MAX_ATTEMPTS",
     "KALSHI_PAGE_MAX_BYTES",
-    "KALSHI_NO_PRICE_SPREAD",
+    "NO_PRICE_SPREAD",
     "KALSHI_RESOLVED_STATUSES",
     "kalshi_event_match",
     "kalshi_event_rules",

@@ -1012,6 +1012,20 @@ _CONTINUOUS_SCORING_RULE = (
     "report your true uncertainty and resist overconfident, narrow shapes."
 )
 
+# The discrete twin: both platforms score a discrete question on the outcome's bin, not a density at a point.
+_DISCRETE_SCORING_RULE = (
+    "Discrete questions are scored on the bin the outcome falls in: the score is the logarithm of the probability "
+    "your distribution puts in that bin. Mass beyond an open bound is scored as its own outcome against a reference "
+    "of a few percent, so starving it is heavily punished. This is a proper scoring rule: to maximize expected "
+    "score, report your true uncertainty and resist overconfident, narrow shapes."
+)
+
+
+def _percentile_scoring_rule(question: NumericQuestion) -> str:
+    """``_DISCRETE_SCORING_RULE`` for a discrete grid, ``_CONTINUOUS_SCORING_RULE`` otherwise."""
+    return _DISCRETE_SCORING_RULE if isinstance(question, DiscreteQuestion) else _CONTINUOUS_SCORING_RULE
+
+
 # Per-bin scoring: mass on a bin the criteria exclude is lost (651's weekend days, -14.4 points), so say so.
 _PER_BIN_SCORING_RULE = (
     "This question is scored on the bin the outcome falls in: the score is the logarithm of the probability you "
@@ -1385,7 +1399,7 @@ def _percentile_elicitation(view: NumericQuestion) -> _Elicitation:
         spread_short="that width",
         market_anchor_tail="your percentiles should center on it",
         axis_block=blocks.axis_block,
-        scoring_rule=_CONTINUOUS_SCORING_RULE,
+        scoring_rule=_percentile_scoring_rule(view),
         multi_resolution_rule=_MULTI_RESOLUTION_CONTINUOUS_RULE,
         out_of_range_clause=_mantic_out_of_range_clause(
             view, date_rate=_MANTIC_OUT_OF_RANGE_RATE_DATE, quantity_rate=_MANTIC_OUT_OF_RANGE_RATE_QUANTITY
@@ -1950,7 +1964,7 @@ def stacking_numeric_prompt(
         • If your reasoning uses B/M/k, convert to base unit numerically (e.g., 350B → 350000000000). No suffixes.
 
         ── Scoring Rule ──
-        {_CONTINUOUS_SCORING_RULE}
+        {_percentile_scoring_rule(question)}
 
         ── Intelligence Briefing ────────────────────────────────
         {research}
