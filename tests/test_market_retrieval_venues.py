@@ -1073,6 +1073,17 @@ class TestPolymarket:
         assert rows is not None
         assert [child.title for child in rows[0].children] == ["1 (25 bps)", "0 (0 bps)"]
 
+    def test_nested_market_children_keep_their_own_bid_ask_book(self, captured_payloads: dict[str, Any]) -> None:
+        event = captured_payloads["polymarket_search"]["events"][0]
+        markets = event["markets"]
+        assert len(markets) > 1
+
+        children = venues.polymarket_event_children(markets)
+
+        assert [(child.quote_low, child.quote_high) for child in children] == [
+            (safe_float(market.get("bestBid")), safe_float(market.get("bestAsk"))) for market in markets
+        ]
+
     def test_an_untouched_placeholder_leg_reports_no_price(self) -> None:
         """Gamma's `outcomePrices` default is `["0.5","0.5"]`, so a placeholder leg quotes exactly 0.5
         with nothing behind it — 155 of the archive's 1,839 ranked-era child outcomes.
@@ -2164,6 +2175,16 @@ class TestPredictIt:
         assert match.implied_prob_yes is None, "a ballot has no single probability"
         assert [(child.title, child.implied_prob_yes) for child in match.children] == [
             (contract["name"], pytest.approx(contract["lastTradePrice"])) for contract in market["contracts"]
+        ]
+
+    def test_each_contract_child_keeps_its_yes_bid_ask_book(self, captured_payloads: dict[str, Any]) -> None:
+        market = captured_payloads["predictit_all"]["markets"][0]
+
+        children = venues.predictit_contract_children(market["contracts"])
+
+        assert [(child.quote_low, child.quote_high) for child in children] == [
+            (safe_float(contract.get("bestSellYesCost")), safe_float(contract.get("bestBuyYesCost")))
+            for contract in market["contracts"]
         ]
 
     def test_the_contract_children_keep_ballot_order(self, captured_payloads: dict[str, Any]) -> None:

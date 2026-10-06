@@ -116,8 +116,9 @@ def polymarket_event_children(markets: Sequence[dict[str, Any]]) -> tuple[Market
     the render budget, and Gamma's array order is what an event's outcome ladder means something in.
 
     A leg at Gamma's untouched ``0.5`` default reports no price (``_priced_or_none``) and says so via
-    ``price_withheld``. A market with no usable title is dropped rather than rendered as a blank row;
-    it would spend a child slot saying nothing.
+    ``price_withheld``. Each child's ``bestBid`` and ``bestAsk`` travel with its probability when
+    Gamma publishes both. A market with no usable title is dropped rather than rendered as a blank
+    row; it would spend a child slot saying nothing.
     """
     children: list[MarketChild] = []
     for market in markets:
@@ -136,6 +137,8 @@ def polymarket_event_children(markets: Sequence[dict[str, Any]]) -> tuple[Market
                 open_interest=open_interest,
                 is_resolved=bool(market.get("closed")) or bool(market.get("resolved")),
                 close_time=parse_iso(market.get("endDate") or market.get("end_date_iso") or ""),
+                quote_low=safe_float(market.get("bestBid")),
+                quote_high=safe_float(market.get("bestAsk")),
                 price_withheld=price is None and raw_price is not None,
             )
         )

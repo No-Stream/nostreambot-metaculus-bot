@@ -159,10 +159,12 @@ class MarketChild:
 
     The last three fields are the 2026-08-25 no-manufactured-price change:
 
-    - ``quote_low`` / ``quote_high`` are the venue's own two-sided book, carried so a blanked price
-      can still say WHAT the book was. That distinguishes "nobody is quoting this rung"
-      (``0.00-1.00``) from "quoted, very wide" (``0.30-1.00``), which ``implied_prob_yes is None``
-      alone cannot. Only Kalshi publishes a per-strike book, so only Kalshi fills them.
+    - ``quote_low`` / ``quote_high`` are the venue's own two-sided book, carried so the renderer can
+      show it beside a price or by itself when the price is unusable. That distinguishes "nobody is
+      quoting this rung" (``0.00-1.00``) from "quoted, very wide" (``0.30-1.00``), which
+      ``implied_prob_yes is None`` alone cannot. Kalshi, Polymarket and PredictIt populate these
+      fields from their available child quote legs; a range renders only when both sides are present.
+      Other venues leave them empty.
     - ``price_withheld`` marks a price this repo REFUSED because the venue manufactured it — a
       Kalshi strike with no real book, a Polymarket placeholder leg at Gamma's ``["0.5","0.5"]``
       default, a Manifold answer sitting at its untouched 0.5 prior with zero volume. Separate from

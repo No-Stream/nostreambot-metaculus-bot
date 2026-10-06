@@ -113,10 +113,11 @@ MARKET_SNAPSHOT_REALISTIC_RENDER_CHAR_BUDGET = 8_300
 #
 # Re-derived four times, and every purchase is on the record. From 1,700 to 1,850: a `prob` cell may hold
 # a scalar market's value, and a forecaster told to anchor on that column needs the legend to say so.
-# From 1,850 to 2,400: the ladder row and the `LO-HI` quote-range cell are two new cell shapes, and
-# the legend's contract is that it names every shape a cell can hold — an unexplained `+8 settled at
-# 1.00` group or an unexplained `0.00-1.00` price is one a forecaster guesses at, and the guess the
-# range replaces was "the market says 50/50". Each is one sentence, cut to its contract. The third
+# From 1,850 to 2,400: the ladder row and the two-sided quote forms (`PRICE (bid-ask LO-HI)` and
+# range-only `LO-HI`) are new cell shapes, and the legend's contract is that it names every shape a
+# cell can hold — an unexplained `+8 settled at 1.00` group or an unexplained `0.00-1.00` price is
+# one a forecaster guesses at, and the guess the range replaces was "the market says 50/50". Each
+# is one sentence, cut to its contract. The third
 # purchase is the `+N off certainty by under X` group: a cumulative threshold ladder collapses BOTH of
 # its tails, so a forecaster reading that label against a rung it knows trades at 0.99 needs to be told
 # the figure is a distance from certainty rather than a price. The fourth is the `close` column, at
@@ -153,6 +154,8 @@ def _row(
     volume: float | None = 12345.0,
     oi: float | None = 6789.0,
     bettors: int | None = None,
+    bid: float | None = None,
+    ask: float | None = None,
     resolved: bool = False,
     close: datetime | None = None,
     rules: str = "rules text",
@@ -167,8 +170,8 @@ def _row(
         market_title=title,
         market_url=url,
         implied_prob_yes=prob,
-        bid=None,
-        ask=None,
+        bid=bid,
+        ask=ask,
         spread=None,
         volume_24h=None,
         close_time=close,
@@ -292,6 +295,60 @@ class TestColumns:
         assert cells["status"] == "open"
         assert cells["relation"] == "same_quantity_other_cut"
         assert cells["why"] == "same BLS series, different month"
+
+    def test_kalshi_price_shows_a_wide_but_usable_book(self) -> None:
+        row = _row("kalshi", prob=0.425, bid=0.24, ask=0.61)
+
+        cells = _table_rows(render_snapshot(MarketSnapshot(matches=[row])))[0]
+
+        assert cells["prob"] == "0.42 (bid-ask 0.24-0.61)"
+
+    def test_kalshi_price_shows_a_tight_book(self) -> None:
+        row = _row("kalshi", prob=0.53, bid=0.52, ask=0.54)
+
+        cells = _table_rows(render_snapshot(MarketSnapshot(matches=[row])))[0]
+
+        assert cells["prob"] == "0.53 (bid-ask 0.52-0.54)"
+
+    def test_a_book_without_a_usable_price_remains_a_range_only(self) -> None:
+        row = _row("kalshi", prob=None, bid=0.24, ask=0.64)
+
+        cells = _table_rows(render_snapshot(MarketSnapshot(matches=[row])))[0]
+
+        assert cells["prob"] == "0.24-0.64"
+
+    def test_a_venue_price_without_a_book_stays_price_only(self) -> None:
+        row = _row("manifold", prob=0.42)
+
+        cells = _table_rows(render_snapshot(MarketSnapshot(matches=[row])))[0]
+
+        assert cells["prob"] == "0.42"
+
+    def test_a_multi_row_table_keeps_consistent_markdown_columns(self) -> None:
+        rows = [
+            _row("kalshi", title="Kalshi market", prob=0.425, bid=0.24, ask=0.61),
+            _row("polymarket", title="Polymarket market", prob=0.53, bid=0.52, ask=0.54),
+            _row("manifold", title="Manifold market", prob=0.42),
+            _row(
+                "kalshi",
+                title="Kalshi strike family",
+                prob=None,
+                children=(MarketChild(title="strike", implied_prob_yes=0.40, quote_low=0.35, quote_high=0.45),),
+            ),
+        ]
+
+        rendered = render_snapshot(MarketSnapshot(matches=rows))
+        table_lines = [line for line in rendered.splitlines() if line.startswith("|")]
+
+        assert len(table_lines) == len(rows) + 3
+        assert {line.count("|") for line in table_lines} == {len(TABLE_COLUMNS) + 1}
+        assert [cells["prob"] for cells in _table_rows(rendered)] == [
+            "0.42 (bid-ask 0.24-0.61)",
+            "0.53 (bid-ask 0.52-0.54)",
+            "0.42",
+            "-",
+            "0.40 (bid-ask 0.35-0.45)",
+        ]
 
     def test_missing_values_render_as_dashes(self) -> None:
         cells = _table_rows(render_snapshot(MarketSnapshot(matches=[_row(prob=None, volume=None, oi=None)])))[0]
@@ -721,6 +778,10 @@ class TestLegend:
         assert "RESOLVED" in MARKET_SIGNAL_LEGEND
         assert "likely-relevant" not in MARKET_SIGNAL_LEGEND
         assert "verify-carefully" not in MARKET_SIGNAL_LEGEND
+
+    def test_the_legend_explains_prices_with_a_bid_ask_range(self) -> None:
+        assert "(bid-ask LO-HI)" in MARKET_SIGNAL_LEGEND
+        assert "LO-HI" in MARKET_SIGNAL_LEGEND
 
     def test_the_legend_explains_the_sub_row_glyph(self) -> None:
         """A glyph a forecaster has never seen, in a column that otherwise names a venue, has to be
