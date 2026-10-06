@@ -3903,3 +3903,27 @@ class TestMarkerNotInsideNoqaDirective:
             "into its own trailing comment (`# noqa: <codes>  # HARNESS-SCAN-EXEMPT-<kind>  # <reason>`):\n"
             + "\n".join(offenders)
         )
+
+
+# Verbatim formatter shape from numeric/roundtrip.py.
+PERCENTILE_ROUNDTRIP_LINE = PFX + (
+    "PERCENTILE_ROUNDTRIP: question=700 model=test member qtype=discrete platform=metaculus "
+    "max_abs_drift=0.100981224 p=0.200000000 v=0 cdf_at_v=0.099018776 point_count=13"
+)
+
+
+class TestPercentileRoundtrip:
+    def test_fields_and_question_identity(self) -> None:
+        record = _parse_one(PERCENTILE_ROUNDTRIP_LINE)
+        assert record["marker"] == "percentile_roundtrip"
+        assert record["qid"] == 700
+        assert record["qid_kind"] == "question_id"
+        assert record["model"] == "test member"
+        assert record["qtype"] == "discrete"
+        assert record["platform"] == "metaculus"
+        assert record["max_abs_drift"] == pytest.approx(0.100981224)
+        assert record["p"] == 0.2
+        assert record["v"] == 0
+        assert record["cdf_at_v"] == pytest.approx(0.099018776)
+        assert record["point_count"] == 13
+        assert "stage" not in record
