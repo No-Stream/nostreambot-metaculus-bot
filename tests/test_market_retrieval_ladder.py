@@ -804,23 +804,24 @@ class TestQuoteRangeCell:
         assert cells[0]["prob"] == "0.00-1.00"
         assert cells[0]["prob"] == cells[2]["prob"], "the parent and the sub-row must say it the same way"
 
-    def test_a_priced_row_never_shows_its_book_instead_of_its_price(self) -> None:
+    def test_a_priced_row_leads_with_its_price_and_shows_its_book_beside_it(self) -> None:
         """The control: every Kalshi row carries a two-sided book, so a range that outranked a real
-        price would replace every price in the table with a range."""
+        price would replace every price in the table with a range. The price stays first; the book
+        rides beside it so a wide one (a 24-61 book behind a 0.42 midpoint) is visible."""
         parent = _row(title="Kalshi binary", prob=0.68)
         parent.bid, parent.ask = 0.66, 0.70
 
         cells = _table_rows(render_snapshot(MarketSnapshot(matches=[parent])))
 
-        assert cells[0]["prob"] == "0.68"
+        assert cells[0]["prob"] == "0.68 (bid-ask 0.66-0.70)"
 
     def test_the_legend_names_both_new_cell_shapes(self) -> None:
         """A legend that omits a shape a cell can hold teaches forecasters to guess at it, and the
         guess this range replaces was "the market says 50/50"."""
         rendered = render_snapshot(MarketSnapshot(matches=[_row()]))
 
-        assert "written `LO-HI`" in rendered
-        assert "not as 50/50" in rendered
+        assert "`PRICE (bid-ask LO-HI)`" in rendered
+        assert "`LO-HI` alone means there is a book but no usable price, not 50/50" in rendered
         assert "[remaining N]" in rendered
         assert "counted set with its summed price" in rendered
 

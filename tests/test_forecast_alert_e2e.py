@@ -284,12 +284,8 @@ def test_partial_manifold_detail_failure_remains_clean_and_renders_known_success
     status = _read_runtime_status(status_path)
     assert status["outcome"] == "clean"
     assert all(cause["component"] != "manifold_detail" for cause in status["causes"])
-    assert any(
-        cause["component"] == "resolution_source"
-        and cause["unit"] == "source_checks"
-        and cause["affected"] == cause["attempted"] == 1
-        for cause in status["causes"]
-    )
+    # The offline resolution source fetch succeeds with a bare "ok" token, which is healthy.
+    assert all(cause["component"] != "resolution_source" for cause in status["causes"])
     assert ("wc26brazil", 503) in detail_responses
     assert any(status_code == 200 and market_id != "wc26brazil" for market_id, status_code in detail_responses)
     assert status["models"]["attempted"] == status["models"]["succeeded"] == 3
@@ -300,8 +296,7 @@ def test_partial_manifold_detail_failure_remains_clean_and_renders_known_success
 
     summary, output, annotation = _render_notification(tmp_path, status_path, outcome="success")
     assert "Forecast run: Clean" in summary
-    assert "Resolution source provider failure; 1/1 source checks affected" in summary
-    assert "Clean under existing alert policy" in summary
+    assert "Resolution source provider failure" not in summary
     assert "Models: 3/3 succeeded" in summary
     assert "Forecasts: 1/1 succeeded" in summary
     assert "Comments: 1/1 succeeded" in summary
