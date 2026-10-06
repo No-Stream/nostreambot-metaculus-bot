@@ -813,17 +813,36 @@ class TestQuoteRangeCell:
 
         cells = _table_rows(render_snapshot(MarketSnapshot(matches=[parent])))
 
-        assert cells[0]["prob"] == "0.68 (bid-ask 0.66-0.70)"
+        assert cells[0]["prob"] == "0.68 [0.66-0.70]"
 
     def test_the_legend_names_both_new_cell_shapes(self) -> None:
         """A legend that omits a shape a cell can hold teaches forecasters to guess at it, and the
         guess this range replaces was "the market says 50/50"."""
         rendered = render_snapshot(MarketSnapshot(matches=[_row()]))
 
-        assert "`PRICE (bid-ask LO-HI)`" in rendered
-        assert "`LO-HI` alone means there is a book but no usable price, not 50/50" in rendered
+        assert "`PRICE [LO-HI]`" in rendered
+        assert "`LO-HI` alone means a book but no usable price, not 50/50" in rendered
         assert "[remaining N]" in rendered
         assert "counted set with its summed price" in rendered
+
+    def test_a_compacted_outcome_keeps_its_price_without_its_book(self) -> None:
+        children = tuple(
+            MarketChild(
+                title=f"outcome {index}",
+                implied_prob_yes=0.99 - 0.004 * index,
+                quote_low=0.90,
+                quote_high=1.00,
+            )
+            for index in range(10)
+        )
+        matches = [_row(title=f"family {index}", children=children) for index in range(RENDER_BUDGET)]
+
+        rendered = render_snapshot(MarketSnapshot(matches=matches))
+        ladder_titles = _ladder_titles(rendered)
+
+        assert ladder_titles
+        assert any("outcome 9 0.95" in title for title in ladder_titles)
+        assert all("[0.90-1.00]" not in title for title in ladder_titles)
 
 
 class TestChildRenderStatsPayload:

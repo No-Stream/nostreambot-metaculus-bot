@@ -75,9 +75,9 @@ _PERCENT_TAIL_RE = re.compile(r":\s*[0-9]+(?:\.[0-9]+)?\s*%\s*$")
 # its `MAX_CHILD_ROWS_PER_MARKET` sub-rows maxed too, and every row DEMOTED by the staleness cap.
 # Measured at 11,049 chars against the shipped constants (`MAX_CHILD_ROWS_PER_SNAPSHOT` = 14 full
 # sub-rows plus the 1,400-char ladder section allowance — rendering.py's own comment explains why 14
-# beat the design's gridded 16), and the all-open ladder fixture at 11,085, so the slack is 65 and
-# this budget has genuinely stopped being a formality. Naming every outcome instead of cutting the
-# tail is what spent it; the legend's added sentences are the rest.
+# beat the design's gridded 16), and the all-open ladder fixture at 11,085 before quoted books were
+# added, so the slack was 65 and this budget had genuinely stopped being a formality. Naming every
+# outcome instead of cutting the tail is what spent it; the legend's added sentences are the rest.
 #
 # Re-derived twice, and both purchases are worth stating in full because this is the tightest
 # section in the bundle. 10,600 -> 11,050 for the staleness disclosure: +295 fixed legend chars for
@@ -88,16 +88,22 @@ _PERCENT_TAIL_RE = re.compile(r":\s*[0-9]+(?:\.[0-9]+)?\s*%\s*$")
 # is what makes this budget a bound on capped slates at all. While the note was exempt from that
 # budget, three capped rows on a real maxed slate crossed the 11,050 figure and five crossed the
 # ceiling, and no fixture here set a note, so nothing could see it.
+# Re-derived after adding books to priced budget rows: the all-open quoted ladder rendered 11,338
+# chars in the old cell form, over the unchanged 11,150 bound. `PRICE [LO-HI]` and a shorter
+# no-volume legend sentence bring it to 11,124; the realistic quoted slate measures 8,246 under its
+# unchanged 8,300 bound. The no-volume explanation now says PredictIt publishes no volume and its
+# liquidity is unknown, not thin. The quoted ladder has 26 chars of budget slack and 125 to the
+# quarter-section ceiling.
 #
 # The ceiling above this budget is `RESEARCH_SECTION_CHAR_LIMIT / 4` = 11,249, asserted below, so 99
-# characters of structural headroom remain (164 from the measured worst case). The next thing that
-# widens this section has to cut prose or re-derive the quarter-limit relationship itself; there is
-# no longer a third purchase available out of slack.
+# characters of structural headroom remain. Further widening has to cut prose or re-derive the
+# quarter-limit relationship itself; there is no more slack to purchase it from.
 MARKET_SNAPSHOT_MAXED_RENDER_CHAR_BUDGET = 11_150
 
 # REALISTIC: 8 rows of content shaped like live payloads rather than chosen — what a real question
-# renders. Measured at 8,207 chars (7,794 before the staleness suffix), ~450 BELOW the
-# pre-completeness-change figure: a four-outcome family names all four either way, and the lower
+# renders. The quoted Kalshi and Polymarket examples measure 8,246 chars; the prior unquoted fixture
+# measured 8,207 (7,794 before the staleness suffix), ~450 BELOW the pre-completeness-change figure:
+# a four-outcome family names all four either way, and the lower
 # full-row cap moves two of them from a full sub-row into the ladder. 8,050 -> 8,150 for the
 # staleness disclosure: the measured figure still fit the old budget with 14 chars to spare, which is
 # a coincidence rather than headroom. 8,150 -> 8,300 for the demotion note's legend sentence, which
@@ -105,15 +111,15 @@ MARKET_SNAPSHOT_MAXED_RENDER_CHAR_BUDGET = 11_150
 # cap fires on zero rows across the archived corpus), so the row half of this figure is unchanged.
 MARKET_SNAPSHOT_REALISTIC_RENDER_CHAR_BUDGET = 8_300
 
-# Preamble + legend: the FIXED overhead every snapshot pays regardless of row count, measured at
-# 2,795 chars. Budgeted separately and tightly because prose is the likeliest thing to bloat and
-# the only part with no data to justify it — the whole-snapshot budget has slack that would
-# otherwise absorb an added paragraph unnoticed. At 2,795 of 2,850 this is still the tightest
-# budget in the file, which is the point: the next legend sentence has to earn a re-derivation.
+# Preamble + legend: the FIXED overhead every snapshot pays regardless of row count, now measured at
+# 2,666 chars against the separate 2,850 limit. Budgeted separately because prose is the likeliest
+# thing to bloat and the only part with no data to justify it — the whole-snapshot budget has slack
+# that would otherwise absorb an added paragraph unnoticed.
 #
-# Re-derived four times, and every purchase is on the record. From 1,700 to 1,850: a `prob` cell may hold
-# a scalar market's value, and a forecaster told to anchor on that column needs the legend to say so.
-# From 1,850 to 2,400: the ladder row and the two-sided quote forms (`PRICE (bid-ask LO-HI)` and
+# Re-derived four times before this change, and every purchase is on the record. From 1,700 to
+# 1,850: a `prob` cell may hold a scalar market's value, and a forecaster told to anchor on that
+# column needs the legend to say so.
+# From 1,850 to 2,400: the ladder row and the two-sided quote forms (`PRICE [LO-HI]` and
 # range-only `LO-HI`) are new cell shapes, and the legend's contract is that it names every shape a
 # cell can hold — an unexplained `+8 settled at 1.00` group or an unexplained `0.00-1.00` price is
 # one a forecaster guesses at, and the guess the range replaces was "the market says 50/50". Each
@@ -128,6 +134,9 @@ MARKET_SNAPSHOT_REALISTIC_RENDER_CHAR_BUDGET = 8_300
 # demotion note, at 2,700 -> 2,850 (+171, measured 2,795): `demoted from same-date:` is a shape the
 # `why` cell can hold, and an undefined one sits on the single row in the slate whose grade we
 # overruled, in a table whose preamble calls a same-date market extremely strong evidence.
+# The fifth re-derivation keeps the same 2,850 ceiling after adding books: `PRICE [LO-HI]` names the
+# compact cell once, and the no-liquidity explanation now says PredictIt publishes no volume and its
+# liquidity is unknown, not thin. Fixed overhead is 2,666, leaving 184 chars under the limit.
 MARKET_SNAPSHOT_FIXED_OVERHEAD_CHAR_BUDGET = 2_850
 
 # The instant the budget fixtures date their rows against: past every close date any of them carries,
@@ -301,14 +310,14 @@ class TestColumns:
 
         cells = _table_rows(render_snapshot(MarketSnapshot(matches=[row])))[0]
 
-        assert cells["prob"] == "0.42 (bid-ask 0.24-0.61)"
+        assert cells["prob"] == "0.42 [0.24-0.61]"
 
     def test_kalshi_price_shows_a_tight_book(self) -> None:
         row = _row("kalshi", prob=0.53, bid=0.52, ask=0.54)
 
         cells = _table_rows(render_snapshot(MarketSnapshot(matches=[row])))[0]
 
-        assert cells["prob"] == "0.53 (bid-ask 0.52-0.54)"
+        assert cells["prob"] == "0.53 [0.52-0.54]"
 
     def test_a_book_without_a_usable_price_remains_a_range_only(self) -> None:
         row = _row("kalshi", prob=None, bid=0.24, ask=0.64)
@@ -343,11 +352,11 @@ class TestColumns:
         assert len(table_lines) == len(rows) + 3
         assert {line.count("|") for line in table_lines} == {len(TABLE_COLUMNS) + 1}
         assert [cells["prob"] for cells in _table_rows(rendered)] == [
-            "0.42 (bid-ask 0.24-0.61)",
-            "0.53 (bid-ask 0.52-0.54)",
+            "0.42 [0.24-0.61]",
+            "0.53 [0.52-0.54]",
             "0.42",
             "-",
-            "0.40 (bid-ask 0.35-0.45)",
+            "0.40 [0.35-0.45]",
         ]
 
     def test_missing_values_render_as_dashes(self) -> None:
@@ -780,8 +789,10 @@ class TestLegend:
         assert "verify-carefully" not in MARKET_SIGNAL_LEGEND
 
     def test_the_legend_explains_prices_with_a_bid_ask_range(self) -> None:
-        assert "(bid-ask LO-HI)" in MARKET_SIGNAL_LEGEND
-        assert "LO-HI" in MARKET_SIGNAL_LEGEND
+        assert (
+            "`PRICE [LO-HI]` is a price with the venue's bid-ask range; `LO-HI` alone means a book "
+            "but no usable price, not 50/50."
+        ) in MARKET_SIGNAL_LEGEND
 
     def test_the_legend_explains_the_sub_row_glyph(self) -> None:
         """A glyph a forecaster has never seen, in a column that otherwise names a venue, has to be
@@ -893,7 +904,8 @@ class TestRenderBudget:
     def _realistic_rows(self) -> list[MarketMatch]:
         """Eight realistic rows, each a strike family with four outcomes — the shape a real slate
         takes, since 86.5% of the Kalshi catalogue is multi-strike. Outcome labels and prices are
-        real ones from the committed venue fixtures.
+        real ones from the committed venue fixtures. Representative books are included on the
+        priced Kalshi and Polymarket children because those venues supply them.
 
         Deliberately carries NO demotion note, unlike the two maxed slates: the staleness cap fires
         on zero rows across the whole archived corpus, so a capped row is not what a real slate
@@ -902,15 +914,17 @@ class TestRenderBudget:
             MarketChild(
                 title=title,
                 implied_prob_yes=prob,
+                quote_low=quote_low,
+                quote_high=quote_high,
                 total_volume=volume,
                 open_interest=volume / 2,
                 close_time=datetime(2026, 6, 30, tzinfo=UTC),
             )
-            for title, prob, volume in (
-                ("Before Nov 1, 2026", 0.175, 45_000.0),
-                ("Republican Party", 0.535, 32_000.0),
-                ("0 (0 bps)", 0.888, 6_805_439.0),
-                ("$3.80 - $4.19", 0.5083, 258.0),
+            for title, prob, volume, quote_low, quote_high in (
+                ("Before Nov 1, 2026", 0.175, 45_000.0, 0.15, 0.20),
+                ("Republican Party", 0.535, 32_000.0, 0.52, 0.55),
+                ("0 (0 bps)", 0.888, 6_805_439.0, 0.887, 0.889),
+                ("$3.80 - $4.19", 0.5083, 258.0, None, None),
             )
         )
         return [
@@ -953,6 +967,8 @@ class TestRenderBudget:
                     MarketChild(
                         title=f"{'C' * (CHILD_TITLE_MAX_CHARS - 2)}{index:02d}",
                         implied_prob_yes=0.91 - 0.03 * index,
+                        quote_low=0.88 - 0.03 * index,
+                        quote_high=0.94 - 0.03 * index,
                         total_volume=123456789.0,
                         open_interest=98765432.0,
                         close_time=datetime(2026, 12, 31, tzinfo=UTC),

@@ -37,8 +37,15 @@ from metaculus_bot.research.market_retrieval.http import (
     parse_iso_guarded,
     safe_float,
 )
-from metaculus_bot.research.market_retrieval.types import MarketMatch, ScalarEstimate, _liquidity_label
+from metaculus_bot.research.market_retrieval.rendering import CHILD_ROW_MARKER, render_snapshot
+from metaculus_bot.research.market_retrieval.types import (
+    MarketMatch,
+    MarketSnapshot,
+    ScalarEstimate,
+    _liquidity_label,
+)
 from tests.market_retrieval_fakes import FakeResponse, FakeSession
+from tests.test_market_retrieval_rendering import _table_rows
 
 _PAYLOADS_PATH = Path(__file__).parent / "data" / "prediction_market_venue_payloads.json"
 _MULTI_CLOSE_PATH = Path(__file__).parent / "data" / "kalshi_multi_close_event_2026_08_04.json"
@@ -102,6 +109,11 @@ def _event(page: dict[str, Any], ticker: str) -> dict[str, Any]:
         if event.get("event_ticker") == ticker:
             return copy.deepcopy(event)
     raise AssertionError(f"fixture carries no event {ticker!r}")
+
+
+def _rendered_child_prices(snapshot: MarketSnapshot) -> list[str]:
+    rendered = render_snapshot(snapshot)
+    return [row["prob"] for row in _table_rows(rendered) if row["platform"] == CHILD_ROW_MARKER]
 
 
 class TestKalshiEventProjection:
@@ -1080,8 +1092,17 @@ class TestPolymarket:
 
         children = venues.polymarket_event_children(markets)
 
-        assert [(child.quote_low, child.quote_high) for child in children] == [
-            (safe_float(market.get("bestBid")), safe_float(market.get("bestAsk"))) for market in markets
+        assert [(child.quote_low, child.quote_high) for child in children] == [(0.887, 0.889), (0.06, 0.07)]
+
+    def test_a_real_event_payload_renders_each_child_price_with_its_book(
+        self, captured_payloads: dict[str, Any]
+    ) -> None:
+        matches = venues.parse_polymarket_matches(captured_payloads["polymarket_search"], width=60)
+
+        assert matches is not None
+        assert _rendered_child_prices(MarketSnapshot(matches=matches)) == [
+            "0.89 [0.89-0.89]",
+            "0.07 [0.06-0.07]",
         ]
 
     def test_an_untouched_placeholder_leg_reports_no_price(self) -> None:
@@ -2182,10 +2203,29 @@ class TestPredictIt:
 
         children = venues.predictit_contract_children(market["contracts"])
 
-        assert [(child.quote_low, child.quote_high) for child in children] == [
-            (safe_float(contract.get("bestSellYesCost")), safe_float(contract.get("bestBuyYesCost")))
-            for contract in market["contracts"]
+        assert [(child.quote_low, child.quote_high) for child in children] == [(0.2, 0.21), (0.08, 0.09)]
+
+    def test_a_real_market_payload_renders_each_contract_price_with_its_book(
+        self, captured_payloads: dict[str, Any]
+    ) -> None:
+        market = captured_payloads["predictit_all"]["markets"][0]
+        match = venues.predictit_market_match(market, match_confidence=1.0, channel="universe_fuzzy")
+
+        assert match is not None
+        assert _rendered_child_prices(MarketSnapshot(matches=[match])) == [
+            "0.21 [0.20-0.21]",
+            "0.09 [0.08-0.09]",
         ]
+
+    def test_a_contract_with_no_yes_bid_renders_its_price_without_a_book(
+        self, captured_payloads: dict[str, Any]
+    ) -> None:
+        market = copy.deepcopy(captured_payloads["predictit_all"]["markets"][0])
+        market["contracts"][0]["bestSellYesCost"] = None
+        match = venues.predictit_market_match(market, match_confidence=1.0, channel="universe_fuzzy")
+
+        assert match is not None
+        assert _rendered_child_prices(MarketSnapshot(matches=[match])) == ["0.21", "0.09 [0.08-0.09]"]
 
     def test_the_contract_children_keep_ballot_order(self, captured_payloads: dict[str, Any]) -> None:
         """Unsorted, unlike the real-money venues: PredictIt's dump carries no per-contract volume to
