@@ -366,14 +366,28 @@ class TestDiscreteBinEdgesClause:
         )
         flat = " ".join(_numeric_text(question).split())
         assert "Bin edges: -0.5, 0.5, 1.5, …, 34.5." in flat
+        assert "A bin's probability is the share of your distribution between its edges" in flat
         assert "a percentile just past a bin's upper edge already falls in the next bin" in flat
-        assert "to give the lowest bin 40%, every percentile up to the 40th must lie between -0.5 and 0.5" in flat
+        assert (
+            "with nothing below -0.5, giving the lowest bin 40% means every percentile up to the 40th lies between "
+            "-0.5 and 0.5" in flat
+        )
 
     def test_non_integer_width_grid_renders_its_own_edges(self) -> None:
         question = _pmf_q(cdf_size=11, lower_bound=0.0, upper_bound=50.0, nominal_lower=0.0, nominal_upper=50.0)
         flat = " ".join(_numeric_text(question).split())
         assert "Bin edges: 0, 5, 10, …, 50." in flat
-        assert "must lie between 0 and 5" in flat
+        assert "lies between 0 and 5" in flat
+
+    def test_open_lower_bound_example_is_conditional_on_no_lower_tail_mass(self) -> None:
+        """On an open lower bound probability may sit below the grid, so the lowest-bin example must
+        not tell the model every low percentile belongs inside the first bin unconditionally."""
+        question = _pmf_q(
+            cdf_size=36, lower_bound=-0.5, upper_bound=34.5, nominal_lower=0.0, nominal_upper=34.0, open_lower=True
+        )
+        flat = " ".join(_numeric_text(question).split())
+        assert "with nothing below -0.5, giving the lowest bin 40%" in flat
+        assert "must lie between" not in flat
 
     def test_continuous_numeric_question_has_no_bin_edges_clause(self) -> None:
         flat = " ".join(_numeric_text(_numeric_q()).split())

@@ -163,8 +163,9 @@ count, and the tag strings themselves are unchanged. Pins: `TestEventWindowRule`
 
 A bullet in the numeric axis block, on both platforms, for a linear `DiscreteQuestion` only (not a
 continuous grid, not a log-scaled one). It names the first three bin edges and the last, and gives
-a worked example on the question's own lowest bin: to give that bin 40%, every percentile up to the
-40th must lie between its edges. On an integer count grid the edges are half-integers, and models
+a worked example on the question's own lowest bin: with nothing below the grid, giving that bin 40%
+means every percentile up to the 40th lies between its edges. The "nothing below" condition matters on
+an open lower bound, where probability may legitimately sit below the grid (caught in review). On an integer count grid the edges are half-integers, and models
 had been writing "0 to 1" for zero, so the percentiles meant for zero fell into the next bin. On
 Mantic 708 the members stated 45%, 46% and 30% at zero, but their built distributions held 34%, 39%
 and 22%. A Metaculus discrete question previously carried no grid description at all, because

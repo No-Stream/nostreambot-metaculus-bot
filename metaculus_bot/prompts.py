@@ -1174,9 +1174,10 @@ def _discrete_bin_edges_clause(question: NumericQuestion) -> str:
     first_edges = [round(question.lower_bound + index * width, 10) for index in range(3)]
     shown_edges = ", ".join(f"{edge:g}" for edge in first_edges)
     return (
-        f"Bin edges: {shown_edges}, …, {question.upper_bound:g}. Each bin scores the outcomes between its edges, and "
-        "a percentile just past a bin's upper edge already falls in the next bin: e.g. to give the lowest bin 40%, "
-        f"every percentile up to the 40th must lie between {first_edges[0]:g} and {first_edges[1]:g}."
+        f"Bin edges: {shown_edges}, …, {question.upper_bound:g}. A bin's probability is the share of your "
+        "distribution between its edges, and a percentile just past a bin's upper edge already falls in the next "
+        f"bin: e.g. with nothing below {first_edges[0]:g}, giving the lowest bin 40% means every percentile up to "
+        f"the 40th lies between {first_edges[0]:g} and {first_edges[1]:g}."
     )
 
 
