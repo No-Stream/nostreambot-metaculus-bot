@@ -46,8 +46,9 @@ from metaculus_bot.research.market_retrieval.venues import (
     parse_polymarket_matches,
 )
 from metaculus_bot.research.prediction_market import (
+    LIQUIDITY_DECENT_USD,
     LIQUIDITY_DEEP_USD,
-    LIQUIDITY_THIN_USD,
+    LIQUIDITY_STRONG_USD,
     _liquidity_label,
 )
 
@@ -170,8 +171,8 @@ class TestKalshiLiquidityFieldNames:
         assert match.total_volume < float(raw["volume_fp"]), "contract counts reached the USD thresholds unconverted"
 
     def test_thresholds_are_the_shared_usd_pair(self):
-        """No per-venue threshold split — one USD pair for both real-money venues."""
-        assert LIQUIDITY_THIN_USD < LIQUIDITY_DEEP_USD
+        """No per-venue threshold split — one USD ladder for both real-money venues."""
+        assert LIQUIDITY_DECENT_USD < LIQUIDITY_STRONG_USD < LIQUIDITY_DEEP_USD
 
 
 # D1 sibling — the same units contract at EVENT-FAMILY scope

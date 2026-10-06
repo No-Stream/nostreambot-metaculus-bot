@@ -93,7 +93,8 @@ _PERCENT_TAIL_RE = re.compile(r":\s*[0-9]+(?:\.[0-9]+)?\s*%\s*$")
 # no-volume legend sentence bring it to 11,124; the realistic quoted slate measures 8,246 under its
 # unchanged 8,300 bound. The no-volume explanation now says PredictIt publishes no volume and its
 # liquidity is unknown, not thin. The quoted ladder has 26 chars of budget slack and 125 to the
-# quarter-section ceiling.
+# quarter-section ceiling. The 2026-10-06 liquidity re-tier moved the weighting policy out of the legend
+# into the prompt, so the quoted ladder now measures 11,089 (61 of slack) and the realistic slate 8,211.
 #
 # The ceiling above this budget is `RESEARCH_SECTION_CHAR_LIMIT / 4` = 11,249, asserted below, so 99
 # characters of structural headroom remain. Further widening has to cut prose or re-derive the
@@ -136,7 +137,8 @@ MARKET_SNAPSHOT_REALISTIC_RENDER_CHAR_BUDGET = 8_300
 # overruled, in a table whose preamble calls a same-date market extremely strong evidence.
 # The fifth re-derivation keeps the same 2,850 ceiling after adding books: `PRICE [LO-HI]` names the
 # compact cell once, and the no-liquidity explanation now says PredictIt publishes no volume and its
-# liquidity is unknown, not thin. Fixed overhead is 2,666, leaving 184 chars under the limit.
+# liquidity is unknown, not thin. Fixed overhead is 2,666, leaving 184 chars under the limit. The
+# liquidity re-tier then traded the legend's weighting sentence for the four tier floors: 2,631.
 MARKET_SNAPSHOT_FIXED_OVERHEAD_CHAR_BUDGET = 2_850
 
 # The instant the budget fixtures date their rows against: past every close date any of them carries,
@@ -299,7 +301,7 @@ class TestColumns:
         assert cells["prob"] == "0.42"
         assert cells["total_vol"] == "12345"
         assert cells["OI"] == "6789"
-        assert cells["signal"] == "decent"
+        assert cells["signal"] == "strong"
         assert cells["close"] == "2026-06-30"
         assert cells["status"] == "open"
         assert cells["relation"] == "same_quantity_other_cut"
@@ -406,7 +408,7 @@ class TestColumns:
     def test_a_manifold_total_vol_renders_its_mana_figure_unconverted(self) -> None:
         """The unit the legend has to qualify. `parse_manifold_matches` populates `total_volume`
         from Manifold's `volume`, which is MANA (play money) with no conversion anywhere, and
-        22.1% of measured Manifold rows exceed the $5k thin ceiling in mana terms. Rendering `-`
+        22.1% of measured Manifold rows exceed the old $5k thin ceiling in mana terms. Rendering `-`
         instead would add the only per-platform branch in `_row_cells` and delete a real
         participation signal, so the number stays and the LEGEND carries the caveat. `OI` is
         genuinely absent for Manifold, which is why it reads `-`."""
@@ -766,8 +768,12 @@ class TestPreambleSelector:
 class TestLegend:
     def test_every_liquidity_label_the_cells_can_hold_is_explained(self) -> None:
         """A legend that omits a label a cell can hold teaches forecasters to guess at it."""
-        for label in ("thin", "decent", "deep", "high", "no-liquidity-data"):
+        for label in ("thin", "decent", "strong", "deep", "high", "no-liquidity-data"):
             assert label in MARKET_SIGNAL_LEGEND
+
+    def test_the_legend_states_the_real_money_tier_floors(self) -> None:
+        """The prompt weighs a market by its tier, so the forecaster must see what each tier means in dollars."""
+        assert "thin under $1,000, decent to $10,000, strong to $100,000, deep above" in MARKET_SIGNAL_LEGEND
 
     def test_every_relation_tier_the_cells_can_hold_is_explained(self) -> None:
         for tier in (*TIERS, TIER_UNSPECIFIED):

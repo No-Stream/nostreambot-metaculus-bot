@@ -853,9 +853,8 @@ class TestKalshiEventDerivations:
         claim.
 
         `KXGOVWINS-27JAN01` carries $3,387 of volume on its first strike and $107,079 across the
-        three, all live. The `signal` column reads `thin` on the first and `deep` on the family, and
-        the prompt tells forecasters to discount thin markets as noisy and anchor on deep ones — so
-        the old read told them to discount a $107k market. Only 2 events on the frozen universe make
+        three, all live. The `signal` column reads `decent` on the first and `deep` on the family, and
+        the prompt weighs a market by that tier — so the per-strike read under-weighted a $107k market. Only 2 events on the frozen universe make
         that flip at 2-4 all-open strikes, which is why this is a committed live capture rather than
         a hand-built dict.
         """
@@ -872,7 +871,7 @@ class TestKalshiEventDerivations:
 
         first_only = copy.deepcopy(match)
         first_only.total_volume, first_only.open_interest = first_volume, first_oi
-        assert _liquidity_label(first_only) == "thin", "fixture no longer straddles a label boundary"
+        assert _liquidity_label(first_only) == "decent", "fixture no longer straddles a label boundary"
 
     def test_a_single_strike_event_still_quotes_its_price(self, captured_payloads: dict[str, Any]) -> None:
         """The other side of the rule: a one-strike event and its strike ask the same question, so

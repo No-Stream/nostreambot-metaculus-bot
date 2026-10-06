@@ -503,8 +503,9 @@ class TestPredictionMarketFraming:
         Whitespace is collapsed first so no check depends on where ``clean_indents`` wraps a line.
         """
         lowered = " ".join(prompt.lower().split())
-        assert "strong evidence" in lowered
-        assert "weight them heavily" in lowered
+        assert "prediction markets are serious evidence, as strong as their liquidity allows" in lowered
+        assert "weight them heavily" not in lowered
+        assert "its `signal` is strong or deep, it is extremely strong evidence" in lowered
         # The conditional adjustment: match anchors, mismatch discounts.
         assert "resolution date" in lowered
         assert "match" in lowered
@@ -516,10 +517,13 @@ class TestPredictionMarketFraming:
         # Rule 1: an other-cut market is the same quantity, so extrapolate rather than haircut.
         assert "`same_quantity_other_cut`" in lowered
         assert "extrapolate from it rather than discount it vaguely" in lowered
-        # Rule 2: liquidity governs when the relation and liquidity axes disagree (q45189).
-        assert "the liquidity warning governs" in lowered
-        assert "a thin price is noisy however tight its relation" in lowered
-        assert "widen around its implied value rather than transplant its price" in lowered
+        # Rule 2: a matched market's weight follows its liquidity tier; thin never anchors (q45189, Mantic 718).
+        assert "weigh a matched market by its `signal`" in lowered
+        assert "deep is close to the best estimate available" in lowered
+        assert "thin is weak evidence, a noisy hint and never an anchor, however tight its relation" in lowered
+        assert "widen around the market's implied value rather than transplant its price" in lowered
+        assert "a wide range means the price says little" in lowered
+        assert "the liquidity warning governs" not in lowered
         # Rule 3: a ladder is a distribution, never an equality constraint on a tail (q45189).
         assert "is a distribution over that market's own question" in lowered
         assert "read the whole ladder" in lowered
@@ -539,10 +543,9 @@ class TestPredictionMarketFraming:
 
     def _assert_market_clause_absent(self, prompt: str) -> None:
         lowered = " ".join(prompt.lower().split())
-        assert "prediction markets are strong evidence" not in lowered
-        assert "weight them heavily" not in lowered
+        assert "prediction markets are serious evidence" not in lowered
         assert "equality constraint" not in lowered
-        assert "liquidity warning" not in lowered
+        assert "weigh a matched market by its `signal`" not in lowered
 
     def _assert_general_expertise_principle(self, prompt: str) -> None:
         """The prompt-wide directive that a forecaster may draw on its own training

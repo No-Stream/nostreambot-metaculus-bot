@@ -129,8 +129,9 @@ from metaculus_bot.research.market_retrieval.snapshot_stages import (
 # `provider_health`'s `getattr`, and the test suite all reach them through
 # `metaculus_bot.research.prediction_market`.
 from metaculus_bot.research.market_retrieval.types import (
-    LIQUIDITY_DEEP_USD,  # noqa: F401  # re-export: consumed by the liquidity-contract tests
-    LIQUIDITY_THIN_USD,  # noqa: F401  # re-export
+    LIQUIDITY_DECENT_USD,  # noqa: F401  # re-export: consumed by the liquidity-contract tests
+    LIQUIDITY_DEEP_USD,  # noqa: F401  # re-export
+    LIQUIDITY_STRONG_USD,  # noqa: F401  # re-export
     MANIFOLD_HIGH_BETTORS,  # noqa: F401  # re-export
     MANIFOLD_THIN_BETTORS,  # noqa: F401  # re-export
     MarketChild,  # noqa: F401  # re-export: the multi-outcome sub-row, archived inside MarketMatch

@@ -74,6 +74,9 @@ from metaculus_bot.research.market_retrieval.ranking import (
     WHY_CHARS,
 )
 from metaculus_bot.research.market_retrieval.types import (
+    LIQUIDITY_DECENT_USD,
+    LIQUIDITY_DEEP_USD,
+    LIQUIDITY_STRONG_USD,
     MarketChild,
     MarketMatch,
     MarketSnapshot,
@@ -242,12 +245,12 @@ TITLE_MAX_CHARS = 80
 # than a measurement of thinness, and a forecaster that collapses it into "thin" discounts a
 # market for the wrong reason.
 MARKET_SIGNAL_LEGEND = (
-    "The `signal` column labels each market's liquidity/participation "
-    "(thin/decent/deep for real-money venues, thin/decent/high for Manifold's play-money bettor count); "
-    "`total_vol` and `OI` are that market's traded volume and open interest in approximate USD on the "
-    "real-money venues, and play-money mana on Manifold. "
-    "`no-liquidity-data` means PredictIt publishes no volume; treat liquidity as unknown, not thin. Treat "
-    "deep/high-liquidity markets as a strong anchor and discount thin ones (low volume, few participants) as noisy. "
+    "The `signal` column labels each market's liquidity/participation: on real-money venues by the larger of "
+    f"`total_vol` and `OI`, thin under ${LIQUIDITY_DECENT_USD:,.0f}, decent to ${LIQUIDITY_STRONG_USD:,.0f}, strong "
+    f"to ${LIQUIDITY_DEEP_USD:,.0f}, deep above; on Manifold by play-money bettor count, thin/decent/high. "
+    "`total_vol` and `OI` are traded volume and open interest in approximate USD on the real-money venues, and "
+    "play-money mana on Manifold. "
+    "`no-liquidity-data` means PredictIt publishes no volume; treat liquidity as unknown, not thin. "
     "Rows are ordered by EVIDENTIAL VALUE, best first, and `relation` grades how each bears on THIS question — "
     "`same_quantity_same_date`, then `same_quantity_other_cut`, then `driver_or_consequence`, then `weak` "
     "(`unspecified` if ungraded); only the first two measure the quantity asked about, and `why` is the "
@@ -279,9 +282,9 @@ MARKET_SIGNAL_LEGEND = (
 MARKET_PREAMBLE_STRONG = (
     "The following prediction markets MAY be relevant — each was selected and ranked for THIS question, so "
     "verify each market's resolution criteria, resolution date, and topic against THIS question before "
-    "weighting. A market whose criteria and date match this question is extremely strong evidence — anchor on "
-    "its price; on a related but different event, date, or threshold, name the specific mismatch and discount "
-    "accordingly. "
+    "weighting. A market whose criteria and date match this question is evidence as strong as its liquidity "
+    "(`signal`) allows; on a related but different event, date, or threshold, name the specific mismatch and "
+    "discount accordingly. "
 )
 
 # Neutral framing — used when NO rendered row measures the same quantity, so the table is

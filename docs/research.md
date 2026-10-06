@@ -1092,6 +1092,21 @@ The research section header is `## Prediction Market Snapshot`, and the prompts
 import it from `prompts.py` as `MARKET_SNAPSHOT_SECTION_HEADER` to decide whether to
 render their market-reading rules at all.
 
+#### Liquidity tiers
+
+`liquidity_label_from_fields` (`market_retrieval/types.py`) labels every row and sub-row. On the
+real-money venues it scores the larger of total volume and open interest in USD (Kalshi counts are
+converted at parse): thin under `LIQUIDITY_DECENT_USD` ($1k), decent to `LIQUIDITY_STRONG_USD`
+($10k), strong to `LIQUIDITY_DEEP_USD` ($100k), deep from there up. Manifold stays on play-money
+bettor counts (thin/decent/high) and PredictIt reads `no-liquidity-data`. The tiers were set by the
+operator on 2026-10-06, replacing a thin under $5k / deep over $50k pair. The evidence was Mantic's
+Polymarket backtest (2026-09-29): a strong AI forecaster beat the market's price clearly below about
+$10k of volume and drew level near $100k, and the best blend weighted the price at zero at $1k and 4%
+at $10k. Mantic sums volume across an event and we score one market, so these floors are conservative
+against that evidence. The legend prints the floors; the prompt's `_MARKET_READING_RULES` turns the
+tier into a weight (docs/prompts.md). The labels feed no telemetry marker, so changing them breaks no
+data contract.
+
 ### Resolution-source fetcher: `RESOLUTION_SOURCE_ENABLED`
 
 Fetches the exact URL(s) a question cites as its grading source

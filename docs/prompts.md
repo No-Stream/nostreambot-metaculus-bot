@@ -377,6 +377,20 @@ on a tail and cut the resolving bucket below their own prior. The bot published 
 -26.77 spot peer. Rule 1 is the ranked-retrieval design intent: an other-cut market is the same
 quantity, so it is something to extrapolate from rather than to haircut.
 
+Rule 2 was rewritten on 2026-10-06 from "the liquidity warning governs" into a graded weighting by the
+`signal` tier: deep is close to the best estimate available, strong is serious evidence to weigh against
+the forecaster's own analysis, decent is a modest input, and thin is weak evidence that never anchors,
+plus an instruction to read the bid-ask range. The receipts are q45189 above and Mantic 718, where GPT
+put 30% weight on a Kalshi strike with about $2 of volume and a 24-61 book, and Mantic's Polymarket
+backtest (2026-09-29), in which a strong AI forecaster beat the market price clearly below about $10k of
+volume, the optimal blend gave the price no weight at $1k and 4% at $10k, and the two drew level near
+$100k. The tier floors live in `market_retrieval/types.py` and are printed in the legend, so the prompt
+names tiers and never dollar figures. The opening of `_strong_evidence_market_clause` changed with it:
+"serious evidence, as strong as their liquidity allows" replaces "strong evidence — weight them
+heavily", and "extremely strong evidence" now requires a matched market whose `signal` is strong or deep.
+The rest of that clause, including the burden of naming a concrete mismatch for any discount beyond
+liquidity, is unchanged.
+
 `same_quantity_other_cut` is verbatim from `research/market_retrieval/ranking.py` `TIERS`. Renaming
 it there without renaming it here silently teaches forecasters a vocabulary the table no longer
 uses. The constant ships in all three forecaster prompts, gated with the rest of the market clause
