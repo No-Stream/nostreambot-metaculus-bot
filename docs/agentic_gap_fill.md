@@ -549,7 +549,10 @@ The quote spot-check in `_validate_findings_payload` applies only to text
 findings and is warn-only. A quote that is not found verbatim in the run's tool
 contents is logged and counted in `quote_mismatch_warnings`, but the finding is
 still banked, because `read_document` paraphrases and joins passages with
-ellipses. The warning is deduped per run on `(source_url, quote)`, so a finding
+ellipses. The check splits a quote at ellipses, quote-glyph joiners and bare
+newlines and requires each substantive piece verbatim, and normalization rejoins
+words and numeric ranges that PDF extraction broke at a line wrap and spells out
+Latin ligatures such as `ﬁ` (but applies no NFKC, which would fold `10²` into `102`). The warning is deduped per run on `(source_url, quote)`, so a finding
 re-listed in `conclude`'s `final_findings` counts once rather than once per
 submission. Image findings have no quote: the finding validator instead
 requires an image ID already delivered on a preceding driver turn and checks

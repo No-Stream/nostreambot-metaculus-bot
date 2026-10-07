@@ -1159,6 +1159,49 @@ class TestArchivedStitchShapesGround:
         assert not _quote_is_grounded(quote, _CORPUS_BODY)
 
 
+class TestLineLevelQuoteShapesGround:
+    """Pins from the 2026-10-07 smoke run (question 14333), where all 8 quote_mismatch
+    warnings were false alarms: every quoted line sat verbatim in the tool contents.
+    Six quotes stitched separate lines with bare newlines, and two copied text that PDF
+    extraction had broken at a line wrap (``ex-\\nponential``, ``2020<en dash>\\n2100``)."""
+
+    def test_newline_stitched_lines_ground_when_each_line_is_verbatim(self) -> None:
+        quote = f"{_CORPUS_SPAN_B}\n{_CORPUS_SPAN_A}"
+        assert _quote_is_grounded(quote, _CORPUS_BODY)
+
+    def test_newline_stitched_quote_still_warns_on_a_fabricated_line(self) -> None:
+        quote = f"{_CORPUS_SPAN_A}\nA FABRICATED CLAUSE THAT IS ABSENT FROM THE SOURCE"
+        assert not _quote_is_grounded(quote, _CORPUS_BODY)
+
+    def test_newline_stitched_quote_still_warns_on_a_fabricated_figure(self) -> None:
+        quote = f"{_CORPUS_SPAN_A}\n47.3%"
+        assert not _quote_is_grounded(quote, _CORPUS_BODY)
+
+    def test_line_break_hyphenation_in_the_source_grounds_the_joined_word(self) -> None:
+        corpus = _normalize_quote_text("the rate parameter of the ex-\nponential distribution is 0.733")
+        assert _quote_is_grounded("the rate parameter of the exponential distribution is 0.733", corpus)
+
+    def test_wrapped_numeric_range_in_the_source_grounds_the_unbroken_range(self) -> None:
+        corpus = _normalize_quote_text(
+            "individuals dying in the period 2020\u2013\n2100 from any of the 13 IDL countries"
+        )
+        assert _quote_is_grounded(
+            "individuals dying in the period 2020\u20132100 from any of the 13 IDL countries", corpus
+        )
+
+    def test_typographic_ligature_in_the_quote_grounds_on_plain_letters(self) -> None:
+        corpus = _normalize_quote_text("significantly distorting the number of people alive")
+        assert _quote_is_grounded("signiﬁcantly distorting the number of people alive", corpus)
+
+    def test_superscript_digits_are_not_folded(self) -> None:
+        corpus = _normalize_quote_text("the estimate rose to 10² cases per site")
+        assert not _quote_is_grounded("the estimate rose to 102 cases per site", corpus)
+
+    def test_rejoining_never_alters_digits(self) -> None:
+        corpus = _normalize_quote_text("estimates ranged from 10-\n20 percent across sites")
+        assert not _quote_is_grounded("estimates ranged from 1020 percent across sites", corpus)
+
+
 class TestVerificationTierStamping:
     """W4 end-to-end: the loop stamps each banked finding's verification_tier
     from the URL->best-method map — CODE-derived, not driver-claimed. A search-
