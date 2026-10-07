@@ -32,8 +32,8 @@ Seven things here are contracts rather than formatting choices:
   Polymarket placeholder leg is Gamma's ``["0.5","0.5"]``, a fresh Manifold answer sits at its 0.5
   prior — and 192 of 1,839 archived ranked-era child outcomes were in that class. The venue parsers blank those
   at parse time, so a fabricated 0.50 never reaches the sort, the render, or a group's summed price.
-  A blanked cell renders the venue's own book as a RANGE (``0.00-1.00``) where there is one, which
-  cannot be read as a point probability.
+  A usable price appears with its venue-reported bid/ask range when both sides are known; a blanked
+  price renders the range alone (``0.00-1.00``), which cannot be read as a point probability.
 - **A ``close`` date that has already passed says so, in the cell.** The column is the venue's
   TRADING close, and on Kalshi it trails settlement by a median +317 days on the markets this bot
   has rendered, so a forecaster told to "verify the resolution date" is checking against a date that
@@ -74,6 +74,9 @@ from metaculus_bot.research.market_retrieval.ranking import (
     WHY_CHARS,
 )
 from metaculus_bot.research.market_retrieval.types import (
+    LIQUIDITY_DECENT_USD,
+    LIQUIDITY_DEEP_USD,
+    LIQUIDITY_STRONG_USD,
     MarketChild,
     MarketMatch,
     MarketSnapshot,
@@ -242,13 +245,12 @@ TITLE_MAX_CHARS = 80
 # than a measurement of thinness, and a forecaster that collapses it into "thin" discounts a
 # market for the wrong reason.
 MARKET_SIGNAL_LEGEND = (
-    "The `signal` column labels each market's liquidity/participation "
-    "(thin/decent/deep for real-money venues, thin/decent/high for Manifold's play-money bettor count); "
-    "`total_vol` and `OI` are that market's traded volume and open interest in approximate USD on the "
-    "real-money venues, and play-money mana on Manifold. "
-    "`no-liquidity-data` means the venue publishes no volume figures at all (PredictIt) — it says nothing "
-    "about how liquid the market is, so treat it as unknown rather than as thin. Treat "
-    "deep/high-liquidity markets as a strong anchor and discount thin ones (low volume, few participants) as noisy. "
+    "The `signal` column labels each market's liquidity/participation: on real-money venues by the larger of "
+    f"`total_vol` and `OI`, thin under ${LIQUIDITY_DECENT_USD:,.0f}, decent to ${LIQUIDITY_STRONG_USD:,.0f}, strong "
+    f"to ${LIQUIDITY_DEEP_USD:,.0f}, deep above; on Manifold by play-money bettor count, thin/decent/high. "
+    "`total_vol` and `OI` are traded volume and open interest in approximate USD on the real-money venues, and "
+    "play-money mana on Manifold. "
+    "`no-liquidity-data` means PredictIt publishes no volume; treat liquidity as unknown, not thin. "
     "Rows are ordered by EVIDENTIAL VALUE, best first, and `relation` grades how each bears on THIS question — "
     "`same_quantity_same_date`, then `same_quantity_other_cut`, then `driver_or_consequence`, then `weak` "
     "(`unspecified` if ungraded); only the first two measure the quantity asked about, and `why` is the "
@@ -264,8 +266,8 @@ MARKET_SIGNAL_LEGEND = (
     "is hidden — a `+N unquoted` / `+N settled` / `+N under X` / `+N off certainty by under X` group is a counted "
     "set with its summed price, not a silent cut (the last one groups a threshold ladder's near-certain AND "
     "near-impossible rungs, keeping those nearest its crossing). "
-    "A `prob` cell written `LO-HI` is the venue's bid/ask on an outcome nobody is quoting tightly enough to imply a "
-    "price — treat that outcome as unpriced, not as 50/50. "
+    "`PRICE [LO-HI]` is a price with the venue's bid-ask range; `LO-HI` alone means a book but no usable price, "
+    "not 50/50. "
     "A `prob` cell prefixed `value` is a SCALAR market's estimate of the quantity itself, in the market's own units "
     "on the scale shown beside it — not a probability."
 )
@@ -280,9 +282,9 @@ MARKET_SIGNAL_LEGEND = (
 MARKET_PREAMBLE_STRONG = (
     "The following prediction markets MAY be relevant — each was selected and ranked for THIS question, so "
     "verify each market's resolution criteria, resolution date, and topic against THIS question before "
-    "weighting. A market whose criteria and date match this question is extremely strong evidence — anchor on "
-    "its price; on a related but different event, date, or threshold, name the specific mismatch and discount "
-    "accordingly. "
+    "weighting. A market whose criteria and date match this question is evidence as strong as its liquidity "
+    "(`signal`) allows; on a related but different event, date, or threshold, name the specific mismatch and "
+    "discount accordingly. "
 )
 
 # Neutral framing — used when NO rendered row measures the same quantity, so the table is
@@ -330,7 +332,7 @@ def _price_cell(
     quote_low: float | None = None,
     quote_high: float | None = None,
 ) -> str:
-    """The ``prob`` cell: a two-decimal probability, a labelled scalar value, a quote RANGE, or ``-``.
+    """The ``prob`` cell: price with known book, price alone, scalar value, range, or ``-``.
 
     A scalar market's number is prefixed with ``value`` and followed by its scale precisely so it
     CANNOT be read as a probability. A bare figure would not be enough: the failure this fixes
@@ -339,19 +341,21 @@ def _price_cell(
     either — a scalar market on a 0-to-1 scale trades values that look exactly like probabilities —
     so the label does the work rather than the reader's arithmetic.
 
-    The ``LO-HI`` range serves the same rule from the other side. An outcome with no usable price but
-    a two-sided book has something true to say — an empty Kalshi book is ``0.00-1.00``, a quoted but
-    unusably wide one might be ``0.30-1.00`` — and a range cannot be read as a point probability the
-    way the midpoint it replaces was. The legend names it, because a forecaster meeting an unfamiliar
-    cell shape guesses at it otherwise, and the guess this replaces was "the market says 50/50".
+    When the venue reports both book sides, the cell shows them beside the price as ``PRICE [LO-HI]``.
+    The range gives the forecaster the quote's uncertainty around that price: a 0.24-0.61
+    book is materially different from a tight 0.52-0.54 one even when their midpoints look plausible.
+    When the price is absent, the range remains by itself — an empty Kalshi book is ``0.00-1.00``,
+    and a quoted but unusably wide one might be ``0.30-1.00`` — so no midpoint is implied.
 
-    A row can never hold a probability AND a scalar value — the venue parser fills one or the other —
-    and a row with a usable price has no reason to show its book, so the ordering of these branches is
-    not a precedence rule. A value whose venue omitted the bounds still renders, labelled and without
-    them: the number is the market's answer and the scale is context for it.
+    A row can never hold a probability AND a scalar value — the venue parser fills one or the other.
+    A scalar value whose venue omitted book bounds renders labelled and without them: the number is
+    the market's answer and the scale is context for it.
     """
     if implied_prob_yes is not None:
-        return f"{implied_prob_yes:.2f}"
+        price = f"{implied_prob_yes:.2f}"
+        if quote_low is not None and quote_high is not None:
+            return f"{price} [{quote_low:.2f}-{quote_high:.2f}]"
+        return price
     if scalar_estimate is not None:
         value = format_scalar_number(scalar_estimate.value, sig_digits=SCALAR_VALUE_SIG_DIGITS)
         bounds = scalar_estimate.bounds_text()
@@ -417,8 +421,8 @@ def _priced_cells(
     ``scalar_estimate`` defaults to absent because only a parent row can carry one — no venue
     publishes a scalar OUTCOME inside a multi-outcome market — but it is formatted here rather than
     at the parent's call site so there stays exactly one place that decides what the ``prob`` column
-    may contain. The quote bounds ride through for the same reason: a single-strike Kalshi FAMILY and
-    a strike sub-row can both have their midpoint refused, and the two must render that identically.
+    may contain. The quote bounds ride through for the same reason: a single-strike Kalshi FAMILY and a
+    strike sub-row can show their price alongside the book, or show only the book when their midpoint is refused.
 
     ``forecast_time`` is required rather than defaulted so no call site can silently render dates
     with no staleness read: the value may legitimately be ``None`` (an archived snapshot written
@@ -467,9 +471,7 @@ def _row_cells(match: MarketMatch, forecast_time: datetime | None) -> dict[str, 
             signal=_liquidity_label(match),
             forecast_time=forecast_time,
             scalar_estimate=match.scalar_estimate,
-            # The parent's book. Populated only where a venue publishes one, and consulted only when
-            # the row carries no price — which is how a single-strike Kalshi family whose midpoint was
-            # refused shows what was quoted instead of a bare dash.
+            # The parent's book, populated only where the venue publishes one.
             quote_low=match.bid,
             quote_high=match.ask,
         ),
@@ -935,6 +937,8 @@ def render_snapshot_with_stats(
     of them with its price. Nothing is dropped. The rules-bullet section stays ONE bullet per market
     regardless: every outcome inside a market shares its settlement rule, so a bullet per sub-row
     would repeat the same text up to ten times.
+
+    Compacted ladder entries stay price-only to preserve the snapshot character budget.
 
     The stats form is the primary and ``render_snapshot`` the wrapper, so the seam can log the
     ``MARKET_CHILD_RENDER`` marker without every existing call site and test having to learn about it.

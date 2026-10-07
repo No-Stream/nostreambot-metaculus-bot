@@ -55,6 +55,12 @@ and planning docs named here may have moved out of the public repo. Neither is a
 
 ## Open, recorded and not built
 
+**Dispatcher execution timeout, blocked on a paid cron-job.org account.** The 2026-10-03 timeout mails matched
+dispatches that arrived and completed, so GitHub acknowledged slowly rather than work going missing. Setting
+`requestTimeout: 300` in `scripts/cronjob_dispatch_setup.py` would tolerate that, but the free tier caps execution at
+30 s, so the field has no effect there. Until the account is upgraded, keep first-failure mail and reconcile a timeout
+with `make dispatch_watch`. The full change with tests and docs is commit `0ef7f9b` (closed PR #75).
+
 **Mantic, awaiting live data.** Fast-path alertability in mantic mode; median versus mean for PERCENTILE members under a
 bin log score, needing about thirty resolved Mantic percentile questions; the free post-651 reads after 2026-09-20 that
 settle the day-bin edge convention (noon mapping kept meanwhile) and the scoring coefficient; benchmarking the 5%

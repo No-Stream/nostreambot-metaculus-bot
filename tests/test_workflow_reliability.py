@@ -117,6 +117,7 @@ class TestEveryJobIsCapped:
             ".github/workflows/ci.yaml",
             ".github/workflows/claude.yml",
             ".github/workflows/fetch_diagnostic.yaml",
+            ".github/workflows/forecast_notification_test.yaml",
             ".github/workflows/run_bot_on_mantic.yaml",
             ".github/workflows/run_bot_on_metaculus_cup.yaml",
             ".github/workflows/run_bot_on_minibench.yaml",
@@ -201,6 +202,8 @@ class TestRunBotCapRespectsTheBotsOwnContract:
         workflow = _workflow(rel_path)
         run_bot_cap = _named_step(workflow, "Run bot")["timeout-minutes"]
         for job_name, job in workflow["jobs"].items():
+            if not any(step.get("name") == "Run bot" for step in job.get("steps", [])):
+                continue
             assert job["timeout-minutes"] > run_bot_cap, (
                 f"{rel_path}:{job_name} job cap ({job['timeout-minutes']}m) does not clear the 'Run bot' "
                 f"step cap ({run_bot_cap}m), so the job cap fires first and the run ends as `cancelled` "
@@ -258,6 +261,7 @@ class TestNonBotWorkflowCapsStayInBand:
             ".github/workflows/ci.yaml",
             ".github/workflows/claude.yml",
             ".github/workflows/fetch_diagnostic.yaml",
+            ".github/workflows/forecast_notification_test.yaml",
         ]
 
 

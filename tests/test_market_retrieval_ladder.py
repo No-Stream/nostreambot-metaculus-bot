@@ -804,25 +804,45 @@ class TestQuoteRangeCell:
         assert cells[0]["prob"] == "0.00-1.00"
         assert cells[0]["prob"] == cells[2]["prob"], "the parent and the sub-row must say it the same way"
 
-    def test_a_priced_row_never_shows_its_book_instead_of_its_price(self) -> None:
+    def test_a_priced_row_leads_with_its_price_and_shows_its_book_beside_it(self) -> None:
         """The control: every Kalshi row carries a two-sided book, so a range that outranked a real
-        price would replace every price in the table with a range."""
+        price would replace every price in the table with a range. The price stays first; the book
+        rides beside it so a wide one (a 24-61 book behind a 0.42 midpoint) is visible."""
         parent = _row(title="Kalshi binary", prob=0.68)
         parent.bid, parent.ask = 0.66, 0.70
 
         cells = _table_rows(render_snapshot(MarketSnapshot(matches=[parent])))
 
-        assert cells[0]["prob"] == "0.68"
+        assert cells[0]["prob"] == "0.68 [0.66-0.70]"
 
     def test_the_legend_names_both_new_cell_shapes(self) -> None:
         """A legend that omits a shape a cell can hold teaches forecasters to guess at it, and the
         guess this range replaces was "the market says 50/50"."""
         rendered = render_snapshot(MarketSnapshot(matches=[_row()]))
 
-        assert "written `LO-HI`" in rendered
-        assert "not as 50/50" in rendered
+        assert "`PRICE [LO-HI]`" in rendered
+        assert "`LO-HI` alone means a book but no usable price, not 50/50" in rendered
         assert "[remaining N]" in rendered
         assert "counted set with its summed price" in rendered
+
+    def test_a_compacted_outcome_keeps_its_price_without_its_book(self) -> None:
+        children = tuple(
+            MarketChild(
+                title=f"outcome {index}",
+                implied_prob_yes=0.99 - 0.004 * index,
+                quote_low=0.90,
+                quote_high=1.00,
+            )
+            for index in range(10)
+        )
+        matches = [_row(title=f"family {index}", children=children) for index in range(RENDER_BUDGET)]
+
+        rendered = render_snapshot(MarketSnapshot(matches=matches))
+        ladder_titles = _ladder_titles(rendered)
+
+        assert ladder_titles
+        assert any("outcome 9 0.95" in title for title in ladder_titles)
+        assert all("[0.90-1.00]" not in title for title in ladder_titles)
 
 
 class TestChildRenderStatsPayload:

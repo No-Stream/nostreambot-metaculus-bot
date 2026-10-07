@@ -97,9 +97,9 @@ class TestFormatterDelegate:
             MarketSnapshot(matches=[_row("A", tier="weak")], sources={"ranking": "ok(1)"})
         )
 
-        assert "extremely strong evidence" in strong.lower()
+        assert "evidence as strong as its liquidity (`signal`) allows" in strong.lower()
         assert "may all be off-topic" in neutral.lower()
-        assert "extremely strong evidence" not in neutral.lower()
+        assert "as strong as its liquidity" not in neutral.lower()
         # The retired vocabulary must not come back: rows are chosen by a model reading each
         # market's rules, not by word overlap.
         for rendered in (strong, neutral):
@@ -108,7 +108,15 @@ class TestFormatterDelegate:
             assert "likely-relevant" not in rendered
 
     @pytest.mark.parametrize(
-        ("total_volume", "expected"), [(1_000.0, "thin"), (20_000.0, "decent"), (100_000.0, "deep")]
+        ("total_volume", "expected"),
+        [
+            (999.0, "thin"),
+            (1_000.0, "decent"),
+            (9_999.0, "decent"),
+            (10_000.0, "strong"),
+            (99_999.0, "strong"),
+            (100_000.0, "deep"),
+        ],
     )
     def test_liquidity_label_real_money_thresholds(self, total_volume, expected):
         row = _row("x")

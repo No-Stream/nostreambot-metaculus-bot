@@ -124,6 +124,7 @@ class TestRouting:
         assert route.kind == "single"
         assert route.spec.source == "yfinance"
         assert route.spec.series_id == "^VIX"
+        assert route.value_field == "Close"
 
     def test_two_yahoo_tickers_route_to_spread(self):
         # The relative-return family (all 47 observed two-ticker questions phrase it "X's
@@ -134,8 +135,10 @@ class TestRouting:
         assert route is not None
         assert route.kind == "spread"
         assert route.spec.series_id == "CL=F"
+        assert route.value_field == "Close"
         assert route.spec_b is not None
         assert route.spec_b.series_id == "^GSPC"
+        assert route.value_field_b == "Close"
 
     def test_two_yahoo_tickers_relative_outperform_wording_routes_to_spread(self):
         # "outperform" is part of the relative-return keyword set -> spread.
@@ -225,6 +228,7 @@ class TestRouting:
         route = route_question(q)
         assert route is not None
         assert route.spec.column == "High"
+        assert route.value_field == "High"
         assert route.is_max is True
 
     def test_sp500_keyword_routes_to_gspc_level(self):
@@ -239,6 +243,8 @@ class TestRouting:
         assert route is not None
         assert route.spec.series_id == "BTC-USD"
         assert route.spec.column == "High"  # max/highest framing -> daily High
+        assert route.value_field == "High"
+        assert route.label == "Bitcoin price ($)"
         assert route.is_max is True
 
     def test_silver_highest_routes_to_high_column(self):
@@ -252,6 +258,8 @@ class TestRouting:
         assert route is not None
         assert route.spec.series_id == "GC=F"
         assert route.spec.column == "Close"  # no max framing -> Close
+        assert route.value_field == "Close"
+        assert route.label == "Gold front-month futures ($/oz)"
 
     def test_case_shiller_routes_and_revises(self):
         route = route_question(

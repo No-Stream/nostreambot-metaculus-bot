@@ -512,6 +512,8 @@ def _native_search_provider(
         llm = build_native_search_llm(model_slug)
         prompt = web_research_prompt(
             question.question_text,
+            resolution_criteria=question.resolution_criteria or "",
+            fine_print=question.fine_print or "",
             # The MC ballot (None on other types): a model can only search names it was shown (q44952).
             options=getattr(question, "options", None),
             is_benchmarking=is_benchmarking,

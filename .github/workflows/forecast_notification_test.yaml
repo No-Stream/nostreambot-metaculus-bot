@@ -1,0 +1,45 @@
+name: Forecast notification fixture
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# No bot, API keys, network research, or publications. This intentionally fails
+# to test GitHub's native failure notification using synthetic evidence only.
+jobs:
+  forecast_fixture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      title: ${{ steps.run_summary.outputs.title }}
+    steps:
+      - uses: actions/checkout@v5
+        timeout-minutes: 1
+      - name: Simulate degraded forecasting exit
+        timeout-minutes: 1
+        run: exit 1
+      - name: Explain synthetic outcome
+        id: run_summary
+        if: always()
+        timeout-minutes: 1
+        run: python3 scripts/forecast_run_summary.py --status tests/fixtures/forecast_alert_degraded.json
+        env:
+          FORECAST_JOB_STATUS: ${{ job.status }}
+          BOT_STEP_OUTCOME: failure
+  report_status:
+    name: ${{ needs.forecast_fixture.outputs.title || 'Forecast status unknown' }}
+    needs: forecast_fixture
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report synthetic failure
+        timeout-minutes: 1
+        env:
+          STATUS_TITLE: ${{ needs.forecast_fixture.outputs.title || 'Forecast status unknown' }}
+        run: |
+          printf '%s\n' "$STATUS_TITLE" >> "$GITHUB_STEP_SUMMARY"
+          echo '::error title=Synthetic failure::Notification-only fixture; no forecasts or comments were published.'
+          exit 1

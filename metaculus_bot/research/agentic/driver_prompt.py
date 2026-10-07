@@ -80,12 +80,13 @@ through the dry run, note:
     metric, or clause, you must quote the operative language and the current
     value/state from the authoritative source itself, not from news coverage
     of it.
-  - TIMING is part of every target: the question only resolves on events
-    inside its window (open date → resolution date, given below). Pin the
-    exact date of every candidate trigger event you record, and explicitly
-    note when a seemingly-qualifying event PRE-DATES the question's open
-    date — panels have been burned by treating pre-window history as a
-    qualifying event.
+  - TIMING is part of every target: the window rule given below decides
+    which events count (the resolution criteria govern; an occurrence question
+    counts only events after the open date, a cumulative or stated-period
+    measure counts its whole period). Pin the exact date of every candidate
+    trigger event you record, and explicitly note when a seemingly-qualifying
+    event PRE-DATES the question's open date — panels have been burned by
+    treating pre-window history as a qualifying event.
   - BASE-RATE targets: if your dry run leaned on a reference class ("how
     often do incumbents lose", "how often does the FDA approve on first
     review"), decide whether to research it:

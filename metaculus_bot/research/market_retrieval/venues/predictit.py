@@ -48,6 +48,7 @@ async def predictit_prefetch(session: Any) -> list[dict[str, Any]] | None:
         {},
         max_attempts=PREDICTIT_MAX_ATTEMPTS,
         label="PredictIt prefetch",
+        component="predictit",
     )
     if payload is None:
         return None
@@ -89,8 +90,9 @@ def predictit_contract_children(contracts: Sequence[dict[str, Any]]) -> tuple[Ma
     ``predictit_market_match`` has always (correctly) refused to quote one arbitrary contract as the
     market's, which until 2026-08-05 meant the whole ballot rendered priceless.
 
-    ``lastTradePrice`` rather than ``bestBuyYesCost``: the last trade is a price somebody paid, while
-    the best ask is one side of a book that on a thin PredictIt contract can sit far from it.
+    ``lastTradePrice`` remains the point price: it is a price somebody paid, while the best ask on a
+    thin PredictIt contract can sit far from it. When both are present, ``bestSellYesCost`` and
+    ``bestBuyYesCost`` also carry the direct YES bid and ask for the renderer to show beside it.
 
     Ballot order, unsorted, because PredictIt publishes no per-contract volume to rank by (its dump
     carries no volume field at all — the same absence that makes every PredictIt row read
@@ -110,6 +112,8 @@ def predictit_contract_children(contracts: Sequence[dict[str, Any]]) -> tuple[Ma
             # A missing status is not evidence of settlement, matching the market-level derivation.
             is_resolved=(contract.get("status") or "").lower() not in ("", "open"),
             close_time=parse_iso_guarded(contract.get("dateEnd")),
+            quote_low=safe_float(contract.get("bestSellYesCost")),
+            quote_high=safe_float(contract.get("bestBuyYesCost")),
         )
         for contract in contracts
         if (title := str(contract.get("name") or contract.get("shortName") or ""))

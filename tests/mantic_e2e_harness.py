@@ -335,6 +335,8 @@ def _visible_posts(posts: list[dict[str, Any]], query: dict[str, list[str]]) -> 
 
 def install_fake_transport(mp: pytest.MonkeyPatch, posts: list[dict[str, Any]]) -> list[RecordedRequest]:
     """Answer the three Mantic endpoints at the transport, recording every prepared request."""
+    # Every framework request sleeps 3.5-4.5s first to rate-limit itself against the real API.
+    mp.setattr(MetaculusClient, "_sleep_between_requests", lambda self: None)
     recorded: list[RecordedRequest] = []
 
     def fake_send(self: HTTPAdapter, request: requests.PreparedRequest, **kwargs: Any) -> requests.Response:
@@ -500,9 +502,6 @@ def run_mantic_mode(
         # The environment a Mantic run requires, though the client below is handed its token.
         mp.setenv(DONATED_OPENROUTER_KEY_ENABLED_ENV, "false")
         mp.setenv(MANTIC_TOKEN_ENV, FAKE_TOKEN)
-        # Every framework request sleeps 3.5-4.5s first; seven requests would be half a minute.
-        mp.setattr(MetaculusClient, "_sleep_between_requests", lambda self: None)
-
         _apply_hardening_with_restore(mp)
         recorded = install_fake_transport(mp, posts)
         llm_calls = _install_llm_stub(mp, _canned_responses(posts, discrete_normals=discrete_normals))

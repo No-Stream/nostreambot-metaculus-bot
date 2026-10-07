@@ -23,8 +23,12 @@ from typing import Literal
 # (`FixedPointCount`, "market volume in contracts" — docs.kalshi.com, 2026-08-03). One
 # shared threshold pair across both venues therefore requires converting Kalshi's
 # counts to dollars at the point of parse; see `_kalshi_usd_liquidity`.
-LIQUIDITY_THIN_USD = 5_000.0
-LIQUIDITY_DEEP_USD = 50_000.0
+# Tier floors: under DECENT is thin, then decent, strong, and deep from DEEP up. Operator-set 2026-10-06
+# after Mantic's Polymarket backtest (a strong AI forecaster beat the price clearly below ~$10k of
+# volume and drew level near $100k): docs/research.md "Liquidity tiers".
+LIQUIDITY_DECENT_USD = 1_000.0
+LIQUIDITY_STRONG_USD = 10_000.0
+LIQUIDITY_DEEP_USD = 100_000.0
 MANIFOLD_THIN_BETTORS = 20
 MANIFOLD_HIGH_BETTORS = 100
 
@@ -159,10 +163,12 @@ class MarketChild:
 
     The last three fields are the 2026-08-25 no-manufactured-price change:
 
-    - ``quote_low`` / ``quote_high`` are the venue's own two-sided book, carried so a blanked price
-      can still say WHAT the book was. That distinguishes "nobody is quoting this rung"
-      (``0.00-1.00``) from "quoted, very wide" (``0.30-1.00``), which ``implied_prob_yes is None``
-      alone cannot. Only Kalshi publishes a per-strike book, so only Kalshi fills them.
+    - ``quote_low`` / ``quote_high`` are the venue's own two-sided book, carried so the renderer can
+      show it beside a price or by itself when the price is unusable. That distinguishes "nobody is
+      quoting this rung" (``0.00-1.00``) from "quoted, very wide" (``0.30-1.00``), which
+      ``implied_prob_yes is None`` alone cannot. Kalshi, Polymarket and PredictIt populate these
+      fields from their available child quote legs; a range renders only when both sides are present.
+      Other venues leave them empty.
     - ``price_withheld`` marks a price this repo REFUSED because the venue manufactured it — a
       Kalshi strike with no real book, a Polymarket placeholder leg at Gamma's ``["0.5","0.5"]``
       default, a Manifold answer sitting at its untouched 0.5 prior with zero volume. Separate from
@@ -352,8 +358,7 @@ def liquidity_label_from_fields(
 
     Real-money venues (Polymarket, Kalshi) score on dollar volume / open interest;
     Manifold (play-money) scores on unique bettor count instead. A thin market is
-    a noise warning: sub-$10k volume is often bot-dominated, so its price should be
-    discounted relative to a deep, actively-traded market. Thresholds are tunable.
+    a noise warning, and the four real-money tiers grade how far a price can be leaned on.
 
     Takes loose fields rather than a row so a ``MarketChild`` sub-row is labelled by the SAME rule
     as its parent. Two labelling paths would let a Kalshi strike and its family disagree about what
@@ -387,12 +392,13 @@ def liquidity_label_from_fields(
     # Real-money venues: score on the larger of total volume and open interest.
     if total_volume is None and open_interest is None:
         return "no-liquidity-data"
-    score = max(total_volume or 0.0, open_interest or 0.0)
-    if score < LIQUIDITY_THIN_USD:
-        return "thin"
-    if score <= LIQUIDITY_DEEP_USD:
-        return "decent"
-    return "deep"
+    return _real_money_label(max(total_volume or 0.0, open_interest or 0.0))
+
+
+def _real_money_label(score_usd: float) -> str:
+    """The real-money tier for a market whose larger of volume and open interest is ``score_usd``."""
+    tier_ceilings = ((LIQUIDITY_DECENT_USD, "thin"), (LIQUIDITY_STRONG_USD, "decent"), (LIQUIDITY_DEEP_USD, "strong"))
+    return next((label for ceiling, label in tier_ceilings if score_usd < ceiling), "deep")
 
 
 def _liquidity_label(m: MarketMatch) -> str:

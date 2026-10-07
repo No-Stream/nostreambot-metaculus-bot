@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "outcome": "degraded",
+  "causes": [
+    {
+      "component": "polymarket",
+      "unit": "lookups",
+      "affected": 1,
+      "attempted": 13,
+      "error_type": "http_error",
+      "http_status": 403
+    }
+  ],
+  "models": {
+    "attempted": 3,
+    "succeeded": 3,
+    "timed_out": 0,
+    "dropped": 0,
+    "drop_causes": {}
+  },
+  "publishing": {
+    "forecasts": {"attempted": 1, "succeeded": 1, "failed": 0},
+    "comments": {"attempted": 1, "succeeded": 1, "failed": 0}
+  }
+}

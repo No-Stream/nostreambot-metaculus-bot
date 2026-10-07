@@ -60,6 +60,7 @@ from metaculus_bot.value_extraction import ExtractionOutcome, McForecast, PmfFor
 from tests.pipeline_test_helpers import (
     assert_server_accepts_cdf,
     cdf_heights,
+    distribution_from_heights,
     make_count_question,
     make_real_date_question,
     make_real_numeric_question,
@@ -126,6 +127,11 @@ def _make_option_list(options: list[tuple[str, float]]) -> PredictedOptionList:
 
 def _member_forecast_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [r.getMessage() for r in caplog.records if r.getMessage().startswith("MEMBER_FORECAST:")]
+
+
+def _built_numeric_prediction() -> NumericDistribution:
+    question = make_real_numeric_question(upper_bound=1000)
+    return distribution_from_heights(np.linspace(0, 0.99, question.cdf_size), question)
 
 
 _STANDARD_PERCENTILES: list[Percentile] = [
@@ -352,7 +358,7 @@ class TestForecasterChartVision:
             ),
             patch("metaculus_bot.forecaster_runners.sanitize_percentiles", return_value=(_STANDARD_PERCENTILES, None)),
             patch(
-                "metaculus_bot.forecaster_runners.build_numeric_distribution", return_value=MagicMock()
+                "metaculus_bot.forecaster_runners.build_numeric_distribution", return_value=_built_numeric_prediction()
             ) as mock_build,
             patch("metaculus_bot.forecaster_runners.detect_unit_mismatch", return_value=(False, "")),
             patch("metaculus_bot.forecaster_runners.log_final_prediction"),
@@ -425,7 +431,7 @@ class TestRunNumericForecast:
     ) -> None:
         """Numeric forecast returns (prediction, discrete_vote) tuple via the percentile branch."""
         reasoning_text = "OUTCOME_TYPE: DISCRETE\n\nPercentile 2.5: 50"
-        mock_prediction = MagicMock(spec=NumericDistribution)
+        mock_prediction = _built_numeric_prediction()
 
         mock_parse_structured = AsyncMock(return_value=OutcomeTypeResult(is_discrete_integer=True))
 
@@ -484,7 +490,9 @@ class TestRunNumericForecast:
                 "metaculus_bot.forecaster_runners.sanitize_percentiles",
                 return_value=(_STANDARD_PERCENTILES, None),
             ) as mock_sanitize,
-            patch("metaculus_bot.forecaster_runners.build_numeric_distribution", return_value=MagicMock()),
+            patch(
+                "metaculus_bot.forecaster_runners.build_numeric_distribution", return_value=_built_numeric_prediction()
+            ),
             patch("metaculus_bot.forecaster_runners.detect_unit_mismatch", return_value=(False, "")),
             patch("metaculus_bot.forecaster_runners.log_final_prediction"),
         ):
@@ -512,7 +520,9 @@ class TestRunNumericForecast:
                 "metaculus_bot.forecaster_runners.sanitize_percentiles",
                 return_value=(_STANDARD_PERCENTILES, None),
             ),
-            patch("metaculus_bot.forecaster_runners.build_numeric_distribution", return_value=MagicMock()),
+            patch(
+                "metaculus_bot.forecaster_runners.build_numeric_distribution", return_value=_built_numeric_prediction()
+            ),
             patch("metaculus_bot.forecaster_runners.detect_unit_mismatch", return_value=(True, "off by 1000x")),
             pytest.raises(UnitMismatchError, match="off by 1000x"),
         ):
@@ -554,7 +564,9 @@ class TestRunNumericForecast:
                 "metaculus_bot.forecaster_runners.sanitize_percentiles",
                 return_value=(_STANDARD_PERCENTILES, None),
             ),
-            patch("metaculus_bot.forecaster_runners.build_numeric_distribution", return_value=MagicMock()),
+            patch(
+                "metaculus_bot.forecaster_runners.build_numeric_distribution", return_value=_built_numeric_prediction()
+            ),
             patch("metaculus_bot.forecaster_runners.detect_unit_mismatch", return_value=(False, "")),
             patch("metaculus_bot.forecaster_runners.log_final_prediction"),
         ):
@@ -599,7 +611,9 @@ class TestRunNumericForecast:
                 "metaculus_bot.forecaster_runners.sanitize_percentiles",
                 return_value=(_STANDARD_PERCENTILES, None),
             ),
-            patch("metaculus_bot.forecaster_runners.build_numeric_distribution", return_value=MagicMock()),
+            patch(
+                "metaculus_bot.forecaster_runners.build_numeric_distribution", return_value=_built_numeric_prediction()
+            ),
             patch("metaculus_bot.forecaster_runners.detect_unit_mismatch", return_value=(False, "")),
             patch("metaculus_bot.forecaster_runners.log_final_prediction"),
         ):
@@ -628,7 +642,9 @@ class TestRunNumericForecast:
                 "metaculus_bot.forecaster_runners.sanitize_percentiles",
                 return_value=(_STANDARD_PERCENTILES, None),
             ),
-            patch("metaculus_bot.forecaster_runners.build_numeric_distribution", return_value=MagicMock()),
+            patch(
+                "metaculus_bot.forecaster_runners.build_numeric_distribution", return_value=_built_numeric_prediction()
+            ),
             patch("metaculus_bot.forecaster_runners.detect_unit_mismatch", return_value=(False, "")),
             patch("metaculus_bot.forecaster_runners.log_final_prediction"),
         ):
@@ -681,7 +697,7 @@ def _percentile_path_stubs() -> Iterator[None]:
             new=AsyncMock(return_value=OutcomeTypeResult(is_discrete_integer=False)),
         ),
         patch("metaculus_bot.forecaster_runners.sanitize_percentiles", return_value=(_STANDARD_PERCENTILES, None)),
-        patch("metaculus_bot.forecaster_runners.build_numeric_distribution", return_value=MagicMock()),
+        patch("metaculus_bot.forecaster_runners.build_numeric_distribution", return_value=_built_numeric_prediction()),
         patch("metaculus_bot.forecaster_runners.detect_unit_mismatch", return_value=(False, "")),
         patch("metaculus_bot.forecaster_runners.log_final_prediction"),
         patch("metaculus_bot.forecaster_runners.log_open_bound_piling_diagnostics"),

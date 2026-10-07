@@ -65,9 +65,10 @@ it notes several kinds of target:
 - **RESOLUTION** targets: if the resolution criteria name a specific source,
   metric, or clause, the driver quotes the operative language and current value
   from the authoritative source itself, not from news coverage of it.
-- **TIMING** is folded into every target: the question only resolves on events
-  inside its window, so the driver pins the exact date of each candidate trigger
-  and flags any event that pre-dates the question's open date.
+- **TIMING** is folded into every target: the window rule (`EVENT_WINDOW_RULE`,
+  in the window block the brief embeds) decides which events count, so the driver
+  pins the exact date of each candidate trigger and flags any event that pre-dates
+  the question's open date.
 - **BASE-RATE** targets: if the dry run leaned on a reference class, the driver
   decides whether to look up the real denominator and count. It researches
   conditional or niche or uncertain rates and skips common-knowledge ones.
@@ -548,7 +549,10 @@ The quote spot-check in `_validate_findings_payload` applies only to text
 findings and is warn-only. A quote that is not found verbatim in the run's tool
 contents is logged and counted in `quote_mismatch_warnings`, but the finding is
 still banked, because `read_document` paraphrases and joins passages with
-ellipses. The warning is deduped per run on `(source_url, quote)`, so a finding
+ellipses. The check splits a quote at ellipses, quote-glyph joiners and bare
+newlines and requires each substantive piece verbatim, and normalization rejoins
+words and numeric ranges that PDF extraction broke at a line wrap and spells out
+Latin ligatures such as `ﬁ` (but applies no NFKC, which would fold `10²` into `102`). The warning is deduped per run on `(source_url, quote)`, so a finding
 re-listed in `conclude`'s `final_findings` counts once rather than once per
 submission. Image findings have no quote: the finding validator instead
 requires an image ID already delivered on a preceding driver turn and checks

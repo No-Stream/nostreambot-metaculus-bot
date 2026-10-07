@@ -9,6 +9,7 @@ import pytest
 from curl_cffi.requests import AsyncSession as CurlAsyncSession
 from curl_cffi.requests import Session as CurlSession
 from forecasting_tools import BinaryQuestion, GeneralLlm, MultipleChoiceQuestion, NumericQuestion
+from litellm.litellm_core_utils.logging_worker import GLOBAL_LOGGING_WORKER
 
 # `playwright._impl._browser_type` is a PRIVATE module path, imported against an unpinned
 # `playwright>=1.54.0`; if a version bump breaks this line, the private path moved, and the
@@ -471,6 +472,24 @@ def _clear_gemini_client_cache():
     gsp._cached_client_for_key.cache_clear()
     yield
     gsp._cached_client_for_key.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _stop_litellm_logging_worker() -> Iterator[None]:
+    """Stop litellm's global logging worker on its own loop before the loop is abandoned.
+
+    ``nest_asyncio`` (applied by ``forecasting_tools``) makes ``asyncio.run`` run on the current
+    loop without cancelling leftover tasks, so a sync test driving the CLI strands the worker's
+    ``_worker_loop`` task on an open loop. When that loop is closed later, the pending coroutine's
+    garbage collection raises ``RuntimeError: Event loop is closed`` into an unrelated test.
+    Async tests need nothing: pytest-asyncio's runner already cancelled the task (``done()``).
+    ``_bound_loop`` is private; litellm's public ``stop()`` is a coroutine and needs that loop.
+    """
+    yield
+    worker_task = GLOBAL_LOGGING_WORKER._worker_task
+    worker_loop = GLOBAL_LOGGING_WORKER._bound_loop
+    if worker_task is not None and not worker_task.done() and worker_loop is not None and not worker_loop.is_closed():
+        worker_loop.run_until_complete(GLOBAL_LOGGING_WORKER.stop())
 
 
 def _zero_alertable_counters() -> None:

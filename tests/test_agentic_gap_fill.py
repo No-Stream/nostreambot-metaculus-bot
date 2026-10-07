@@ -502,7 +502,7 @@ class TestDriverTemplateSkeletonCarriesTheMarketClause:
     whenever it rendered anything, deliberate-empty sentence included). The placeholder now
     carries the header; these pins keep the two from drifting apart again."""
 
-    _CLAUSE_PHRASE = "the liquidity warning governs"
+    _CLAUSE_PHRASE = "Weigh a matched market by its `signal`"
 
     def test_binary_skeleton_carries_the_market_reading_rules(self) -> None:
         skeleton = _template_skeleton(make_real_binary_question())

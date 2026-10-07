@@ -61,6 +61,7 @@ from metaculus_bot.mantic import (
 )
 from metaculus_bot.publish_hardening import apply_publish_hardening
 from metaculus_bot.research.persistence import ResearchPersistenceWriter
+from metaculus_bot.run_status import RUN_STATUS, record_cli_failure, write_run_status_from_environment
 
 logger = logging.getLogger(__name__)
 
@@ -376,7 +377,7 @@ def _check_tournament_dates(run_mode: RunMode) -> bool:
     return False
 
 
-def main() -> None:
+def _run_cli() -> None:
     """Command-line entry-point for running the TemplateForecaster.
 
     main.py delegates here, so GitHub Actions invoking ``python main.py`` and a direct
@@ -437,6 +438,7 @@ def main() -> None:
     # Empty until the forecasts return, so a crashed run's summary reads its money against zero questions.
     forecast_reports: list[Any] = []
     try:
+        RUN_STATUS.set_stage("runtime")
         forecast_reports = _run_forecasts(template_bot, run_mode, only_posts=only_posts)
     finally:
         donated_below_floor = credit_telemetry.log_end_and_check_floor()
@@ -461,6 +463,77 @@ def main() -> None:
         fall_cup_reminder=fall_cup_reminder,
         mantic_tournament_stale=mantic_tournament_stale,
     )
+
+
+def main() -> None:
+    """Run the CLI and persist a structured status without changing its exit behavior."""
+    RUN_STATUS.reset()
+    try:
+        _run_cli()
+    except SystemExit as exc:
+        if RUN_STATUS.payload()["outcome"] == "unknown" and exc.code not in (None, 0):
+            RUN_STATUS.set_outcome("hard_failure")
+            record_cli_failure(exc)
+        raise
+    except Exception as exc:
+        if RUN_STATUS.payload()["outcome"] == "unknown":
+            RUN_STATUS.set_outcome("hard_failure")
+            record_cli_failure(exc)
+        raise
+    finally:
+        write_run_status_from_environment()
+
+
+def _record_cli_alert_causes(
+    *,
+    generic_fallback: int,
+    donated_below_floor: bool,
+    alerts_active: bool,
+    fall_cup_reminder: bool,
+    mantic_tournament_stale: bool,
+    mantic_post_drops: int,
+    deprecation_alerts: bool,
+) -> None:
+    if generic_fallback:
+        RUN_STATUS.record_legacy_cause("credit", error_type="provider_failure", affected=generic_fallback)
+    if donated_below_floor and alerts_active:
+        RUN_STATUS.record_legacy_cause("credit", error_type="credit_floor", affected=1)
+    if fall_cup_reminder:
+        RUN_STATUS.record_legacy_cause("setup", error_type="configuration_reminder", affected=1)
+    if mantic_tournament_stale:
+        RUN_STATUS.record_legacy_cause("tournament", error_type="stale_tournament", affected=1)
+    if mantic_post_drops:
+        RUN_STATUS.record_legacy_cause("setup", error_type="provider_failure", affected=mantic_post_drops)
+    if deprecation_alerts:
+        RUN_STATUS.record_legacy_cause("models", error_type="deprecated_model", affected=1)
+
+
+def _is_run_clean(
+    *,
+    report_summary_error: Exception | None,
+    alertable: int,
+    donated_below_floor: bool,
+    alerts_active: bool,
+    fall_cup_reminder: bool,
+    mantic_tournament_stale: bool,
+    deprecation_alerts: bool,
+) -> bool:
+    return (
+        report_summary_error is None
+        and alertable <= 0
+        and not (donated_below_floor and alerts_active)
+        and not fall_cup_reminder
+        and not mantic_tournament_stale
+        and not deprecation_alerts
+    )
+
+
+def _record_run_outcome(report_summary_error: Exception | None, run_clean: bool) -> None:
+    if report_summary_error is not None:
+        RUN_STATUS.set_outcome("hard_failure")
+        RUN_STATUS.record_legacy_cause("runtime", error_type="summary_error", affected=1)
+    else:
+        RUN_STATUS.set_outcome("clean" if run_clean else "degraded")
 
 
 def _report_degradation_and_exit(
@@ -505,19 +578,30 @@ def _report_degradation_and_exit(
     donated_key_note = "" if probed_donated_key_state is None else f", donated_key={probed_donated_key_state.value}"
     # Rendered only when a post dropped, so the term explaining a non-zero alertable appears when it applies.
     mantic_drops_note = "" if mantic_post_drops == 0 else f", mantic_post_drops={mantic_post_drops}"
+    deprecation_alerts = has_deprecation_alerts()
     # Emitted on EVERY path, and the "clean" phrase marks a clean run. See docs/operations.md "the exit ladder".
-    run_clean = (
-        report_summary_error is None
-        and alertable <= 0
-        and generic_fallback <= 0
-        and not (donated_below_floor and alerts_active)
-        and not fall_cup_reminder
-        and not mantic_tournament_stale
-        and not has_deprecation_alerts()
+    run_clean = _is_run_clean(
+        report_summary_error=report_summary_error,
+        alertable=alertable,
+        donated_below_floor=donated_below_floor,
+        alerts_active=alerts_active,
+        fall_cup_reminder=fall_cup_reminder,
+        mantic_tournament_stale=mantic_tournament_stale,
+        deprecation_alerts=deprecation_alerts,
     )
-    completion_phrase = "Run completed clean with" if run_clean else "Run completed with"
+    _record_cli_alert_causes(
+        generic_fallback=generic_fallback - suppressed_credit_fallback,
+        donated_below_floor=donated_below_floor,
+        alerts_active=alerts_active,
+        fall_cup_reminder=fall_cup_reminder,
+        mantic_tournament_stale=mantic_tournament_stale,
+        mantic_post_drops=mantic_post_drops,
+        deprecation_alerts=deprecation_alerts,
+    )
+    _record_run_outcome(report_summary_error, run_clean)
+    run_clean = run_clean and generic_fallback <= 0
     breakdown = (
-        f"{completion_phrase} {alertable} alertable degradation event(s) "
+        f"Run completed {'clean ' if run_clean else ''}with {alertable} alertable degradation event(s) "
         f"(bot={bot_alertable}, personal_key_fallback={generic_fallback} of which "
         f"donated_404={donated_404}, credit={credit_fallback}{suppression_note}{donated_key_note}{mantic_drops_note});"
     )

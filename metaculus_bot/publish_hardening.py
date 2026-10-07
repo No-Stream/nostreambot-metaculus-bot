@@ -154,6 +154,7 @@ from forecasting_tools.helpers.metaculus_client import MetaculusClient
 from metaculus_bot.constants import PUBLISH_POST_RETRIES, PUBLISH_POST_TIMEOUT, QUESTION_PLATFORM_HOSTS
 from metaculus_bot.http_status import http_status_from_exception
 from metaculus_bot.publish_gate import skip_publish_if_closed
+from metaculus_bot.run_status import RUN_STATUS, safe_error_type_from_exception
 
 assert PUBLISH_POST_RETRIES >= 0, "PUBLISH_POST_RETRIES must be non-negative"
 
@@ -342,6 +343,8 @@ def _wrap_with_timeout_retry(method_name: str, original: Callable[..., Any]) -> 
 
     @functools.wraps(original)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
+        publish_kind = "comments" if "comment" in method_name.lower() else "forecasts"
+        RUN_STATUS.record_publish_attempt(publish_kind)
         executor = _get_executor()
         attempts = PUBLISH_POST_RETRIES + 1  # read at call time so tests' monkeypatch is honored
 
@@ -349,7 +352,9 @@ def _wrap_with_timeout_retry(method_name: str, original: Callable[..., Any]) -> 
         for attempt in range(1, attempts + 1):
             future = executor.submit(original, *args, **kwargs)
             try:
-                return future.result(timeout=PUBLISH_POST_TIMEOUT)
+                result = future.result(timeout=PUBLISH_POST_TIMEOUT)
+                RUN_STATUS.record_publish_success(publish_kind)
+                return result
             except concurrent.futures.TimeoutError as exc:
                 last_exc = exc
                 future.cancel()
@@ -389,6 +394,11 @@ def _wrap_with_timeout_retry(method_name: str, original: Callable[..., Any]) -> 
         # and the question's POST never landed. Counted here (and only here) so the
         # end-of-run counters see it; the raise is unchanged.
         _bump_publish_attempt_failure()
+        RUN_STATUS.record_publish_failure(
+            publish_kind,
+            error_type=safe_error_type_from_exception(last_exc),
+            http_status=http_status_from_exception(last_exc),
+        )
         raise last_exc
 
     return wrapper

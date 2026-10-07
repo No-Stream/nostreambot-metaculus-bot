@@ -40,6 +40,15 @@ _TRACKER_PARAM_NAMES = frozenset({"gclid", "fbclid", "mc_cid", "mc_eid", "ref", 
 # sides run through _normalize_quote_text, so deletion is symmetric.
 _QUOTE_GLYPHS_RE = re.compile(r"[\"'‘’“”`]")  # noqa: RUF001  # the curly glyphs ARE the pattern; ASCII-ifying would stop matching them
 _WHITESPACE_RE = re.compile(r"\s+")
+# PDF extraction keeps a word or numeric range broken at a line wrap ("ex-\nponential",
+# "2020<en dash>\n2100"), which reads "ex- ponential" once whitespace collapses, while the driver
+# quotes the rejoined form. Both rules only delete the wrap, never touch a digit, so they
+# cannot make a fabricated figure match.
+_WRAPPED_WORD_HYPHEN_RE = re.compile(r"(?<=[^\W\d_])- (?=[^\W\d_])")
+_WRAPPED_RANGE_DASH_RE = re.compile(r"(?<=\d[-\u2013\u2014]) (?=\d)")
+# One PDF text layer can emit "ﬁ" where another window of the same file emits "fi". Only
+# the Latin ligature block is spelled out: full NFKC would also fold "10²" into "102".
+_LATIN_LIGATURES = str.maketrans({"ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl", "ﬅ": "st", "ﬆ": "st"})
 
 # Retrieval-quality tiers (W4). ToolOutcome.method records HOW a URL's content
 # reached the driver; we collapse those method values into two tiers so a
@@ -143,7 +152,9 @@ def _normalize_quote_text(text: str) -> str:
     verbatim content. Both the quote and the tool corpus run through here, so
     deleting glyphs on both sides makes the wrapped and unwrapped forms converge.
     """
-    return _WHITESPACE_RE.sub(" ", _QUOTE_GLYPHS_RE.sub("", text)).strip().lower()
+    collapsed = _WHITESPACE_RE.sub(" ", _QUOTE_GLYPHS_RE.sub("", text.translate(_LATIN_LIGATURES)))
+    rejoined = _WRAPPED_RANGE_DASH_RE.sub("", _WRAPPED_WORD_HYPHEN_RE.sub("", collapsed))
+    return rejoined.strip().lower()
 
 
 # Span boundaries in a driver quote — the ways it stitches non-contiguous
@@ -173,6 +184,10 @@ def _normalize_quote_text(text: str) -> str:
 #      read as one contiguous span and warn — the exact false-positive class the
 #      2026-07-28 clause was added to eliminate. Whitespace-only can never consume
 #      a span with non-whitespace content, so it is safe alongside.
+#   3. A bare newline. The driver stacks separately-located lines of a page one per
+#      line with no glyph or ellipsis; in the 2026-10-07 smoke run 6 of 8 warnings
+#      were such stacks with every line verbatim. Each line is then checked under
+#      the same floor and digit rules as any span.
 # The whole alternation is ONE capturing group, deliberately: `re.split` DISCARDS
 # unmatched separators, and a discarded glyph-boundary connective is up to
 # _SPAN_JOINER_MAX_CHARS of driver text that never gets checked — a fabricated
@@ -206,7 +221,8 @@ _SPAN_JOINER_MAX_CHARS = 24
 _SPAN_BOUNDARY_RE = re.compile(
     r"(\.{3,}|…"
     r"|[\"'‘’“”`]\s*[\"'‘’“”`]"  # noqa: RUF001
-    rf"|(?<=\S)[\"'‘’“”`][^\"'‘’“”`]{{0,{_SPAN_JOINER_MAX_CHARS}}}?[\"'‘’“”`](?=\S))"  # noqa: RUF001
+    rf"|(?<=\S)[\"'‘’“”`][^\"'‘’“”`]{{0,{_SPAN_JOINER_MAX_CHARS}}}?[\"'‘’“”`](?=\S)"  # noqa: RUF001
+    r"|\n)"
 )
 # Minimum normalized length for a split span to be grounded on its own.
 # Below this a span is a bare token or punctuation run that appears in arbitrary

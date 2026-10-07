@@ -37,8 +37,15 @@ from metaculus_bot.research.market_retrieval.http import (
     parse_iso_guarded,
     safe_float,
 )
-from metaculus_bot.research.market_retrieval.types import MarketMatch, ScalarEstimate, _liquidity_label
+from metaculus_bot.research.market_retrieval.rendering import CHILD_ROW_MARKER, render_snapshot
+from metaculus_bot.research.market_retrieval.types import (
+    MarketMatch,
+    MarketSnapshot,
+    ScalarEstimate,
+    _liquidity_label,
+)
 from tests.market_retrieval_fakes import FakeResponse, FakeSession
+from tests.test_market_retrieval_rendering import _table_rows
 
 _PAYLOADS_PATH = Path(__file__).parent / "data" / "prediction_market_venue_payloads.json"
 _MULTI_CLOSE_PATH = Path(__file__).parent / "data" / "kalshi_multi_close_event_2026_08_04.json"
@@ -102,6 +109,11 @@ def _event(page: dict[str, Any], ticker: str) -> dict[str, Any]:
         if event.get("event_ticker") == ticker:
             return copy.deepcopy(event)
     raise AssertionError(f"fixture carries no event {ticker!r}")
+
+
+def _rendered_child_prices(snapshot: MarketSnapshot) -> list[str]:
+    rendered = render_snapshot(snapshot)
+    return [row["prob"] for row in _table_rows(rendered) if row["platform"] == CHILD_ROW_MARKER]
 
 
 class TestKalshiEventProjection:
@@ -660,7 +672,7 @@ class TestKalshiEventDerivations:
         ],
     )
     def test_the_no_price_spread_threshold_is_inclusive(self, bid: str, ask: str, priced: bool) -> None:
-        """`KALSHI_NO_PRICE_SPREAD` is the weakest number in this change — calibrated on eleven live
+        """`NO_PRICE_SPREAD` is the weakest number in this change — calibrated on eleven live
         strikes across the committed captures, whose real spreads run 0.01 to 0.10, so 0.40 sits 4x above
         the widest observed one. Its exact boundary is pinned here because the run-log `withheld=` field
         is what will retune it, and a silently-shifted comparison would make that measurement
@@ -694,7 +706,7 @@ class TestKalshiEventDerivations:
 
         for market in live:
             spread = float(market["yes_ask_dollars"]) - float(market["yes_bid_dollars"])
-            assert spread < venues.kalshi.KALSHI_NO_PRICE_SPREAD, market.get("yes_sub_title")
+            assert spread < venues.kalshi.NO_PRICE_SPREAD, market.get("yes_sub_title")
             assert venues.kalshi_strike_price(market) is not None, market.get("yes_sub_title")
 
     def test_the_dollar_conversion_deliberately_does_not_take_the_no_price_rule(self) -> None:
@@ -841,9 +853,8 @@ class TestKalshiEventDerivations:
         claim.
 
         `KXGOVWINS-27JAN01` carries $3,387 of volume on its first strike and $107,079 across the
-        three, all live. The `signal` column reads `thin` on the first and `deep` on the family, and
-        the prompt tells forecasters to discount thin markets as noisy and anchor on deep ones — so
-        the old read told them to discount a $107k market. Only 2 events on the frozen universe make
+        three, all live. The `signal` column reads `decent` on the first and `deep` on the family, and
+        the prompt weighs a market by that tier — so the per-strike read under-weighted a $107k market. Only 2 events on the frozen universe make
         that flip at 2-4 all-open strikes, which is why this is a committed live capture rather than
         a hand-built dict.
         """
@@ -860,7 +871,7 @@ class TestKalshiEventDerivations:
 
         first_only = copy.deepcopy(match)
         first_only.total_volume, first_only.open_interest = first_volume, first_oi
-        assert _liquidity_label(first_only) == "thin", "fixture no longer straddles a label boundary"
+        assert _liquidity_label(first_only) == "decent", "fixture no longer straddles a label boundary"
 
     def test_a_single_strike_event_still_quotes_its_price(self, captured_payloads: dict[str, Any]) -> None:
         """The other side of the rule: a one-strike event and its strike ask the same question, so
@@ -1073,6 +1084,26 @@ class TestPolymarket:
         assert rows is not None
         assert [child.title for child in rows[0].children] == ["1 (25 bps)", "0 (0 bps)"]
 
+    def test_nested_market_children_keep_their_own_bid_ask_book(self, captured_payloads: dict[str, Any]) -> None:
+        event = captured_payloads["polymarket_search"]["events"][0]
+        markets = event["markets"]
+        assert len(markets) > 1
+
+        children = venues.polymarket_event_children(markets)
+
+        assert [(child.quote_low, child.quote_high) for child in children] == [(0.887, 0.889), (0.06, 0.07)]
+
+    def test_a_real_event_payload_renders_each_child_price_with_its_book(
+        self, captured_payloads: dict[str, Any]
+    ) -> None:
+        matches = venues.parse_polymarket_matches(captured_payloads["polymarket_search"], width=60)
+
+        assert matches is not None
+        assert _rendered_child_prices(MarketSnapshot(matches=matches)) == [
+            "0.89 [0.89-0.89]",
+            "0.07 [0.06-0.07]",
+        ]
+
     def test_an_untouched_placeholder_leg_reports_no_price(self) -> None:
         """Gamma's `outcomePrices` default is `["0.5","0.5"]`, so a placeholder leg quotes exactly 0.5
         with nothing behind it — 155 of the archive's 1,839 ranked-era child outcomes.
@@ -1163,6 +1194,69 @@ class TestPolymarket:
         assert rows is not None
         assert rows[0].implied_prob_yes is None
         assert rows[0].price_withheld is True
+
+    def test_an_untraded_leg_on_a_degenerate_book_reports_no_price(self) -> None:
+        """Gamma prices an untraded leg at its book's midpoint, not only at the exact 0.5 default. A live
+        2026-10-06 Conference League "Most Assists" event quoted Jens Jonsson at `0.2495` off a
+        0.001/0.498 book with no volume, OI or trade, and rendered legs like `Ken Sema 0.50 [0.00-0.99]`:
+        the same manufactured price the exact-0.5 guard exists for, by another number."""
+        market = {
+            "groupItemTitle": "Jens Jonsson",
+            "outcomePrices": json.dumps(["0.2495", "0.7505"]),
+            "bestBid": 0.001,
+            "bestAsk": 0.498,
+        }
+
+        child = venues.polymarket_event_children([market])[0]
+
+        assert child.implied_prob_yes is None
+        assert child.price_withheld is True
+        assert (child.quote_low, child.quote_high) == (0.001, 0.498)
+        traded = {"groupItemTitle": "Carlo Holse", "outcomePrices": json.dumps(["0.3"]), "volumeNum": 542.0}
+        event = {"title": "Most Assists", "slug": "most-assists", "markets": [market, traded]}
+        rows = venues.parse_polymarket_matches({"events": [event]}, width=60)
+        assert rows is not None
+        assert _rendered_child_prices(MarketSnapshot(matches=rows)) == ["0.30", "0.00-0.50"]
+
+    def test_an_untraded_leg_on_a_real_book_keeps_its_midpoint(self) -> None:
+        """A two-sided book narrower than `NO_PRICE_SPREAD` is a quote somebody posted, traded or not
+        (the same event's Takumi Minamino: 0.0355 off 0.001/0.07)."""
+        market = {
+            "groupItemTitle": "Takumi Minamino",
+            "outcomePrices": json.dumps(["0.0355"]),
+            "bestBid": 0.001,
+            "bestAsk": 0.07,
+        }
+
+        child = venues.polymarket_event_children([market])[0]
+
+        assert child.implied_prob_yes == pytest.approx(0.0355)
+        assert child.price_withheld is False
+
+    def test_a_traded_leg_on_a_wide_book_keeps_its_price(self) -> None:
+        """Once a leg has traded, Gamma's price on a wide book is the last trade, which is a real price."""
+        market = {
+            "groupItemTitle": "Orbelin Pineda",
+            "outcomePrices": json.dumps(["0.02"]),
+            "bestBid": 0.001,
+            "bestAsk": 0.6,
+            "volumeNum": 394.56,
+        }
+
+        child = venues.polymarket_event_children([market])[0]
+
+        assert child.implied_prob_yes == pytest.approx(0.02)
+
+    def test_parent_rows_take_the_degenerate_book_guard(self) -> None:
+        """Both parent-row paths (single-market event, top-level markets fallback) read the same price."""
+        market = {"question": "Long shot?", "outcomePrices": json.dumps(["0.2495"]), "bestBid": 0.001, "bestAsk": 0.498}
+        event = {"title": "Long shot?", "slug": "long-shot", "markets": [market]}
+
+        for payload in ({"events": [event]}, {"markets": [market]}):
+            rows = venues.parse_polymarket_matches(payload, width=60)
+            assert rows is not None
+            assert rows[0].implied_prob_yes is None
+            assert rows[0].price_withheld is True
 
     def test_a_settled_leg_is_marked_resolved_in_the_array_order(self) -> None:
         """A nested Polymarket market can individually be closed while the event stays open (Kalshi
@@ -2165,6 +2259,35 @@ class TestPredictIt:
         assert [(child.title, child.implied_prob_yes) for child in match.children] == [
             (contract["name"], pytest.approx(contract["lastTradePrice"])) for contract in market["contracts"]
         ]
+
+    def test_each_contract_child_keeps_its_yes_bid_ask_book(self, captured_payloads: dict[str, Any]) -> None:
+        market = captured_payloads["predictit_all"]["markets"][0]
+
+        children = venues.predictit_contract_children(market["contracts"])
+
+        assert [(child.quote_low, child.quote_high) for child in children] == [(0.2, 0.21), (0.08, 0.09)]
+
+    def test_a_real_market_payload_renders_each_contract_price_with_its_book(
+        self, captured_payloads: dict[str, Any]
+    ) -> None:
+        market = captured_payloads["predictit_all"]["markets"][0]
+        match = venues.predictit_market_match(market, match_confidence=1.0, channel="universe_fuzzy")
+
+        assert match is not None
+        assert _rendered_child_prices(MarketSnapshot(matches=[match])) == [
+            "0.21 [0.20-0.21]",
+            "0.09 [0.08-0.09]",
+        ]
+
+    def test_a_contract_with_no_yes_bid_renders_its_price_without_a_book(
+        self, captured_payloads: dict[str, Any]
+    ) -> None:
+        market = copy.deepcopy(captured_payloads["predictit_all"]["markets"][0])
+        market["contracts"][0]["bestSellYesCost"] = None
+        match = venues.predictit_market_match(market, match_confidence=1.0, channel="universe_fuzzy")
+
+        assert match is not None
+        assert _rendered_child_prices(MarketSnapshot(matches=[match])) == ["0.21", "0.09 [0.08-0.09]"]
 
     def test_the_contract_children_keep_ballot_order(self, captured_payloads: dict[str, Any]) -> None:
         """Unsorted, unlike the real-money venues: PredictIt's dump carries no per-contract volume to

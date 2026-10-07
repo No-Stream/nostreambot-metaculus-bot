@@ -128,7 +128,7 @@ def _maybe_stash_single_chart(
     qid = getattr(question, "id_of_question", None)
     if qid is None:
         return
-    is_max = route.is_max or route.spec.column == "High"
+    is_max = route.is_max or route.value_field == "High"
     # v1: chart only plain level questions. Derived targets (MoM diff / MoM % / monthly
     # avg) render + fit the band on a derived quantity; the level-shape chart would
     # mislead by pairing a level history with a change-quantity ribbon.

@@ -457,6 +457,17 @@ MARKER_SPECS: list[MarkerSpec] = [
         raw_fields=frozenset({"raw", "published"}),
     ),
     MarkerSpec(
+        "percentile_roundtrip",
+        # Why: grid repairs move stated anchors. Receipt: docs/telemetry_markers.md "PERCENTILE_ROUNDTRIP".
+        re.compile(
+            r"PERCENTILE_ROUNDTRIP:\s*question=(?P<question>\S+)\s+model=(?P<model>.+?)"
+            r"\s+qtype=(?P<qtype>\S+)\s+grid=(?P<grid>\S+)\s+platform=(?P<platform>\S+)"
+            r"\s+max_abs_drift=(?P<max_abs_drift>\S+)\s+p=(?P<p>\S+)\s+v=(?P<v>\S+)"
+            r"\s+cdf_at_v=(?P<cdf_at_v>\S+)\s+point_count=(?P<point_count>\d+)"
+        ),
+        qid_kind=QID_KIND_QUESTION_ID,
+    ),
+    MarkerSpec(
         "numeric_aggregate",
         # Why: method outranks the strategy and STACKER_OUTCOME. Receipt: docs/telemetry_markers.md "NUMERIC_AGGREGATE".
         re.compile(
@@ -584,6 +595,12 @@ MARKER_SPECS: list[MarkerSpec] = [
             r"PAID PERSONAL-KEY FALLBACK:\s*donated OpenRouter key failed for model=(?P<model>\S+?),"
             r".*?error=(?P<error_type>[^:]+):\s*(?P<error>.*)$"
         ),
+    ),
+    MarkerSpec(
+        "run_status_json",
+        # Why: archives the exact privacy-safe status artifact. Receipt: docs/telemetry_markers.md "RUN_STATUS_JSON".
+        re.compile(r"RUN_STATUS_JSON:\s*(?P<payload>\{.*\})$"),
+        raw_fields=frozenset({"payload"}),
     ),
     MarkerSpec(
         "run_alertable_summary",

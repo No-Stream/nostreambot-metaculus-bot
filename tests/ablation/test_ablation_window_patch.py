@@ -152,7 +152,7 @@ class TestPatchedWindowForQuestion:
         assert "Question opened: 2026-01-01" in output
         assert "Scheduled to resolve: 2026-05-01" in output
         assert "Forecasting window: open date" in output
-        assert "BEFORE the open date" in output
+        assert prompts_module.EVENT_WINDOW_RULE in output
         assert "days ago" in output
         assert "days from now" in output
 

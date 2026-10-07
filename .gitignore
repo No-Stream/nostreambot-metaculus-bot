@@ -56,6 +56,7 @@ scripts/research_sync/*.plist
 # since that name guards a credentials file.
 *.json
 !tests/data/**/*.json
+!tests/fixtures/forecast_alert_degraded.json
 # The residual round's curated correlation-cluster tables: package data, not an analysis dump.
 !metaculus_bot/performance_analysis/cluster_tables.json
 

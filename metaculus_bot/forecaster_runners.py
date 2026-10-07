@@ -57,6 +57,7 @@ from metaculus_bot.numeric.discrete_snap import OutcomeTypeResult
 from metaculus_bot.numeric.pipeline import build_numeric_distribution, sanitize_percentiles
 from metaculus_bot.numeric.pmf_cdf import build_pmf_distribution, published_pmf
 from metaculus_bot.numeric.pmf_grid import PmfGrid, pmf_grid
+from metaculus_bot.numeric.roundtrip import format_percentile_roundtrip_marker
 from metaculus_bot.numeric.utils import bound_messages, clamp_and_renormalize_mc, pmf_bound_messages
 from metaculus_bot.numeric.validation import detect_unit_mismatch
 from metaculus_bot.prompts import binary_prompt, date_prompt, multiple_choice_prompt, numeric_prompt, pmf_prompt
@@ -535,6 +536,7 @@ def build_guarded_numeric_distribution(
     """
     sanitized_percentiles, zero_point = sanitize_percentiles(declared_percentiles, question, model_name=model_name)
     prediction = build_numeric_distribution(sanitized_percentiles, question, zero_point, model_name=model_name)
+    logger.info(format_percentile_roundtrip_marker(prediction, declared_percentiles, question, model=model_name))
     logger.info(
         format_member_forecast_marker(
             question_id=question.id_of_question,

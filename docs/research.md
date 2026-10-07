@@ -1000,11 +1000,13 @@ what survived a budget it could not see, and price-descending scrambles threshol
 ladders. And each venue BLANKS its own manufactured ~0.50 default at parse time, so
 a fabricated price reaches neither the ranker nor the render nor a disclosure figure
 (192 of 1,839 archived ranked-era child outcomes were in that class). Kalshi blanks
-on a book at least `KALSHI_NO_PRICE_SPREAD` wide: an empty book is
+on a book at least `NO_PRICE_SPREAD` wide (`venues/_shared.py`): an empty book is
 `0.0000`/`1.0000`, whose midpoint is a synthetic $0.50 nobody quoted, and the cell
 then renders the raw range `0.00-1.00`, which cannot be read as a point
-probability. Polymarket blanks on Gamma's `["0.5","0.5"]` placeholder when the leg
-carries no volume and no open interest. Manifold blanks (`_priced_or_none`) an
+probability. Polymarket blanks an untraded leg (no volume and no open interest) on
+Gamma's `["0.5","0.5"]` placeholder, and also on a book at least `NO_PRICE_SPREAD`
+wide, because Gamma prices an untraded leg at its book's midpoint (a live
+2026-10-06 leg quoted 0.2495 off a 0.001/0.498 book). Manifold blanks (`_priced_or_none`) an
 answer sitting at its untouched 0.5 prior with zero volume, in the ranker's
 candidate segment as well as in the children, where a defaulted price had been
 distorting selection upstream of the render.
@@ -1089,6 +1091,21 @@ measured by the standard backtest gate: it was validated with live
 The research section header is `## Prediction Market Snapshot`, and the prompts
 import it from `prompts.py` as `MARKET_SNAPSHOT_SECTION_HEADER` to decide whether to
 render their market-reading rules at all.
+
+#### Liquidity tiers
+
+`liquidity_label_from_fields` (`market_retrieval/types.py`) labels every row and sub-row. On the
+real-money venues it scores the larger of total volume and open interest in USD (Kalshi counts are
+converted at parse): thin under `LIQUIDITY_DECENT_USD` ($1k), decent to `LIQUIDITY_STRONG_USD`
+($10k), strong to `LIQUIDITY_DEEP_USD` ($100k), deep from there up. Manifold stays on play-money
+bettor counts (thin/decent/high) and PredictIt reads `no-liquidity-data`. The tiers were set by the
+operator on 2026-10-06, replacing a thin under $5k / deep over $50k pair. The evidence was Mantic's
+Polymarket backtest (2026-09-29): a strong AI forecaster beat the market's price clearly below about
+$10k of volume and drew level near $100k, and the best blend weighted the price at zero at $1k and 4%
+at $10k. Mantic sums volume across an event and we score one market, so these floors are conservative
+against that evidence. The legend prints the floors; the prompt's `_MARKET_READING_RULES` turns the
+tier into a weight (docs/prompts.md). The labels feed no telemetry marker, so changing them breaks no
+data contract.
 
 ### Resolution-source fetcher: `RESOLUTION_SOURCE_ENABLED`
 

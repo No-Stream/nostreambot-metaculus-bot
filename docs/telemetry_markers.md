@@ -41,6 +41,7 @@ incidents behind the design.
 | `NUMERIC_DEGENERATE_DECLARATION` | `numeric/pipeline.py:_apply_jitter_and_clamp` | Per-forecaster point-mass numeric declaration. |
 | `NUMERIC_AGGREGATE_GRID_MISMATCH` | `numeric/utils.py:aggregate_numeric` | Per-model CDF whose grid length disagreed with the question's. |
 | `CDF_MAXSTEP_CLIP` | `numeric/pchip_cdf.py:safe_cdf_bounds` | Per-CDF-build max-step clip. |
+| `PERCENTILE_ROUNDTRIP` | `numeric/roundtrip.py:format_percentile_roundtrip_marker`, emitted from `forecaster_runners.py` | Drift from original stated percentile anchors to each built member CDF. |
 | `NUMERIC_PCHIP_FALLBACK` (matches the log line `PCHIP CDF construction failed`) | `numeric/diagnostics.py:log_pchip_fallback` | Per-question PCHIP build failure that fell back to forecasting-tools' own CDF builder. |
 | `SPREAD_UNDEFINED` | `spread_metrics.py:numeric_percentile_spread` | Per-question unmeasurable disagreement spread. |
 | `TS_ANCHOR_ROUTE` | `research/ts_routing.py:route_question` | Per-question timeseries-anchor routing decision. |
@@ -73,6 +74,7 @@ incidents behind the design.
 | `GAP_FILL_SKIPPED_FOR_BUDGET` | `research/gap_fill_stages.py` | Per-question gap-fill skip when both passes were dropped up front. |
 | `GAP_FILL_CUT_FOR_BUDGET` (matches `GAP_FILL_V1_CUT_FOR_BUDGET` / `GAP_FILL_V2_CUT_FOR_BUDGET`) | `research/gap_fill_stages.py` | Per-question mid-phase gap-fill cut. |
 | `PAID_PERSONAL_KEY_FALLBACK` (matches the log line `PAID PERSONAL-KEY FALLBACK`) | `fallback_openrouter.py:record_donated_key_fallback` | Per-call donated-to-personal key fallback WARN. |
+| `RUN_STATUS_JSON` | `run_status.py:write_run_status_from_environment` | Exact safe structured status JSON for source, model, and publication evidence. |
 | `RUN_ALERTABLE_SUMMARY` (matches the log line `Run completed ... with N alertable ...`) | `cli.py` | The end-of-run alertable breakdown, emitted on every path. |
 | `ONLY_POSTS` | `cli.py:_tournament_source` | The `--only-posts` smoke filter, one line per run that set it. |
 | `QUESTION_CAP_FORFEIT` | `forecaster.py:forecast_questions` | The `max_questions_per_run` cap. |
@@ -356,8 +358,8 @@ end-anchored and a separate spec keeps this harvester change purely additive.
 
 Two fields carry the questions this exists to answer. `withheld` counts the prices the venue
 parsers refused as manufactured: an empty Kalshi book, a Polymarket placeholder leg at Gamma's
-`["0.5","0.5"]` default, or a Manifold answer at its untouched prior. The Kalshi half of that is
-gated on `KALSHI_NO_PRICE_SPREAD`, a threshold calibrated on eleven fixture strikes, so its prod
+`["0.5","0.5"]` default or an untraded Polymarket leg on a degenerate book, or a Manifold answer at
+its untouched prior. The Kalshi and degenerate-book halves of that are gated on `NO_PRICE_SPREAD`, a threshold calibrated on eleven fixture strikes, so its prod
 incidence has to be a query rather than a guess. `max_stage` and `ladder_chars` say whether the
 ladder's section allowance binds on real slates (0 means every outcome named, 99 the per-family
 hard bound).
@@ -1129,6 +1131,25 @@ back and with what error, which is what separates "one flaky Gemini call" from "
 ran on the paid key". `error` captures greedily to end-of-line because it holds the exception's
 `str`.
 
+### RUN_STATUS_JSON
+
+`run_status.py:write_run_status_from_environment` emits the exact JSON payload written to the
+workflow-configured `FORECAST_RUN_STATUS_PATH`, after the file write succeeds. The parser stores
+`payload` verbatim; decode that JSON to read its `schema_version`, `outcome`, `causes`, `models`,
+and `publishing` fields. This run-level marker has no question id, and its labels are allowlisted
+before serialization, so it contains no exception messages, credentials, URLs, or query text.
+The existing telemetry harvest preserves it after Actions' 90-day log and artifact expiry.
+
+Schema 1 represents unmeasured counts as `null`, and observed attempts separately from observed
+successes. Each cause identifies its counting unit: logical HTTP lookups, source checks,
+provider calls, models, publications, or legacy alerts. A shared HTTP request can affect several
+source checks; their counts stay separate and must not be added together. A source cause's
+affected count does not establish the outcome of its remaining
+attempts; model timeouts are a subset of model drops. Publication counts describe logical
+forecast and comment submissions across their existing retries, with success recorded only
+after the wrapped client returns successfully. The CLI still decides the process exit status.
+See [forecast_alerts.md](forecast_alerts.md) for the renderer, example, and notification limits.
+
 ### RUN_ALERTABLE_SUMMARY
 
 The end-of-run alertable breakdown, matching the log line `Run completed ... with N alertable
@@ -1534,3 +1555,39 @@ this lives in the published comment, not stdout; its durable consumer is
 `performance_analysis.parsing`, and the spec is here so the run-log parser stays complete if a
 comment body is ever logged. `used` / `configured` are the contributed / configured forecaster
 counts. See "HTML-comment markers" above.
+
+### PERCENTILE_ROUNDTRIP
+
+Emitted at INFO by `numeric/roundtrip.py:format_percentile_roundtrip_marker`, from
+`forecaster_runners.py:build_guarded_numeric_distribution` after the member build (including
+PCHIP, smoothing and max-step clipping), using the original declared percentiles before
+sanitization. The line carries `question` (question id), `model` (the member's model name),
+`qtype=numeric|date` (matching `MEMBER_FORECAST`), `grid=continuous|discrete`,
+`platform=metaculus|mantic`, `max_abs_drift`, `p`, `v`,
+`cdf_at_v`, and `point_count`. `qid_kind` is `question_id`; the archive stem is
+`percentile_roundtrip`.
+
+For each original stated `(p, v)`, signed drift is `cdf_at_v - p`, in probability units, and
+`max_abs_drift` is the largest absolute drift. The recorded `p`, `v`, and `cdf_at_v` identify
+that worst point (the first in declaration order breaks ties). Sanitized anchors do not replace
+the originals, and duplicate values remain separate points. Continuous numeric and date
+questions use point evaluation with `numpy.interp` in value space on the built CDF's actual grid.
+Outside the grid, NumPy returns the endpoint probability because a published CDF cannot describe
+where the mass within an open tail lies.
+
+Discrete questions use the actual grid values as bin edges, including for logarithmic grids.
+For a value `v` in a bin `(lo, hi]`, the CDF heights at its edges define an interval
+`[cdf(lo), cdf(hi)]`; the first bin also includes its lower edge. A value exactly on an interior
+edge belongs to the bin below it, and the last edge belongs to the last in-range bin. Drift is zero
+when `p` lies inside this interval, in which case `cdf_at_v` is recorded as `p`. Otherwise,
+`cdf_at_v` is the nearest interval endpoint and signed drift remains `cdf_at_v - p`; a negative
+drift means the bin and all lower bins contain less mass than the forecaster stated. Strictly below
+the first edge, compare against the tail interval `[0, cdf[0]]`; strictly above the last edge,
+compare against `[cdf[-1], 1]`. Mantic quantitative questions also use this rule because the
+Mantic client rewrites them to `DiscreteQuestion` (see `numeric/config.py:grid_is_outcome_space`).
+The Mantic tail-floor effect is logged separately by `NUMERIC_AGGREGATE`'s raw versus floored tail
+fields.
+
+Members without original percentile anchors, such as PMF members, emit no marker. Member
+telemetry precedes the unit guard, as `MEMBER_FORECAST` does; join survivors when restricting an
+audit to members used in the aggregate.

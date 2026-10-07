@@ -76,21 +76,7 @@ def patched_window_for_question(question: MetaculusQuestion | Any) -> Iterator[N
     def _patched(q: Any) -> str:
         if _question_identity(q) != target_identity:
             return original(q)
-        assert q.open_time is not None, "question.open_time is required"
-        assert q.scheduled_resolution_time is not None, "question.scheduled_resolution_time is required"
-        elapsed_days = (mid_window - q.open_time).days
-        remaining_days = (q.scheduled_resolution_time - mid_window).days
-        return (
-            f"Today: {mid_window.strftime('%Y-%m-%d')}\n"
-            f"Question opened: {q.open_time.strftime('%Y-%m-%d')} ({elapsed_days} days ago)\n"
-            f"Scheduled to resolve: {q.scheduled_resolution_time.strftime('%Y-%m-%d')} "
-            f"({remaining_days} days from now)\n"
-            f"Forecasting window: open date → resolution date. "
-            f"Events occurring BEFORE the open date do NOT resolve this question YES "
-            f"unless the resolution criteria explicitly say they count. "
-            f"If the question uses forward-looking language ('will X occur by DATE'), "
-            f"interpret it as asking about the open→resolution window, not all of history."
-        )
+        return prompts_module.forecasting_window_at(q, mid_window)
 
     prompts_module._forecasting_window_str = _patched
     _window_patch_active = True

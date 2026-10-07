@@ -20,7 +20,7 @@ from forecasting_tools import (
     NumericQuestion,
     clean_indents,
 )
-from forecasting_tools.data_models.questions import DateQuestion
+from forecasting_tools.data_models.questions import DateQuestion, DiscreteQuestion
 
 from metaculus_bot.constants import MC_PROB_MIN, PLATFORM_MANTIC, PMF_ABOVE_RANGE_KEY, PMF_BELOW_RANGE_KEY
 from metaculus_bot.numeric.config import (
@@ -123,8 +123,18 @@ def _benchmarking_warning(context: BenchmarkingContext = "search") -> str:
     )
 
 
+# Shared by the forecaster window block and the AskNews summarizer. Receipt: docs/prompts.md "EVENT_WINDOW_RULE".
+EVENT_WINDOW_RULE = (
+    "Which events count: the resolution criteria always govern. Where they are silent, use standard practice: "
+    "if the question asks whether an event occurs (e.g. 'will X happen by DATE'), only occurrences after the "
+    "question's open date count; if it measures a cumulative total or a value over a stated period (e.g. a "
+    "full-year count, or a running total reported by a date), everything inside that period counts, including "
+    "anything before the open date."
+)
+
+
 def _forecasting_window_str(question: MetaculusQuestion) -> str:
-    """Return a window-anchor block: open date, today, resolution date, deltas.
+    """Return a window-anchor block: open date, today, resolution date, deltas, and which events count.
 
     Prevents a common failure mode where bots treat questions like "Will a
     nuclear detonation occur in a Japanese city by 2030?" as already-resolved
@@ -132,12 +142,17 @@ def _forecasting_window_str(question: MetaculusQuestion) -> str:
     window is open_time → scheduled_resolution_time, not "all of history".
     Receipt: docs/prompts.md "_forecasting_window_str".
     """
+    return forecasting_window_at(question, datetime.now(UTC))
+
+
+def forecasting_window_at(question: MetaculusQuestion, today: datetime) -> str:
+    """``_forecasting_window_str`` with an explicit "today", for the ablation harness's mid-window replay."""
     # Typed as optional but always populated on a real API question, so a missing one is broken data.
     assert question.open_time is not None, "question.open_time is required"
     assert question.scheduled_resolution_time is not None, "question.scheduled_resolution_time is required"
 
     # tz-aware on both sides: ft 0.2.92 question datetimes are aware, and naive minus aware raises.
-    today = datetime.now(UTC)
+    today = _as_utc(today)
     open_time = _as_utc(question.open_time)
     scheduled_resolution_time = _as_utc(question.scheduled_resolution_time)
     elapsed_days = (today - open_time).days
@@ -148,11 +163,7 @@ def _forecasting_window_str(question: MetaculusQuestion) -> str:
         f"Question opened: {question.open_time.strftime('%Y-%m-%d')} ({elapsed_days} days ago)\n"
         f"Scheduled to resolve: {question.scheduled_resolution_time.strftime('%Y-%m-%d')} "
         f"({remaining_days} days from now)\n"
-        f"Forecasting window: open date → resolution date. "
-        f"Events occurring BEFORE the open date do NOT resolve this question YES "
-        f"unless the resolution criteria explicitly say they count. "
-        f"If the question uses forward-looking language ('will X occur by DATE'), "
-        f"interpret it as asking about the open→resolution window, not all of history."
+        f"Forecasting window: open date → resolution date. {EVENT_WINDOW_RULE}"
     )
 
 
@@ -248,6 +259,8 @@ _SEARCH_LINK_CITATION_CLAUSE = (
 def web_research_prompt(
     question_text: str,
     *,
+    resolution_criteria: str,
+    fine_print: str,
     options: Sequence[str] | None = None,
     is_benchmarking: bool = False,
     citation_style: CitationStyle = "markdown",
@@ -258,6 +271,8 @@ def web_research_prompt(
     Shared by the OpenRouter native-search provider (markdown citations) and
     the Gemini grounding provider (self-cited search links).
     ``options`` is the MC ballot (see ``_mc_options_line``); None on other types.
+    The criteria and fine print ride along because a title alone sent the search to the wrong event
+    (Mantic 717 researched the previous election's coalition): docs/prompts.md "web_research_prompt".
     """
     citation_clause = (
         "Include inline citations [source name](url) for all factual claims"
@@ -315,6 +330,12 @@ Where the question invites reference-class reasoning (how often events like this
 QUESTION:
 {question_text}{options_block}
 
+RESOLUTION CRITERIA (research the exact event, period, units and sources defined here, not a similar or earlier one):
+{(resolution_criteria or "(none provided)").strip()}
+
+Fine print (often contains resolution sources):
+{(fine_print or "(none provided)").strip()}
+
 {footer}"""
 
 
@@ -347,8 +368,7 @@ def asknews_summarizer_prompt(
         {resolution_criteria}
         {fine_print}
 
-        The question opened on {open_date}. Its forecasting window runs from that open date to resolution:
-        only events occurring AFTER {open_date} can trigger resolution.
+        The question opened on {open_date}. {EVENT_WINDOW_RULE}
 
         Below is raw news research. Your task is to produce a DETAILED and COMPREHENSIVE briefing that:
 
@@ -373,8 +393,10 @@ def asknews_summarizer_prompt(
         - NEVER paraphrase numbers, percentages, probabilities, dates, or quantitative data. Copy them EXACTLY.
           BAD:  "The Fed indicated a low-medium recession risk"
           GOOD: "The Fed's March 2025 report estimated a 30% probability of recession by Q4"
-        - Date every fact precisely. Explicitly flag any event that could otherwise be read as already
-          satisfying the resolution criteria: the FIRST time such a flag appears in the briefing, use the
+        - Date every fact precisely. Explicitly flag any event from before {open_date} that does NOT count
+          under the rule above but could otherwise be read as already satisfying the resolution criteria
+          (never flag an event the criteria count, such as a case inside a cumulative period): the FIRST
+          time such a flag appears in the briefing, use the
           full tag "[PRE-WINDOW — occurred before question open, cannot itself satisfy the criteria]";
           for every subsequent occurrence use the short tag "[PRE-WINDOW]" (same meaning). Keep such
           facts in the briefing as base-rate/context evidence.
@@ -424,7 +446,7 @@ SUMMARIZER_SOFT_FAIL_BANNER = (
     "> No per-article relevance gate ran, ordering is the raw feed's (oldest-first, "
     "historical before recent), and no [PRE-WINDOW] labels were applied. Date every "
     "fact yourself, check each article against the resolution criteria before using "
-    "it, and treat pre-open events as unable to satisfy the criteria on their own."
+    "it, and apply the window rule in the question block to decide whether a pre-open event counts."
 )
 
 
@@ -510,9 +532,11 @@ _BINARY_CONDITIONAL_HAZARD_BULLET = (
 _MARKET_READING_RULES = (
     "Three reading rules for the snapshot (its legend defines the columns and markers). A "
     "`same_quantity_other_cut` market measures the same thing at another date, threshold or source: "
-    "extrapolate from it rather than discount it vaguely. When a market's relation is tight but its liquidity "
-    "thin, the liquidity warning governs — a thin price is noisy however tight its relation — so widen around "
-    "its implied value rather than transplant its price. A market with several `↳` outcomes is a DISTRIBUTION "
+    "extrapolate from it rather than discount it vaguely. Weigh a matched market by its `signal`: deep is close to "
+    "the best estimate available; strong is serious evidence to weigh against your own analysis; decent is a "
+    "modest input; thin is weak evidence, a noisy hint and never an anchor, however tight its relation. Below "
+    "deep, widen around the market's implied value rather than transplant its price, and read its bid-ask range: "
+    "a wide range means the price says little. A market with several `↳` outcomes is a DISTRIBUTION "
     "over that market's own question: read the whole ladder and translate it into this question's outcome "
     "space. Never treat one outcome's price as an equality constraint that fixes a tail; reading one bracket "
     "that way has cut the resolving bucket below the forecaster's own prior."
@@ -546,12 +570,13 @@ def _strong_evidence_market_clause(
     if MARKET_SNAPSHOT_SECTION_HEADER not in research:
         return ""
     return (
-        "Prediction markets are strong evidence — weight them heavily, not as a footnote. When the research "
-        f"includes a market on this {subject}, default to treating {signal_noun} as a serious signal: if the "
-        "market's resolution criteria, resolution date, and other material terms match this question, it is "
-        f"extremely strong evidence and {anchor_tail}. If the resolution date or criteria differ, discount it "
-        "proportionally to the specific mismatch — name exactly which term differs and adjust accordingly. The "
-        "burden is to justify any discount with a concrete criteria/date mismatch, not to wave the market off. "
+        "Prediction markets are serious evidence, as strong as their liquidity allows — never a footnote. When the "
+        f"research includes a market on this {subject}, default to treating {signal_noun} as a serious signal: if "
+        "the market's resolution criteria, resolution date, and other material terms match this question and its "
+        f"`signal` is strong or deep, it is extremely strong evidence and {anchor_tail}. If the resolution date or "
+        "criteria differ, discount it proportionally to the specific mismatch — name exactly which term differs and "
+        "adjust accordingly. Beyond liquidity, the burden is to justify any discount with a concrete criteria/date "
+        "mismatch, not to wave the market off. "
         "When the criteria are practically identical and the only material difference is the resolution date, do "
         f"NOT apply a vague haircut — EXPLICITLY EXTRAPOLATE {extrapolate_target} to our resolution date with a "
         f"simple model and state the assumption. {projection} {_MARKET_READING_RULES}"
@@ -720,7 +745,7 @@ def binary_prompt(question: BinaryQuestion, research: str) -> str:
                • State in your own words: "This question is open and unresolved as of {
             _today_str()
         }. If nothing changed between now and resolution, how would it resolve?" Derive the answer from that platform state alone — an open question means the resolution criteria have not yet been satisfied (or a qualifying event is so recent that resolution simply lags — the resolution check in 0a below covers that case).
-               • To move off this status-quo answer, name the specific POST-OPEN event (or concretely expected in-window event) that changes it. Commit explicitly: either write "no qualifying event has yet occurred inside the window" or name the in-window trigger and its date.
+               • To move off this status-quo answer, name the specific qualifying event (one that counts under the window rule above, whether it has occurred or is concretely expected) that changes it. Commit explicitly: either write "no qualifying event has yet occurred inside the window" or name the in-window trigger and its date.
 
             0a) Resolution check
                • Does the research already contain evidence that the resolution condition has been met (or is now impossible to meet)? If so, assign a near-extreme probability (≥95% or ≤5%), briefly explain why, and skip to the final answer. Do not perform full reference-class analysis for questions whose answers are already deterministic from current evidence.
@@ -862,7 +887,7 @@ def multiple_choice_prompt(question: MultipleChoiceQuestion, research: str) -> s
             • State in your own words: "This question is open and unresolved as of {
             _today_str()
         }. If nothing changed between now and resolution, which option would it resolve to?" Derive the answer from that platform state alone — an open question means the resolution criteria have not yet been satisfied (with one exception: if a qualifying event is so recent that resolution simply lags, treat the criteria as effectively met and weight your distribution accordingly).
-            • To move probability mass off that status-quo option, name the specific POST-OPEN event (or concretely expected in-window event) that changes it. Commit explicitly: either write "no qualifying event has yet occurred inside the window" or name the in-window trigger and its date.
+            • To move probability mass off that status-quo option, name the specific qualifying event (one that counts under the window rule above, whether it has occurred or is concretely expected) that changes it. Commit explicitly: either write "no qualifying event has yet occurred inside the window" or name the in-window trigger and its date.
 
         PHASE 1: OUTSIDE VIEW (anchor on historical context above)
 
@@ -989,6 +1014,20 @@ _CONTINUOUS_SCORING_RULE = (
     "few percent, so starving it is heavily punished. This is a proper scoring rule: to maximize expected score, "
     "report your true uncertainty and resist overconfident, narrow shapes."
 )
+
+# The discrete twin: both platforms score a discrete question on the outcome's bin, not a density at a point.
+_DISCRETE_SCORING_RULE = (
+    "Discrete questions are scored on the bin the outcome falls in: the score is the logarithm of the probability "
+    "your distribution puts in that bin. Mass beyond an open bound is scored as its own outcome against a reference "
+    "of a few percent, so starving it is heavily punished. This is a proper scoring rule: to maximize expected "
+    "score, report your true uncertainty and resist overconfident, narrow shapes."
+)
+
+
+def _percentile_scoring_rule(question: NumericQuestion) -> str:
+    """``_DISCRETE_SCORING_RULE`` for a discrete grid, ``_CONTINUOUS_SCORING_RULE`` otherwise."""
+    return _DISCRETE_SCORING_RULE if isinstance(question, DiscreteQuestion) else _CONTINUOUS_SCORING_RULE
+
 
 # Per-bin scoring: mass on a bin the criteria exclude is lost (651's weekend days, -14.4 points), so say so.
 _PER_BIN_SCORING_RULE = (
@@ -1141,6 +1180,31 @@ def _scoring_grid_clause(question: NumericQuestion) -> str:
     return f"Scoring grid: {grid}. A percentile's value selects the bin it falls in, so detail finer than one bin is wasted."
 
 
+def _discrete_bin_edges_clause(question: NumericQuestion) -> str:
+    """Name a linear discrete grid's bin edges, with a worked example on its lowest bin; ``""`` otherwise.
+
+    Models wrote "0 to 1" for zero on a count grid whose zero bin is [-0.5, 0.5], so mass meant for
+    zero landed in bin 1 (Mantic 708: 45% stated, 34% built). Both platforms, since Metaculus discrete
+    questions carry no other grid description. Receipt: docs/prompts.md "_discrete_bin_edges_clause".
+    """
+    if not isinstance(question, DiscreteQuestion) or question.zero_point is not None:
+        return ""
+    width = grid_bin_width(question.lower_bound, question.upper_bound, question.cdf_size)
+    first_edges = [_plain_number(question.lower_bound + index * width) for index in range(3)]
+    last_edge = _plain_number(question.upper_bound)
+    return (
+        f"Bin edges: {', '.join(first_edges)}, …, {last_edge}. A bin's probability is the share of your "
+        "distribution between its edges, and a percentile just past a bin's upper edge already falls in the next "
+        f"bin: e.g. with nothing below {first_edges[0]}, giving the lowest bin 40% means every percentile up to "
+        f"the 40th lies between {first_edges[0]} and {first_edges[1]}."
+    )
+
+
+def _plain_number(value: float) -> str:
+    """Positional notation with trailing zeros trimmed, since the prompt forbids scientific notation."""
+    return np.format_float_positional(round(value, 10), trim="-")
+
+
 def _bullet_lines(*sentences: str, indent: int = 8) -> str:
     """Render the non-empty ``sentences`` as ``•`` bullets at ``indent`` spaces, one per line."""
     return "\n".join(f"{' ' * indent}• {sentence}" for sentence in sentences if sentence)
@@ -1233,6 +1297,7 @@ def _numeric_percentile_blocks(question: NumericQuestion) -> _PercentileBlocks:
                 "If your reasoning uses billions/millions/thousands, convert to base unit numerically (e.g., 350B → "
                 "350000000000). No suffixes or scientific notation, just numbers.",
                 _scoring_grid_clause(question),
+                _discrete_bin_edges_clause(question),
             ),
         ]
     )
@@ -1337,7 +1402,7 @@ def _percentile_elicitation(view: NumericQuestion) -> _Elicitation:
         spread_short="that width",
         market_anchor_tail="your percentiles should center on it",
         axis_block=blocks.axis_block,
-        scoring_rule=_CONTINUOUS_SCORING_RULE,
+        scoring_rule=_percentile_scoring_rule(view),
         multi_resolution_rule=_MULTI_RESOLUTION_CONTINUOUS_RULE,
         out_of_range_clause=_mantic_out_of_range_clause(
             view, date_rate=_MANTIC_OUT_OF_RANGE_RATE_DATE, quantity_rate=_MANTIC_OUT_OF_RANGE_RATE_QUANTITY
@@ -1534,7 +1599,7 @@ def _continuous_prompt(
             - State in your own words: "This question is open and unresolved as of {_today_str()}. {
             axis.status_quo_question
         }
-            - To move your central estimate off that status-quo value, name the specific POST-OPEN event (or concretely expected in-window event) that changes it. Commit explicitly: either write "no qualifying event has yet occurred inside the window" or name the in-window trigger and its date.
+            - To move your central estimate off that status-quo value, name the specific qualifying event (one that counts under the window rule above, whether it has occurred or is concretely expected) that changes it. Commit explicitly: either write "no qualifying event has yet occurred inside the window" or name the in-window trigger and its date.
 
         (0a) {_RESOLUTION_METRIC_ECHO_HEADER}
 {_resolution_metric_echo_bullets("numeric")}
@@ -1902,7 +1967,7 @@ def stacking_numeric_prompt(
         • If your reasoning uses B/M/k, convert to base unit numerically (e.g., 350B → 350000000000). No suffixes.
 
         ── Scoring Rule ──
-        {_CONTINUOUS_SCORING_RULE}
+        {_percentile_scoring_rule(question)}
 
         ── Intelligence Briefing ────────────────────────────────
         {research}

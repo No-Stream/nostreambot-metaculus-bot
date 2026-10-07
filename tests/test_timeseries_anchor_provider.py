@@ -81,7 +81,7 @@ from metaculus_bot.research.ts_render import (
     _render_spread,
     _truncate_section,
 )
-from metaculus_bot.research.ts_routing import _Route
+from metaculus_bot.research.ts_routing import _Route, route_question
 from scripts.telemetry.markers import MARKER_SPECS
 from tests.ts_anchor_fakes import (
     _DGS10_RC,
@@ -276,6 +276,110 @@ class TestRenderSpread:
         # §g: spread sections carry an explicit mean-zero-prior disclaimer.
         assert "mean-zero by construction" in out
         assert "not a directional signal" in out
+
+
+class TestRoutedValueFieldRendering:
+    def test_max_question_names_routed_high_field(self):
+        route = route_question(_make_numeric_q(question_text="What is the highest VIX value this year?"))
+        assert route is not None
+        assert route.value_field == "High"
+        assert route.is_max is True
+
+        out, _ = _render_single(
+            _daily_positive_series("^VIX"), route=route, ceiling=date(2026, 6, 30), calendar_days=14
+        )
+
+        assert "(High, as of 2026-06-30; series frequency: daily)" in out.splitlines()[0]
+
+    def test_ordinary_question_names_routed_close_field(self):
+        route = route_question(_make_numeric_q(question_text="What will the price of gold be on the date?"))
+        assert route is not None
+        assert route.value_field == "Close"
+        assert route.is_max is False
+
+        out, _ = _render_single(
+            _daily_positive_series("GC=F"), route=route, ceiling=date(2026, 6, 30), calendar_days=14
+        )
+
+        assert "(Close, as of 2026-06-30; series frequency: daily)" in out.splitlines()[0]
+
+    def test_unregistered_url_cited_ticker_names_routed_close_field(self):
+        route = route_question(
+            _make_numeric_q(
+                question_text="What will the ALFA share price be?",
+                resolution_criteria="Tracks https://finance.yahoo.com/quote/ALFA at the resolution date.",
+            )
+        )
+        assert route is not None
+        assert route.label == "ALFA"
+        assert route.value_field == "Close"
+
+        out, _ = _render_single(
+            _daily_positive_series("ALFA"), route=route, ceiling=date(2026, 6, 30), calendar_days=14
+        )
+
+        assert "(Close, as of 2026-06-30; series frequency: daily)" in out.splitlines()[0]
+
+    def test_derived_yfinance_target_names_column_without_repeating_frequency(self):
+        route = _Route(
+            kind="single",
+            spec=SeriesSpec(source="yfinance", series_id="TEST=F", column="High"),
+            label="Test monthly high",
+            derivation="monthly_avg",
+        )
+
+        out, _ = _render_single(_weekly_series("TEST=F"), route=route, ceiling=date(2026, 6, 30), calendar_days=30)
+
+        first_line = out.splitlines()[0]
+        assert "(High, monthly average of the higher-frequency series; from raw level " in first_line
+        assert "daily High" not in first_line
+
+    def test_paired_route_names_close_field_for_both_legs(self):
+        route = route_question(
+            _make_numeric_q(
+                question_text="Will CL=F's returns exceed ^GSPC's over the window?",
+                resolution_criteria=(
+                    "Compares https://finance.yahoo.com/quote/CL=F and https://finance.yahoo.com/quote/%5EGSPC."
+                ),
+            )
+        )
+        assert route is not None
+        assert route.kind == "spread"
+        assert route.value_field == "Close"
+        assert route.value_field_b == "Close"
+
+        out, _ = _render_spread(
+            _daily_positive_series("CL=F", seed=1),
+            _daily_positive_series("^GSPC", seed=2),
+            route=route,
+            calendar_days=14,
+        )
+
+        cl_latest_line = next(line for line in out.splitlines() if line.startswith("- CL=F latest: "))
+        gspc_latest_line = next(line for line in out.splitlines() if line.startswith("- ^GSPC latest: "))
+        assert cl_latest_line.endswith("(Close, as of 2026-06-30)")
+        assert gspc_latest_line.endswith("(Close, as of 2026-06-30)")
+
+    def test_fred_latest_line_keeps_existing_format(self):
+        route = route_question(
+            _make_numeric_q(
+                question_text="What will the 10-year treasury yield be?",
+                resolution_criteria=_DGS10_RC,
+            )
+        )
+        assert route is not None
+        assert route.spec.source == "fred"
+        assert route.value_field is None
+
+        out, _ = _render_single(
+            _daily_positive_series("DGS10"), route=route, ceiling=date(2026, 6, 30), calendar_days=14
+        )
+
+        first_line = out.splitlines()[0]
+        assert first_line.startswith(f"**{route.label}** — latest ")
+        assert first_line.endswith("(as of 2026-06-30; series frequency: daily)")
+        assert "daily Close" not in first_line
+        assert "daily High" not in first_line
 
 
 # Derived-target math: hand-confirmed reference values from the replay (Phase A).
