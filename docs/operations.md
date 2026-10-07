@@ -1451,31 +1451,6 @@ setup script reads it as `GH_DISPATCH_TOKEN` and the cron-job.org key as `CRONJO
 from `.env`, and prints neither. GitHub answers a successful dispatch with 204, and
 cron-job.org emails the operator when a job fails, so an expired or revoked token surfaces
 as failure mail rather than as silence; that email is the dead-token monitor.
-The desired job spec sets `requestTimeout: 300` (seconds) to tolerate a slow GitHub
-acknowledgment, and explicitly pins `notification.onFailureCount: 1`. This is the
-cron-job.org execution timeout, not the setup client's `REQUEST_TIMEOUT_SECS = 30`.
-Failure and auto-disable mail stay enabled; HTTP errors, including dead-token failures,
-are not suppressed, and a request that never answers still fails after the timeout.
-There is no automatic POST retry: a timeout can occur after GitHub accepted the dispatch.
-
-**Rollout prerequisite:** verify in the cron-job.org console that the account allows a
-300-second execution timeout before applying. The free default is 30 seconds; longer
-limits require sustaining membership. The service caps execution at the account limit,
-so a stored `requestTimeout: 300` alone does not prove the longer timeout is effective.
-See the [timeout explanation](https://blog.cron-job.org/service/2021/12/01/errors-explained-timeout.html)
-and [API fields](https://docs.cron-job.org/rest-api.html). Do not reduce alert sensitivity
-if the account cannot support this timeout. Review the dry-run plan, then reconcile the
-existing jobs without changing their cadence or dispatch body; verify the saved timeout
-and first-failure notifications, and observe the next normal firings rather than using
-"Run now" or dispatching a bot workflow to test. Merging this spec does not update live jobs.
-
-The October 3, 2026 timeout incident illustrates the distinction: the operator reported
-successful `workflow_dispatch` arrivals at 22:02:55 (AI tournament), 22:03:55 (Mantic),
-and 22:14:53 UTC (Metaculus Cup), followed by successful subsequent runs. That supports
-an acknowledgment timeout rather than missed work, but arrival timestamps alone do not
-measure HTTP response latency or guarantee that a 300-second timeout covers every stall.
-For another timeout, reconcile arrivals and conclusions before considering any retry.
-
 `make dispatch_watch` (free, one `gh run list`) is the delivery read: per bot workflow and
 per UTC day, how many `schedule` and `workflow_dispatch` runs arrived and how they
 concluded, against what the cron entries and the two-an-hour dispatcher say should have.

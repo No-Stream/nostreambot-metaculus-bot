@@ -62,7 +62,7 @@ def remote_job(payload: dict[str, Any], job_id: int) -> dict[str, Any]:
             "lastExecution": 0,
             "nextExecution": 1_800_000_000,
             "type": 0,
-            "requestTimeout": payload.get("requestTimeout", -1),
+            "requestTimeout": -1,
             "redirectSuccess": False,
             "folderId": 0,
             "auth": {"enable": False, "user": "", "password": ""},
@@ -185,7 +185,6 @@ class TestJobPayload:
             "enabled": True,
             "saveResponses": False,
             "requestMethod": 1,
-            "requestTimeout": 300,
             "schedule": {
                 "timezone": "UTC",
                 "hours": [-1],
@@ -203,7 +202,7 @@ class TestJobPayload:
                 },
                 "body": '{"ref":"main"}',
             },
-            "notification": {"onFailure": True, "onFailureCount": 1, "onSuccess": False, "onDisable": True},
+            "notification": {"onFailure": True, "onSuccess": False, "onDisable": True},
         }
 
     @pytest.mark.parametrize("job", DISPATCH_JOBS, ids=lambda job: job.workflow_file)
@@ -242,10 +241,6 @@ class TestJobMatches:
         "mutate",
         [
             pytest.param(lambda job: job.__setitem__("enabled", False), id="enabled"),
-            pytest.param(lambda job: job.__setitem__("requestTimeout", -1), id="default-timeout"),
-            pytest.param(lambda job: job.__setitem__("requestTimeout", 30), id="short-timeout"),
-            pytest.param(lambda job: job.pop("requestTimeout"), id="missing-timeout"),
-            pytest.param(lambda job: job["notification"].__setitem__("onFailureCount", 2), id="delayed-alert"),
             pytest.param(lambda job: job["schedule"].__setitem__("minutes", [12, 43]), id="minutes"),
             pytest.param(lambda job: job["schedule"].__setitem__("hours", [3]), id="hours"),
             pytest.param(lambda job: job["extendedData"].__setitem__("body", '{"ref":"dev"}'), id="body"),
@@ -366,33 +361,6 @@ class TestApply:
         assert sleeps == [setup.WRITE_SPACING_SECS]
         assert api.jobs[502]["enabled"] is True
         assert FAKE_GH_TOKEN not in out
-
-    @pytest.mark.usefixtures("secrets_env")
-    def test_migrates_legacy_timeouts_once_without_changing_dispatch_or_alerts(self, monkeypatch):
-        jobs = [remote_job(desired(job), 600 + i) for i, job in enumerate(DISPATCH_JOBS)]
-        for job in jobs:
-            job["requestTimeout"] = -1
-        before = copy.deepcopy(jobs)
-        api = install_fake_api(monkeypatch, FakeCronJobApi(jobs))
-
-        assert main([]) == 0
-        assert api.writes == []
-        assert main(["--apply"]) == 0
-        assert len(api.writes) == 3
-        assert all(method == "PATCH" for method, _, _ in api.writes)
-        for old in before:
-            updated = api.jobs[old["jobId"]]
-            assert updated["requestTimeout"] == 300
-            for key in ("title", "url", "enabled", "requestMethod", "extendedData"):
-                assert updated[key] == old[key]
-            for key in setup.SCHEDULE_FIELDS:
-                assert updated["schedule"][key] == old["schedule"][key]
-            for key in setup.NOTIFICATION_FIELDS:
-                assert updated["notification"][key] == old["notification"][key]
-            assert updated["notification"]["onFailure"] is True
-            assert updated["notification"]["onFailureCount"] == 1
-        assert main(["--apply"]) == 0
-        assert len(api.writes) == 3
 
     @pytest.mark.usefixtures("secrets_env")
     def test_a_second_apply_changes_nothing(self, monkeypatch, capsys):
