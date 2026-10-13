@@ -57,7 +57,7 @@ def gemini_use_donated_openrouter_key() -> bool:
     (``"false"`` / ``"0"`` / ``"no"``) forces personal-key-only routing. Read at call time
     (not import) so workflow env changes take effect without re-importing.
 
-    The ``gemini-3.1-pro-preview`` forecaster slot is PINNED to the personal key regardless,
+    The ``gemini-4-argon`` forecaster and ``gemini-3.1-pro-preview`` are PINNED to the personal key regardless,
     and this toggle does not touch the google-genai grounded-search provider. Both
     exceptions, with their receipts: docs/constants.md "gemini_use_donated_openrouter_key".
     """

@@ -259,16 +259,18 @@ Gemini has two separate routes, which is the other easy thing to confuse:
   value (`false`/`0`/`no`) forces personal-key-only routing for ALL Gemini; the
   three prod workflow YAMLs and `test_bot.yaml` pin it to `'true'` explicitly.
 
-  **Known exception:** the Gemini Pro forecaster slot is PINNED to the personal
+  **Known exceptions:** the Google forecaster slot and Gemini 3.1 Pro are PINNED to the personal
   key by the `DONATED_KEY_BLOCKED_GOOGLE_MODELS` blocklist in
   `fallback_openrouter.py` (read the blocklist for which models it currently
   covers). `should_route_via_donated_key` returns `False` for anything on it even
   with the toggle ON, so there is no donated attempt, no 429, and no
   personal-key-fallback-counter bump (which would otherwise redden CI on every
   question), and a credit error on one of those models is always a personal-key
-  issue. It is pinned rather than falling back because that model routes through a
-  free-tier Google AI Studio BYOK key on the donated account with no Pro free tier
-  (quota 0 → `is_byok:true` + `FreeTier limit: 0`). This is a temporary workaround
+  issue. They are pinned rather than falling back because these models route through a
+  free-tier Google AI Studio BYOK key on the donated account with quota 0
+  (`is_byok:true` + `FreeTier limit: 0`). A donated-key-only call for Gemini 4 Argon
+  on 2026-10-13 returned HTTP 429 with input-token and request free-tier limits of 0.
+  This is a temporary workaround
   tagged `TODO(gemini-3.1-pro-donated)` in code: remove the blocklist entry once
   Metaculus fixes the BYOK routing (enable Cloud billing on the BYOK key's GCP
   project, remove the Google AI Studio BYOK integration so native OpenRouter

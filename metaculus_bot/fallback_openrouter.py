@@ -163,7 +163,7 @@ def reset_credit_key_fallback_count() -> None:
 DONATED_KEY_PROVIDERS: frozenset[str] = frozenset({"openai", "anthropic", "google"})
 
 # TODO(gemini-3.1-pro-donated): pinned to the personal key; see docs/operations.md "The Google blocklist".
-DONATED_KEY_BLOCKED_GOOGLE_MODELS: frozenset[str] = frozenset({"gemini-3.1-pro"})
+DONATED_KEY_BLOCKED_GOOGLE_MODELS: frozenset[str] = frozenset({"gemini-3.1-pro", "gemini-4-argon"})
 
 
 def should_route_via_donated_key(model: str) -> bool:

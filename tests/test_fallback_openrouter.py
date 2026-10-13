@@ -881,8 +881,11 @@ class TestBuilder:
         llm = build_llm_with_openrouter_fallback("openrouter/google/gemini-3.5-flash")
         assert isinstance(llm, FallbackOpenRouterLlm)
 
-    def test_builder_plain_for_google_pro_blocklisted_when_toggle_on(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """gemini-3.1-pro is pinned to the personal key via the blocklist even with
+    @pytest.mark.parametrize("model", ["gemini-3.1-pro-preview", "gemini-4-argon"])
+    def test_builder_plain_for_google_pro_blocklisted_when_toggle_on(
+        self, monkeypatch: pytest.MonkeyPatch, model: str
+    ) -> None:
+        """Blocklisted Google models are pinned to the personal key even with
         the donated toggle ON — so the builder returns a plain GeneralLlm (no
         donated attempt, no 429, no fallback-counter bump), while a flash model in
         the same env returns a FallbackOpenRouterLlm.
@@ -893,7 +896,8 @@ class TestBuilder:
         monkeypatch.setenv("OAI_ANTH_OPENROUTER_KEY", "special")
         monkeypatch.setenv("OPENROUTER_API_KEY", "general")
         monkeypatch.setenv("GEMINI_USE_DONATED_OPENROUTER_KEY", "true")
-        pro = build_llm_with_openrouter_fallback("openrouter/google/gemini-3.1-pro-preview")
+        assert should_route_via_donated_key(f"openrouter/google/{model}") is False
+        pro = build_llm_with_openrouter_fallback(f"openrouter/google/{model}")
         assert isinstance(pro, GeneralLlm)
         assert not isinstance(pro, FallbackOpenRouterLlm)
         flash = build_llm_with_openrouter_fallback("openrouter/google/gemini-3.5-flash")
