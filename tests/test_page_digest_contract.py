@@ -334,7 +334,12 @@ async def _wait_for_digest_waiters(
     expected: int,
 ) -> None:
     await asyncio.sleep(0.01)
-    assert artifact._digest_waiters.get((query, id(digest)), 0) == expected
+    waiters = [
+        count
+        for (_, url, _, waited_query, waited_digest), count in run_cache._DIGEST_WAITERS.items()
+        if url == artifact.url and waited_query == query and waited_digest is digest
+    ]
+    assert waiters == [expected]
 
 
 @pytest.mark.asyncio

@@ -414,6 +414,7 @@ def digest_pdf(pdf: PdfText, *, query: str, top_k: int, max_chars: int | None, s
             scope="unreadable",
         )
 
+    scope = "partial_document" if pdf.truncated_by else "complete_document"
     sections.extend(_digest_outline(pdf.outline))
     text, page_breaks = joined_page_text(pdf)
     if not text.strip():
@@ -422,7 +423,7 @@ def digest_pdf(pdf: PdfText, *, query: str, top_k: int, max_chars: int | None, s
             block=_truncate_digest("\n\n".join(sections), max_chars),
             passages=0,
             outcome="empty_text",
-            scope="partial_document" if pdf.truncated_by else "complete_document",
+            scope=scope,
         )
 
     passages = select_passages(text, query, top_k=top_k, page_breaks=page_breaks)
@@ -432,12 +433,8 @@ def digest_pdf(pdf: PdfText, *, query: str, top_k: int, max_chars: int | None, s
         block=block,
         passages=len(passages),
         outcome="answered" if passages else ("partial_no_match" if pdf.truncated_by else "no_match"),
-        scope="partial_document" if pdf.truncated_by else "complete_document",
-        evidence_passages=tuple(
-            SourceExcerpt(source_url=source_url, text=passage.text, retrieval_method="bm25")
-            for passage in passages
-            if passage.text in block
-        ),
+        scope=scope,
+        evidence_passages=_rendered_evidence(passages, block, source_url=source_url),
     )
 
 
@@ -463,11 +460,16 @@ def digest_text(text: str, *, query: str, top_k: int, max_chars: int | None, sou
         passages=len(passages),
         outcome="answered" if passages else ("no_match" if text.strip() else "empty_text"),
         scope="complete_text",
-        evidence_passages=tuple(
-            SourceExcerpt(source_url=source_url, text=passage.text, retrieval_method="bm25")
-            for passage in passages
-            if passage.text in block
-        ),
+        evidence_passages=_rendered_evidence(passages, block, source_url=source_url),
+    )
+
+
+def _rendered_evidence(passages: list[Passage], block: str, *, source_url: str) -> tuple[SourceExcerpt, ...]:
+    """The selected passages that survived into the rendered ``block`` intact, as BM25 evidence."""
+    return tuple(
+        SourceExcerpt(source_url=source_url, text=passage.text, retrieval_method="bm25")
+        for passage in passages
+        if passage.text in block
     )
 
 

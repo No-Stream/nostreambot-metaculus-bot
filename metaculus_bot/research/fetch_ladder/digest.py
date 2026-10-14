@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Protocol
 
 from metaculus_bot.constants import DOCUMENT_DIGEST_TOP_K
 from metaculus_bot.research.document_text import select_passages
+from metaculus_bot.research.page_digest import DigestOutcome, DigestScope
 from metaculus_bot.research.source_evidence import SourceExcerpt
 
 # `agentic.local_document.DIGEST_LOCAL_METHOD`, spelled here so the ladder needs no caller import.
@@ -65,18 +66,8 @@ class LadderDigest:
     passages_grounded: int
     fallback_used: bool
     method: str
-    outcome: Literal[
-        "answered",
-        "valid_empty",
-        "ungrounded",
-        "malformed",
-        "api_error",
-        "timeout",
-        "empty_completion",
-        "insufficient_budget",
-        "empty_page",
-    ] = "answered"
-    scope: Literal["full_page", "prefiltered_windows"] = "full_page"
+    outcome: DigestOutcome = "answered"
+    scope: DigestScope = "full_page"
     evidence_passages: tuple[SourceExcerpt, ...] = ()
 
     def __post_init__(self) -> None:

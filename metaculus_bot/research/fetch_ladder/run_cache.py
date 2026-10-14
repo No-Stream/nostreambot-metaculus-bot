@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections import OrderedDict
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from datetime import datetime
 from itertools import count
 from time import monotonic
@@ -22,6 +22,7 @@ from metaculus_bot.research.image_leads import ImageLead
 from metaculus_bot.research.resolution_body_text import _truncate_with_marker
 from metaculus_bot.research.resolution_fetch_result import FetchResult, FetchRoute
 from metaculus_bot.research.source_documents import ParsedSource
+from metaculus_bot.research.source_evidence import SourceExcerpt
 from metaculus_bot.research.source_presentation import (
     digest_source,
     select_source_sections,
@@ -33,9 +34,11 @@ from metaculus_bot.research.wayback import WaybackSnapshot, snapshot_age_days, w
 _MAX_ENTRIES = 50
 _MAX_DIGEST_ENTRIES = _MAX_ENTRIES
 _TRANSIENT_DIGEST_OUTCOMES = frozenset({"api_error", "timeout", "empty_completion", "insufficient_budget"})
-_DigestCacheKey = tuple[int, str, str, str, int]
-_DIGEST_CACHE: OrderedDict[_DigestCacheKey, tuple[DigestFn, DigestPassages]] = OrderedDict()
-_DIGEST_TASKS: dict[_DigestCacheKey, tuple[DigestFn, asyncio.Task[DigestPassages]]] = {}
+# Keyed on the loop and digest objects themselves, not their ids: the key's strong references stop
+# a garbage-collected loop or digest function's id from being reused by a different one.
+_DigestCacheKey = tuple[asyncio.AbstractEventLoop, str, str, str, DigestFn]
+_DIGEST_CACHE: OrderedDict[_DigestCacheKey, DigestPassages] = OrderedDict()
+_DIGEST_TASKS: dict[_DigestCacheKey, asyncio.Task[DigestPassages]] = {}
 _DIGEST_WAITERS: dict[_DigestCacheKey, int] = {}
 
 
@@ -48,46 +51,37 @@ async def memoized_digest(
     budget_seconds: float,
 ) -> DigestPassages:
     """Share one digest for the same source, text, query, and digest function in this run."""
-    key = (id(asyncio.get_running_loop()), url, hashlib.sha256(text.encode("utf-8")).hexdigest(), query, id(digest))
+    key = (asyncio.get_running_loop(), url, hashlib.sha256(text.encode("utf-8")).hexdigest(), query, digest)
     cached = _DIGEST_CACHE.get(key)
-    if cached is not None and cached[0] is digest:
+    if cached is not None:
         _DIGEST_CACHE.move_to_end(key)
-        return cached[1]
-    pending = _DIGEST_TASKS.get(key)
-    if pending is None or pending[0] is not digest:
+        return cached
+    task = _DIGEST_TASKS.get(key)
+    if task is None:
         task = asyncio.create_task(digest(text, query, budget_seconds=budget_seconds))
-        _DIGEST_TASKS[key] = (digest, task)
-        task.add_done_callback(lambda completed: _finish_memoized_digest(key, digest, completed))
-    else:
-        task = pending[1]
+        _DIGEST_TASKS[key] = task
+        task.add_done_callback(lambda completed: _finish_memoized_digest(key, completed))
     _DIGEST_WAITERS[key] = _DIGEST_WAITERS.get(key, 0) + 1
     try:
         return await asyncio.shield(task)
     finally:
-        remaining_waiters = _DIGEST_WAITERS[key] - 1
-        if remaining_waiters:
-            _DIGEST_WAITERS[key] = remaining_waiters
-        else:
+        _DIGEST_WAITERS[key] -= 1
+        if not _DIGEST_WAITERS[key]:
             _DIGEST_WAITERS.pop(key)
             if not task.done():
                 task.cancel()
 
 
-def _finish_memoized_digest(
-    key: _DigestCacheKey,
-    digest: DigestFn,
-    task: asyncio.Task[DigestPassages],
-) -> None:
-    pending = _DIGEST_TASKS.get(key)
-    if pending is None or pending[0] is not digest or pending[1] is not task:
+def _finish_memoized_digest(key: _DigestCacheKey, task: asyncio.Task[DigestPassages]) -> None:
+    # `clear()` may have dropped this task, or replaced it under the same key, before it finished.
+    if _DIGEST_TASKS.get(key) is not task:
         return
     _DIGEST_TASKS.pop(key)
     if task.cancelled() or task.exception() is not None:
         return
     result = task.result()
     if result.outcome not in _TRANSIENT_DIGEST_OUTCOMES:
-        _DIGEST_CACHE[key] = (digest, result)
-        _DIGEST_CACHE.move_to_end(key)
+        _DIGEST_CACHE[key] = result
         while len(_DIGEST_CACHE) > _MAX_DIGEST_ENTRIES:
             _DIGEST_CACHE.popitem(last=False)
 
@@ -132,7 +126,6 @@ class HtmlRead:
     links: tuple[str, ...]
     routing_body: bytes
     image_leads: tuple[ImageLead, ...] = ()
-    _digest_waiters: dict[tuple[str, int], int] = field(default_factory=dict, compare=False, repr=False)
 
     def _prepare(self, policy: LadderPolicy, *, route: FetchRoute) -> tuple[HtmlVerdict, bool] | FetchResult | None:
         if policy.verdict.body_route(self.content_type or "", self.routing_body) != "html":
@@ -169,23 +162,24 @@ class HtmlRead:
         text: str,
         passages: DigestPassages | None = None,
     ) -> FetchResult:
+        evidence_passages: list[SourceExcerpt] = []
         if passages is None:
             passages_returned = None
             passages_grounded = None
             fallback_used = None
+            digest_outcome = None
+            digest_scope = None
         else:
             passages_returned = passages.passages_returned
             passages_grounded = passages.passages_grounded
             fallback_used = passages.fallback_used
-        evidence_passages = (
-            [
+            digest_outcome = passages.outcome
+            digest_scope = passages.scope
+            evidence_passages = [
                 replace(excerpt, source_url=excerpt.source_url or self.url)
                 for excerpt in passages.evidence_passages
                 if excerpt.text and excerpt.text in text
             ]
-            if passages is not None
-            else []
-        )
         if read.status == "success" and not text.strip():
             raise RuntimeError(f"successful HTML verdict rendered blank text for {self.url}")
         return FetchResult(
@@ -205,8 +199,8 @@ class HtmlRead:
             passages_returned=passages_returned,
             passages_grounded=passages_grounded,
             fallback_used=fallback_used,
-            digest_outcome=passages.outcome if passages is not None else None,
-            digest_scope=passages.scope if passages is not None else None,
+            digest_outcome=digest_outcome,
+            digest_scope=digest_scope,
             evidence_passages=evidence_passages,
             image_leads=self.image_leads if policy.collect_links else (),
         )
@@ -265,7 +259,7 @@ class HtmlRead:
             passages = await bm25_digest(read.published_text, query, budget_seconds=0.0)
             passages = replace(passages, outcome="insufficient_budget", fallback_used=True)
         else:
-            passages = await self._memoized_digest(digest, read.published_text, query, budget_seconds=digest_budget)
+            passages = await memoized_digest(self.url, read.published_text, query, digest, budget_seconds=digest_budget)
 
         if not passages.passages:
             outcome = passages.outcome
@@ -308,31 +302,6 @@ class HtmlRead:
             text=text,
             passages=passages,
         )
-
-    async def _memoized_digest(
-        self,
-        digest: DigestFn,
-        text: str,
-        query: str,
-        *,
-        budget_seconds: float,
-    ) -> DigestPassages:
-        key = (query, id(digest))
-        self._digest_waiters[key] = self._digest_waiters.get(key, 0) + 1
-        try:
-            return await memoized_digest(
-                self.url,
-                text,
-                query,
-                digest,
-                budget_seconds=budget_seconds,
-            )
-        finally:
-            remaining_waiters = self._digest_waiters[key] - 1
-            if remaining_waiters:
-                self._digest_waiters[key] = remaining_waiters
-            else:
-                self._digest_waiters.pop(key)
 
 
 @dataclass(frozen=True, slots=True)
@@ -746,7 +715,7 @@ def with_lead(artifact: ReadArtifact, lead: str, *, url: str) -> ReadArtifact:
 
 
 def clear() -> None:
-    for _, task in _DIGEST_TASKS.values():
+    for task in _DIGEST_TASKS.values():
         task.cancel()
     _DIGEST_TASKS.clear()
     _DIGEST_CACHE.clear()

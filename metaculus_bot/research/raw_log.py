@@ -24,7 +24,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 from collections.abc import Callable, Mapping
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -49,8 +48,7 @@ RAW_RESEARCH_SCHEMA_VERSION = 1
 SOURCE_CAPTURE_SCHEMA_VERSION = 1
 SOURCE_CAPTURE_PROVIDER = "source_capture"
 SOURCE_CAPTURE_RETENTION_DAYS = 90
-_SOURCE_CAPTURE_DIR = "source_captures"
-_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+SOURCE_CAPTURE_DIR = "source_captures"
 
 
 class _SourceCaptureAsset(TypedDict):
@@ -183,35 +181,35 @@ def record_source_capture(
     if not source_capture_enabled():
         return None
 
-    log_path = _log_path()
-    is_pdf = (raw_body or b"").startswith(b"%PDF-") or "pdf" in (content_type or "").lower()
+    output_dir = _log_path().parent
     is_rendered = retrieval_method == "rendered"
+    if (raw_body or b"").startswith(b"%PDF-") or "pdf" in (content_type or "").lower():
+        raw_max_units = DOCUMENT_TEXT_PDF_MAX_BYTES
+    elif is_rendered:
+        raw_max_units = RENDERED_DOM_MAX_CHARS
+    else:
+        raw_max_units = RESOLUTION_SOURCE_MAX_RESPONSE_BYTES
     raw_capture = _source_capture_asset(
         raw_body,
-        max_units=(
-            DOCUMENT_TEXT_PDF_MAX_BYTES
-            if is_pdf
-            else RENDERED_DOM_MAX_CHARS
-            if is_rendered
-            else RESOLUTION_SOURCE_MAX_RESPONSE_BYTES
-        ),
-        unit_count=_raw_source_unit_count(raw_body, rendered=is_rendered),
+        max_units=raw_max_units,
+        unit_count=_utf8_character_count if is_rendered else len,
         extension=_source_capture_extension(raw_body, content_type),
-        output_dir=log_path.parent,
+        output_dir=output_dir,
     )
-    try:
-        parsed_bytes = parsed_text.encode("utf-8") if parsed_text is not None else None
-    except UnicodeEncodeError:
-        parsed_bytes = None
-        parsed_refusal = "parsed_text_not_utf8"
-    else:
-        parsed_refusal = ""
+
+    parsed_bytes = None
+    parsed_refusal = ""
+    if parsed_text is not None:
+        try:
+            parsed_bytes = parsed_text.encode("utf-8")
+        except UnicodeEncodeError:
+            parsed_refusal = "parsed_text_not_utf8"
     parsed_capture = _source_capture_asset(
         parsed_bytes,
         max_units=LOCAL_SOURCE_MAX_CHARS,
-        unit_count=lambda content: len(content.decode("utf-8")),
+        unit_count=_utf8_character_count,
         extension="txt",
-        output_dir=log_path.parent,
+        output_dir=output_dir,
     )
 
     raw_capture_status = raw_capture["status"]
@@ -262,8 +260,7 @@ def record_source_capture(
     }
     capture_identity_sha256 = _source_capture_identity_sha256(manifest)
     manifest["capture_identity_sha256"] = capture_identity_sha256
-    phase = capture_identity_sha256
-    record_raw_research(qid=qid, provider=SOURCE_CAPTURE_PROVIDER, phase=phase, payload=manifest)
+    record_raw_research(qid=qid, provider=SOURCE_CAPTURE_PROVIDER, phase=capture_identity_sha256, payload=manifest)
     return manifest
 
 
@@ -304,9 +301,7 @@ def _source_capture_asset(
     if count > max_units:
         return {"status": "refused", "refusal_reason": "over_capture_limit", "unit_count": count}
     digest = hashlib.sha256(content).hexdigest()
-    if _SHA256_PATTERN.fullmatch(digest) is None:
-        raise RuntimeError("Source capture SHA-256 generation returned an invalid digest")
-    asset_path = f"{_SOURCE_CAPTURE_DIR}/{digest}.{extension}"
+    asset_path = f"{SOURCE_CAPTURE_DIR}/{digest}.{extension}"
     destination = output_dir / asset_path
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -340,10 +335,8 @@ def _source_capture_extension(raw_body: bytes | None, content_type: str | None) 
     return "bin"
 
 
-def _raw_source_unit_count(raw_body: bytes | None, *, rendered: bool) -> Callable[[bytes], int]:
-    if rendered:
-        return lambda content: len(content.decode("utf-8", errors="replace"))
-    return len
+def _utf8_character_count(content: bytes) -> int:
+    return len(content.decode("utf-8", errors="replace"))
 
 
 def _source_capture_safe_url(source_url: str) -> str:

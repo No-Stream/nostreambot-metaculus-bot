@@ -62,7 +62,21 @@ DIGEST_METHOD_BM25 = "bm25"
 _WINDOW_SEPARATOR = "\n[...]\n"
 
 # Deleted on both sides before the substring check: curly quotes retyped straight are still a copy (see provenance).
-_QUOTE_GLYPHS = re.compile("[\"'\u2018\u2019\u201c\u201d`]")
+_QUOTE_CHARACTERS = "\"'\u2018\u2019\u201c\u201d`"
+_QUOTE_GLYPHS = re.compile(f"[{_QUOTE_CHARACTERS}]")
+
+DigestOutcome = Literal[
+    "answered",
+    "valid_empty",
+    "ungrounded",
+    "malformed",
+    "api_error",
+    "timeout",
+    "empty_completion",
+    "insufficient_budget",
+    "empty_page",
+]
+DigestScope = Literal["full_page", "prefiltered_windows"]
 
 # Each clause names a shape the grounding check drops unread (paraphrase, summary, splice); docs/research.md "Page digest".
 PAGE_DIGEST_EXTRACTOR_PROMPT = """You are extracting passages from a web page for a forecaster who cannot read the whole page.
@@ -103,18 +117,8 @@ class PageDigest:
     passages_grounded: int
     fallback_used: bool
     method: str
-    outcome: Literal[
-        "answered",
-        "valid_empty",
-        "ungrounded",
-        "malformed",
-        "api_error",
-        "timeout",
-        "empty_completion",
-        "insufficient_budget",
-        "empty_page",
-    ]
-    scope: Literal["full_page", "prefiltered_windows"]
+    outcome: DigestOutcome
+    scope: DigestScope
     evidence_passages: tuple[SourceExcerpt, ...]
 
 
@@ -137,29 +141,22 @@ async def digest_page(text: str, query: str, *, budget_seconds: float) -> PageDi
     call_budget = min(
         PAGE_DIGEST_EXTRACTOR_TIMEOUT_S, budget_seconds - (time.monotonic() - started) - PAGE_DIGEST_WALL_MARGIN_S
     )
-    scope: Literal["full_page", "prefiltered_windows"] = (
-        "full_page" if len(text) <= PAGE_DIGEST_PREFILTER_MAX_CHARS else "prefiltered_windows"
-    )
+    scope: DigestScope = "full_page" if len(text) <= PAGE_DIGEST_PREFILTER_MAX_CHARS else "prefiltered_windows"
     if not text.strip():
         logger.info("PAGE_DIGEST no call (empty page); no passages to serve")
-        return _bm25_digest(
-            ranked,
-            opening=opening,
+        return PageDigest(
+            passages=[],
             passages_returned=0,
             passages_grounded=0,
+            fallback_used=False,
+            method=DIGEST_METHOD_BM25,
             outcome="empty_page",
             scope="full_page",
+            evidence_passages=(),
         )
     if call_budget < PAGE_DIGEST_MIN_CALL_BUDGET_S:
         logger.info(f"PAGE_DIGEST no call ({call_budget:.1f} s left, under the call floor); serving BM25 candidates")
-        return _bm25_digest(
-            ranked,
-            opening=opening,
-            passages_returned=0,
-            passages_grounded=0,
-            outcome="insufficient_budget",
-            scope=scope,
-        )
+        return _bm25_digest(ranked, opening=opening, outcome="insufficient_budget", scope=scope)
 
     prompt = PAGE_DIGEST_EXTRACTOR_PROMPT.format(
         query=query, max_passages=DOCUMENT_DIGEST_TOP_K, page_text=_prefiltered_text(text, ranked)
@@ -167,48 +164,14 @@ async def digest_page(text: str, query: str, *, budget_seconds: float) -> PageDi
     try:
         raw = await asyncio.wait_for(_build_extractor().invoke(prompt), timeout=call_budget)
         returned = PageDigestPassages.model_validate_json(raw).passages
-    except TimeoutError as exc:
+    except (TimeoutError, openai.APIError, ValidationError) as exc:
         logger.warning(f"PAGE_DIGEST extractor call failed ({type(exc).__name__}); serving the BM25 digest")
-        return _bm25_digest(
-            ranked,
-            opening=opening,
-            passages_returned=0,
-            passages_grounded=0,
-            outcome="timeout",
-            scope=scope,
-        )
-    except openai.APIError as exc:
-        logger.warning(f"PAGE_DIGEST extractor call failed ({type(exc).__name__}); serving the BM25 digest")
-        return _bm25_digest(
-            ranked,
-            opening=opening,
-            passages_returned=0,
-            passages_grounded=0,
-            outcome="api_error",
-            scope=scope,
-        )
-    except ValidationError as exc:
-        logger.warning(f"PAGE_DIGEST extractor call failed ({type(exc).__name__}); serving the BM25 digest")
-        return _bm25_digest(
-            ranked,
-            opening=opening,
-            passages_returned=0,
-            passages_grounded=0,
-            outcome="malformed",
-            scope=scope,
-        )
+        return _bm25_digest(ranked, opening=opening, outcome=_call_failure_outcome(exc), scope=scope)
     except RuntimeError as exc:
         if not is_zero_output_failure(exc):  # forecasting-tools raises a bare RuntimeError for an empty completion
             raise
         logger.warning("PAGE_DIGEST extractor returned an empty completion; serving the BM25 digest")
-        return _bm25_digest(
-            ranked,
-            opening=opening,
-            passages_returned=0,
-            passages_grounded=0,
-            outcome="empty_completion",
-            scope=scope,
-        )
+        return _bm25_digest(ranked, opening=opening, outcome="empty_completion", scope=scope)
 
     grounded, kept, evidence = _ground(returned, text, page_norm, opening)
     if not returned:
@@ -224,14 +187,7 @@ async def digest_page(text: str, query: str, *, budget_seconds: float) -> PageDi
         )
     if not grounded:
         logger.warning(f"PAGE_DIGEST nothing grounded ({len(returned)} returned); serving BM25 candidates")
-        return _bm25_digest(
-            ranked,
-            opening=opening,
-            passages_returned=len(returned),
-            passages_grounded=0,
-            outcome="ungrounded",
-            scope=scope,
-        )
+        return _bm25_digest(ranked, opening=opening, outcome="ungrounded", scope=scope, passages_returned=len(returned))
     return PageDigest(
         passages=_with_opening(opening, kept[:DOCUMENT_DIGEST_TOP_K]),
         passages_returned=len(returned),
@@ -245,6 +201,17 @@ async def digest_page(text: str, query: str, *, budget_seconds: float) -> PageDi
             for passage in evidence[:DOCUMENT_DIGEST_TOP_K]
         ),
     )
+
+
+def _call_failure_outcome(exc: TimeoutError | openai.APIError | ValidationError) -> DigestOutcome:
+    """Each is an outcome a healthy deployment produces, and each has one remedy: the free BM25 digest."""
+    match exc:
+        case TimeoutError():  # asyncio.wait_for at the call budget, so the caller's wall never slips
+            return "timeout"
+        case openai.APIError():  # the root of every litellm provider and API error (llm_retry.llm_status_code)
+            return "api_error"
+        case ValidationError():  # the model answered off-schema, and a second paid attempt cannot fit inside the wall
+            return "malformed"
 
 
 def _build_extractor() -> GeneralLlm:
@@ -306,22 +273,18 @@ def _bm25_digest(
     ranked: list[Passage],
     *,
     opening: str,
-    passages_returned: int,
-    passages_grounded: int,
-    outcome: Literal[
-        "ungrounded", "malformed", "api_error", "timeout", "empty_completion", "insufficient_budget", "empty_page"
-    ],
-    scope: Literal["full_page", "prefiltered_windows"],
+    outcome: DigestOutcome,
+    scope: DigestScope,
+    passages_returned: int = 0,
 ) -> PageDigest:
     """The deterministic candidates from the whole-page ranking, with the model outcome retained."""
     opening_norm = _normalize(opening)
     kept = [window.text for window in ranked[:DOCUMENT_DIGEST_TOP_K] if _normalize(window.text) not in opening_norm]
-    empty_page = outcome == "empty_page"
     return PageDigest(
-        passages=_with_opening(opening, kept) if not empty_page else [],
+        passages=_with_opening(opening, kept),
         passages_returned=passages_returned,
-        passages_grounded=passages_grounded,
-        fallback_used=not empty_page,
+        passages_grounded=0,
+        fallback_used=True,
         method=DIGEST_METHOD_BM25,
         outcome=outcome,
         scope=scope,
@@ -333,28 +296,24 @@ def _bm25_digest(
 
 
 def _source_slice_for_normalized_match(page_text: str, candidate: str) -> str:
-    """Return the source substring represented by a passage after whitespace normalization."""
+    """The exact slice of ``page_text`` that ``_normalize`` turns into text containing ``candidate``.
+
+    Mirrors ``_normalize`` one character at a time, remembering each kept character's source index.
+    ``candidate`` is itself normalized, so it never starts or ends on a space or a quote glyph.
+    """
     normalized_chars: list[str] = []
-    source_spans: list[tuple[int, int]] = []
+    source_indices: list[int] = []
     for index, char in enumerate(page_text):
-        if char in "\"'\u2018\u2019\u201c\u201d`":
+        if char in _QUOTE_CHARACTERS:
             continue
-        if char.isspace():
-            if normalized_chars and normalized_chars[-1] != " ":
-                normalized_chars.append(" ")
-                source_spans.append((index, index + 1))
-            elif source_spans and normalized_chars[-1] == " ":
-                source_spans[-1] = (source_spans[-1][0], index + 1)
+        if char.isspace() and (not normalized_chars or normalized_chars[-1] == " "):
             continue
-        normalized_chars.append(char)
-        source_spans.append((index, index + 1))
-    normalized_page = "".join(normalized_chars).strip()
-    offset = normalized_page.find(candidate)
+        normalized_chars.append(" " if char.isspace() else char)
+        source_indices.append(index)
+    offset = "".join(normalized_chars).find(candidate)
     if offset < 0:
         raise RuntimeError("grounded passage was not found in normalized source text")
-    start, _ = source_spans[offset]
-    _, end = source_spans[offset + len(candidate) - 1]
-    return page_text[start:end]
+    return page_text[source_indices[offset] : source_indices[offset + len(candidate) - 1] + 1]
 
 
 def _opening_passage(text: str) -> str:

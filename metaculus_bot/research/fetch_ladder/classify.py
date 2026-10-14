@@ -76,6 +76,9 @@ from metaculus_bot.research.source_presentation import source_text
 
 logger = logging.getLogger(__name__)
 
+_HTML_PARSER_VERSION = f"trafilatura {trafilatura.__version__}; repository classify._classify_html_body"
+_SOURCE_PARSER_VERSION = "repository parse_source"
+
 _CONSENT_VENDOR_RE = re.compile(
     r"(?:cookieyes|cookiebot|onetrust|ot-sdk|trustarc|quantcast|qc-cmp|didomi|iubenda|termly|(?:^|[\s_-])cky(?:[-_\s]|$))",
     re.IGNORECASE,
@@ -391,32 +394,36 @@ async def _classify_html_body(
     )
 
 
-def _record_source_capture(
-    *,
-    source_url: str,
-    retrieval_method: str,
-    content_type: str | None,
-    raw_body: bytes,
-    parsed_text: str | None,
-    parser_version: str,
-    truncated_by: str = "",
-    refusal_reason: str = "",
-    page_count: int | None = None,
-    pages_read: int | None = None,
+def record_html_capture(
+    classified: _HtmlClassification, *, retrieval_method: str, content_type: str, raw_body: bytes
 ) -> None:
-    """Persist one document read while its full response and parsed text are still held."""
+    """Persist one classified HTML read while its full response and extracted text are still held."""
+    extracted_text = classified.artifact.extraction.text
     record_source_capture(
         qid=None,
-        source_url=source_url,
+        source_url=classified.artifact.url,
         retrieval_method=retrieval_method,
         content_type=content_type,
-        parser_version=parser_version,
+        parser_version=_HTML_PARSER_VERSION,
         raw_body=raw_body,
+        parsed_text=extracted_text,
+        refusal_reason="" if extracted_text else "html_parser_returned_no_text",
+    )
+
+
+def _record_source_read(
+    pending: _PendingSource, ctx: context.LadderContext, *, parsed_text: str | None = None, refusal_reason: str = ""
+) -> None:
+    """Persist one local source read, parsed or refused, while its full response is still held."""
+    record_source_capture(
+        qid=None,
+        source_url=pending.url,
+        retrieval_method=_retrieval_method(ctx),
+        content_type=pending.content_type,
+        parser_version=_SOURCE_PARSER_VERSION,
+        raw_body=pending.body,
         parsed_text=parsed_text,
-        truncated_by=truncated_by,
         refusal_reason=refusal_reason,
-        page_count=page_count,
-        pages_read=pages_read,
     )
 
 
@@ -609,7 +616,8 @@ async def _finish_document(pending: _PendingDocument, ctx: context.LadderContext
         attempt.wall_s = max(0.0, time.monotonic() - attempt.started_at)
     finally:
         gate.release()
-    _record_source_capture(
+    record_source_capture(
+        qid=None,
         source_url=pending.url,
         retrieval_method=_retrieval_method(ctx),
         content_type=pending.content_type,
@@ -667,41 +675,17 @@ async def _finish_source(pending: _PendingSource, ctx: context.LadderContext) ->
     gate = pdf_parse_semaphore()
     budget_s = ctx.rung_budget_s()
     if budget_s <= 0.0:
-        _record_source_capture(
-            source_url=pending.url,
-            retrieval_method=_retrieval_method(ctx),
-            content_type=pending.content_type,
-            raw_body=pending.body,
-            parsed_text=None,
-            parser_version="repository parse_source",
-            refusal_reason="source_parse_budget_exhausted",
-        )
+        _record_source_read(pending, ctx, refusal_reason="source_parse_budget_exhausted")
         return _local_refusal(pending)
     try:
         await asyncio.wait_for(gate.acquire(), timeout=budget_s)
     except TimeoutError:
-        _record_source_capture(
-            source_url=pending.url,
-            retrieval_method=_retrieval_method(ctx),
-            content_type=pending.content_type,
-            raw_body=pending.body,
-            parsed_text=None,
-            parser_version="repository parse_source",
-            refusal_reason="source_parse_contention",
-        )
+        _record_source_read(pending, ctx, refusal_reason="source_parse_contention")
         return _local_refusal(pending)
     parse_budget_s = ctx.rung_budget_s()
     if parse_budget_s <= 0.0:
         gate.release()
-        _record_source_capture(
-            source_url=pending.url,
-            retrieval_method=_retrieval_method(ctx),
-            content_type=pending.content_type,
-            raw_body=pending.body,
-            parsed_text=None,
-            parser_version="repository parse_source",
-            refusal_reason="source_parse_budget_exhausted",
-        )
+        _record_source_read(pending, ctx, refusal_reason="source_parse_budget_exhausted")
         return _local_refusal(pending)
     worker = asyncio.create_task(asyncio.to_thread(_parse_and_present_source, pending, ctx))
     release_gate_here = True
@@ -710,43 +694,19 @@ async def _finish_source(pending: _PendingSource, ctx: context.LadderContext) ->
             artifact, result = await asyncio.wait_for(asyncio.shield(worker), timeout=parse_budget_s)
         except SourceReadError as exc:
             logger.info("local source read refused for %s: %s", pending.url, exc.reason)
-            _record_source_capture(
-                source_url=pending.url,
-                retrieval_method=_retrieval_method(ctx),
-                content_type=pending.content_type,
-                raw_body=pending.body,
-                parsed_text=None,
-                parser_version="repository parse_source",
-                refusal_reason=exc.reason,
-            )
+            _record_source_read(pending, ctx, refusal_reason=exc.reason)
             return _local_refusal(pending)
         except TimeoutError:
             release_gate_here = False
             worker.add_done_callback(lambda task: _release_parser_gate(task, gate, pending.url))
-            _record_source_capture(
-                source_url=pending.url,
-                retrieval_method=_retrieval_method(ctx),
-                content_type=pending.content_type,
-                raw_body=pending.body,
-                parsed_text=None,
-                parser_version="repository parse_source",
-                refusal_reason="source_parse_timeout",
-            )
+            _record_source_read(pending, ctx, refusal_reason="source_parse_timeout")
             return _local_refusal(pending)
         except asyncio.CancelledError:
             # `to_thread` keeps running after cancellation. Keep the parser slot occupied until
             # the worker really ends, while allowing the caller's wall timeout to return now.
             release_gate_here = False
             worker.add_done_callback(lambda task: _release_parser_gate(task, gate, pending.url))
-            _record_source_capture(
-                source_url=pending.url,
-                retrieval_method=_retrieval_method(ctx),
-                content_type=pending.content_type,
-                raw_body=pending.body,
-                parsed_text=None,
-                parser_version="repository parse_source",
-                refusal_reason="source_parse_cancelled",
-            )
+            _record_source_read(pending, ctx, refusal_reason="source_parse_cancelled")
             raise
     finally:
         if release_gate_here:
@@ -757,14 +717,7 @@ async def _finish_source(pending: _PendingSource, ctx: context.LadderContext) ->
     parsed_text = "\n\n".join(
         part for part in (source_text(artifact.source.sections), "\n".join(artifact.source.notices)) if part
     )
-    _record_source_capture(
-        source_url=pending.url,
-        retrieval_method=_retrieval_method(ctx),
-        content_type=pending.content_type,
-        raw_body=pending.body,
-        parsed_text=parsed_text,
-        parser_version="repository parse_source",
-    )
+    _record_source_read(pending, ctx, parsed_text=parsed_text)
     return result
 
 
@@ -880,14 +833,8 @@ async def _classify_body(
             remaining_wall_s=ctx.rung_budget_s(),
             pol=ctx.policy,
         )
-        _record_source_capture(
-            source_url=current_url,
-            retrieval_method=_retrieval_method(ctx),
-            content_type=content_type,
-            raw_body=body,
-            parsed_text=classified.artifact.extraction.text,
-            parser_version=f"trafilatura {trafilatura.__version__}; repository classify._classify_html_body",
-            refusal_reason="html_parser_returned_no_text" if not classified.artifact.extraction.text else "",
+        record_html_capture(
+            classified, retrieval_method=_retrieval_method(ctx), content_type=content_type, raw_body=body
         )
         capture_html_read(ctx, classified)
         return classified.result
@@ -972,15 +919,7 @@ async def _classify_body_or_hop(
         remaining_wall_s=ctx.rung_budget_s(),
         pol=ctx.policy,
     )
-    _record_source_capture(
-        source_url=current_url,
-        retrieval_method=_retrieval_method(ctx),
-        content_type=content_type,
-        raw_body=body,
-        parsed_text=classified.artifact.extraction.text,
-        parser_version=f"trafilatura {trafilatura.__version__}; repository classify._classify_html_body",
-        refusal_reason="html_parser_returned_no_text" if not classified.artifact.extraction.text else "",
-    )
+    record_html_capture(classified, retrieval_method=_retrieval_method(ctx), content_type=content_type, raw_body=body)
     capture_html_read(ctx, classified)
     if classified.result.status in ("success", "throttled"):
         return classified.result

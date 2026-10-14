@@ -8,15 +8,16 @@ import os
 import re
 import tempfile
 from collections.abc import Iterable, Mapping
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path, PurePosixPath
 from typing import Any
+
+from metaculus_bot.research.raw_log import SOURCE_CAPTURE_DIR, SOURCE_CAPTURE_PROVIDER, SOURCE_CAPTURE_SCHEMA_VERSION
 
 logger = logging.getLogger(__name__)
 
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-_SOURCE_CAPTURE_PROVIDER = "source_capture"
-_SOURCE_CAPTURE_DIRECTORY = "source_captures"
-_SOURCE_CAPTURE_EXTENSIONS = frozenset({"bin", "html", "pdf", "txt"})
+_RAW_CAPTURE_EXTENSIONS = ("bin", "html", "pdf", "txt")
+_PARSED_CAPTURE_EXTENSIONS = ("txt",)
 
 
 class SourceCaptureIngestError(RuntimeError):
@@ -32,13 +33,13 @@ def ingest_source_capture_records(records: Iterable[Mapping[str, Any]], source_d
     """
     copied = 0
     for record in records:
-        if record.get("provider") != _SOURCE_CAPTURE_PROVIDER:
+        if record.get("provider") != SOURCE_CAPTURE_PROVIDER:
             continue
         payload = _capture_payload(record)
         for prefix in ("raw", "parsed"):
-            if payload.get(f"{prefix}_capture_status") != "captured":
-                continue
-            copied += _ingest_capture_asset(payload, prefix, source_dir, archive_dir)
+            if payload.get(f"{prefix}_capture_status") == "captured":
+                _ingest_capture_asset(payload, prefix, source_dir, archive_dir)
+                copied += 1
     return copied
 
 
@@ -46,14 +47,13 @@ def _capture_payload(record: Mapping[str, Any]) -> Mapping[str, Any]:
     payload = record.get("payload")
     if not isinstance(payload, Mapping):
         raise SourceCaptureIngestError("Invalid source capture manifest: payload must be an object")
-    if record.get("truncated") or payload.get("schema_version") != 1:
+    if record.get("truncated") or payload.get("schema_version") != SOURCE_CAPTURE_SCHEMA_VERSION:
         raise SourceCaptureIngestError("Invalid source capture manifest: truncated or unsupported schema")
     return payload
 
 
-def _ingest_capture_asset(payload: Mapping[str, Any], prefix: str, source_dir: Path, archive_dir: Path) -> int:
-    asset_path = _validate_asset(payload, prefix)
-    digest = str(payload[f"{prefix}_sha256"])
+def _ingest_capture_asset(payload: Mapping[str, Any], prefix: str, source_dir: Path, archive_dir: Path) -> None:
+    asset_path, digest = _validate_asset(payload, prefix)
     byte_count = payload[f"{prefix}_byte_count"]
     if type(byte_count) is not int or byte_count < 0:
         raise SourceCaptureIngestError(f"Invalid source capture {prefix} byte count")
@@ -73,28 +73,20 @@ def _ingest_capture_asset(payload: Mapping[str, Any], prefix: str, source_dir: P
         )
     destination = archive_dir.joinpath(*asset_path.parts)
     _copy_verified_capture(content, destination, digest, asset_path.as_posix())
-    return 1
 
 
-def _validate_asset(payload: Mapping[str, Any], prefix: str) -> PurePosixPath:
+def _validate_asset(payload: Mapping[str, Any], prefix: str) -> tuple[PurePosixPath, str]:
+    """The asset's relative path and digest, accepted only as exactly ``source_captures/<sha256>.<extension>``."""
     asset_path_value = payload.get(f"{prefix}_asset")
     digest = payload.get(f"{prefix}_sha256")
     if not isinstance(asset_path_value, str) or not isinstance(digest, str):
         raise SourceCaptureIngestError(f"Invalid source capture {prefix} asset reference")
     if _SHA256_PATTERN.fullmatch(digest) is None:
         raise SourceCaptureIngestError(f"Invalid source capture {prefix} SHA-256")
-    asset_path = PurePosixPath(asset_path_value)
-    expected_paths = {f"{_SOURCE_CAPTURE_DIRECTORY}/{digest}.{extension}" for extension in _SOURCE_CAPTURE_EXTENSIONS}
-    portable = (
-        asset_path_value in expected_paths
-        and not asset_path.is_absolute()
-        and not PureWindowsPath(asset_path_value).is_absolute()
-        and asset_path.as_posix() == asset_path_value
-    )
-    parsed_extension_is_valid = prefix != "parsed" or asset_path.suffix == ".txt"
-    if not portable or not parsed_extension_is_valid:
+    extensions = _PARSED_CAPTURE_EXTENSIONS if prefix == "parsed" else _RAW_CAPTURE_EXTENSIONS
+    if asset_path_value not in {f"{SOURCE_CAPTURE_DIR}/{digest}.{extension}" for extension in extensions}:
         raise SourceCaptureIngestError(f"Invalid portable source capture path: {asset_path_value!r}")
-    return asset_path
+    return PurePosixPath(asset_path_value), digest
 
 
 def _copy_verified_capture(content: bytes, destination: Path, expected_digest: str, relative_path: str) -> None:
