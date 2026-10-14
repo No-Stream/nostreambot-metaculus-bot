@@ -36,25 +36,14 @@ logger = logging.getLogger(__name__)
 def format_research_summary_with_models(
     base_text: str,
     predictions: Sequence[ReasonedPrediction],
-    report_number: int,
 ) -> str:
-    """Inject model display names before the complete comment budget is allocated."""
+    """Annotate each ``*Forecaster N*`` summary bullet with its model's display name."""
     model_names_by_index: dict[int, str] = {}
     for forecaster_number, forecast in enumerate(predictions, start=1):
         model_name = extract_model_display_name_from_reasoning(forecast.reasoning)
         if model_name is not None:
             model_names_by_index[forecaster_number] = model_name
     return annotate_forecaster_bullets_with_models(base_text, model_names_by_index)
-
-
-def format_main_research_section(base_text: str, report_number: int) -> str:
-    """Preserve the research section until the complete comment is allocated."""
-    return base_text
-
-
-def format_forecaster_rationales_section(base_text: str, report_number: int) -> str:
-    """Preserve rationales until the complete comment budget can trim them by model."""
-    return base_text
 
 
 def _forecasters_used_suffix(n_used: int | None, n_configured: int | None) -> str:
@@ -104,7 +93,6 @@ def build_unified_explanation(
     skip_reason: str | None = None,
     n_used: int | None = None,
     n_configured: int | None = None,
-    research_collection_ranges: Sequence[tuple[int, int]] | None = None,
 ) -> str:
     """Build the final Metaculus comment with stacker/tools/ensemble markers appended.
 
@@ -122,7 +110,7 @@ def build_unified_explanation(
     """
     ensemble_suffix = _forecasters_used_suffix(n_used, n_configured)
     if aggregation_strategy not in (AggregationStrategy.STACKING, AggregationStrategy.CONDITIONAL_STACKING):
-        return trim_comment(f"{base_text}{ensemble_suffix}", research_collection_ranges=research_collection_ranges)
+        return trim_comment(f"{base_text}{ensemble_suffix}")
 
     assert stacker_outcome is not None, (
         "stacker_outcome must be provided for STACKING/CONDITIONAL_STACKING strategies; "
@@ -135,14 +123,11 @@ def build_unified_explanation(
     skip_reason_suffix = "" if skip_reason is None else f"\n{format_stacker_skip_reason_marker(skip_reason)}"
     tools_marker = TOOLS_USED_MARKER_TRUE if _tool_runner_feature_enabled(qtype) else TOOLS_USED_MARKER_FALSE
     return trim_comment(
-        f"{base_text}\n{outcome_marker}{skip_reason_suffix}\n{legacy_marker}\n{tools_marker}{ensemble_suffix}\n",
-        research_collection_ranges=research_collection_ranges,
+        f"{base_text}\n{outcome_marker}{skip_reason_suffix}\n{legacy_marker}\n{tools_marker}{ensemble_suffix}\n"
     )
 
 
 __all__ = [
     "build_unified_explanation",
-    "format_forecaster_rationales_section",
-    "format_main_research_section",
     "format_research_summary_with_models",
 ]

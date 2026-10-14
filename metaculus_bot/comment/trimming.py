@@ -1,10 +1,13 @@
 """Trim an assembled Metaculus comment, and its individual sections, to the platform's char limits.
 
-Two entry points. ``trim_section`` shrinks one section of the framework's unified comment to its
-own budget (``_section_budget`` maps the section name to it), and ``trim_comment`` shrinks the
-whole assembled comment through an ordered strategy chain: shrink ``# RESEARCH`` alone
-(``_trim_research_section_first``), else keep the summary head and the tail
-(``_trim_preserving_summary_and_tail``), else fall back to a plain header-preserving trim
+Two entry points. ``trim_section`` shrinks one standalone section to its own budget
+(``_section_budget`` maps the section name to it); the publish path no longer calls it. ``trim_comment``
+shrinks the whole assembled comment through an ordered strategy chain. A structured comment with
+rationale blocks goes through ``_trim_complete_comment``: optional research paragraphs first (every
+disclosure block kept whole), then summary prose, then the middle of each rationale, and when even
+that cannot fit, the explicitly incomplete explanation (``_incomplete_explanation``). Other shapes
+shrink ``# RESEARCH`` alone (``_trim_research_section_first``), else keep the summary head and the
+tail (``_trim_preserving_summary_and_tail``), else fall back to a plain header-preserving trim
 (``_trim_with_notice``).
 
 Two invariants every path holds. The output keeps its leading ``#``, which the publish validator
@@ -24,8 +27,9 @@ from __future__ import annotations
 import logging
 import re
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from itertools import batched, pairwise
 from typing import Final
 
 from metaculus_bot.comment.markers import (
@@ -55,6 +59,7 @@ _TRAILING_COMMENT_MARKER_RE: Final[re.Pattern[str]] = re.compile(
     r"|TOOLS_USED=(?:true|false)|FORECASTERS_USED=\d+/\d+|EXPLANATION_DETAIL=unknown)\s*-->)[ \t]*$"
 )
 _FINAL_PREDICTION_LINE_RE: Final[re.Pattern[str]] = re.compile(r"(?m)^\*Final Prediction\*:[ \t]*(.*)$")
+_SUMMARY_METADATA_LINE_RE: Final[re.Pattern[str]] = re.compile(r"(?m)^\*(?:Total Cost|Time Spent|LLMs|Bot Name)\*:")
 _CORRECTION_DISCLOSURE_HEADER_RE: Final[re.Pattern[str]] = re.compile(
     r"(?m)^#{3,8} ⚠ Driver-reported corrections[^\n]*$"
 )
@@ -63,7 +68,7 @@ _RESEARCH_PARAGRAPH_DELIMITER_RE: Final[re.Pattern[str]] = re.compile(r"\n[ \t]*
 _PROVIDER_DIAGNOSTICS_HEADER_RE: Final[re.Pattern[str]] = re.compile(
     rf"(?m)^#{{2,8}} {re.escape(PROVIDER_DIAGNOSTICS_HEADER.split(' ', maxsplit=1)[1])}$"
 )
-_RESEARCH_COLLECTION_HEADER_RE: Final[re.Pattern[str]] = re.compile(r"(?m)^#{2,8} Report \d+ Research[ \t]*$")
+_RESEARCH_COLLECTION_HEADER_RE: Final[re.Pattern[str]] = re.compile(r"(?m)^## Report \d+ Research[ \t]*$")
 _PENDING_LEADS_MARKER_RE: Final[re.Pattern[str]] = re.compile(
     rf"{re.escape(PENDING_LEADS_START_MARKER)}|{re.escape(PENDING_LEADS_END_MARKER)}"
 )
@@ -71,6 +76,11 @@ _SUMMARIZER_SOFT_FAIL_BANNER_RE: Final[re.Pattern[str]] = re.compile(re.escape(S
 
 # The framework emits this right after the per-model bullets the residual parsers read.
 _SUMMARY_END_MARKER: Final[str] = "### Research Summary"
+
+_FORECAST_IN_REPORT_LINE: Final[str] = "*Final Prediction*: the full forecast remains in the published report."
+_DETAIL_OMITTED_SENTENCE: Final[str] = (
+    "Rationale detail was omitted for length; missing model attribution and reasoning are unknown."
+)
 
 # Fits the summary with margin, leaving most of the budget to the tail; see docs/architecture.md.
 _COMMENT_HEAD_BUDGET: Final[int] = 10_000
@@ -404,85 +414,68 @@ def _trim_preserving_summary_and_tail(text: str, cfg: TrimConfig) -> tuple[str, 
     return trimmed, True
 
 
-def _trim_research_section_first(
-    text: str,
-    cfg: TrimConfig,
-    research_collection_ranges: Sequence[tuple[int, int]] | None = None,
-) -> tuple[str, bool]:
-    """Absorb the overflow by shrinking only the ``# RESEARCH`` section.
-
-    Model reasoning outranks research, so an overflowing comment shrinks the research
-    middle first and keeps ``# SUMMARY`` (bullets and the summary-end marker) and
-    ``# FORECASTS`` (rationales and the trailing markers) whole. Research is
-    summary-style and front-loaded, so the *front* of its body is what survives.
-
-    Returns ``(text, False)`` when the comment lacks the ``# RESEARCH`` /
-    ``# FORECASTS`` structure, or when shrinking research alone cannot cover the
-    overflow; ``_trim_preserving_summary_and_tail`` handles those correctly and still
-    preserves the leading ``#`` and the per-model bullets.
-    """
+def _split_structured_comment(text: str) -> tuple[str, str, str] | None:
+    """``(head, research, forecasts)`` split at the ``# RESEARCH`` and ``# FORECASTS`` headers."""
     research_match = _RESEARCH_HEADER_RE.search(text)
     forecasts_match = _FORECASTS_HEADER_RE.search(text)
     if research_match is None or forecasts_match is None or research_match.start() >= forecasts_match.start():
-        return text, False
+        return None
+    return (
+        text[: research_match.start()],
+        text[research_match.start() : forecasts_match.start()],
+        text[forecasts_match.start() :],
+    )
 
-    head = text[: research_match.start()]  # everything up to "# RESEARCH"
-    research_section = text[research_match.start() : forecasts_match.start()]
-    tail = text[forecasts_match.start() :]  # "# FORECASTS" onward (incl. markers)
-    research_budget = cfg.comment_limit - len(head) - len(tail)
+
+def _trim_research_section_first(text: str, cfg: TrimConfig) -> tuple[str, bool]:
+    """Absorb the overflow by shrinking only the ``# RESEARCH`` section.
+
+    For a structured comment without rationale headers. Model reasoning outranks research, so
+    ``# SUMMARY`` and ``# FORECASTS`` stay whole. Returns ``(text, False)`` when the comment lacks
+    the structure or shrinking research alone cannot cover the overflow;
+    ``_trim_preserving_summary_and_tail`` handles those and still keeps the per-model bullets.
+    """
+    sections = _split_structured_comment(text)
+    if sections is None:
+        return text, False
+    head, research_section, forecast_section = sections
+    research_budget = cfg.comment_limit - len(head) - len(forecast_section)
     if research_budget <= 0:
         return text, False
-
-    relative_collection_ranges = _relative_research_collection_ranges(
-        research_collection_ranges,
-        section_start=research_match.start(),
-        body_start=research_match.end(),
-        section_end=forecasts_match.start(),
-    )
-    trimmed_research = _trim_research_section_to_budget(
-        research_section,
-        research_budget,
-        cfg.notice,
-        relative_collection_ranges,
-    )
-    trimmed = f"{head}{trimmed_research}{tail}"
+    trimmed_research = _trim_research_section_to_budget(research_section, research_budget, cfg.notice)
+    trimmed = f"{head}{trimmed_research}{forecast_section}"
     if len(trimmed) > cfg.comment_limit:
         return text, False
     return trimmed, True
 
 
-def _take_paragraphs(
-    paragraphs: list[str],
-    budget: int,
-    *,
-    reverse: bool = False,
-    excluded: set[int] | None = None,
-) -> tuple[list[tuple[int, str]], int]:
-    selected: list[tuple[int, str]] = []
+def _count_paragraphs_that_fit(paragraph_sizes: Iterable[int], budget: int) -> int:
+    """How many paragraphs, taken in order and joined by blank lines, fit in ``budget``."""
+    count = 0
     used = 0
-    excluded_indices = excluded or set()
-    indices = range(len(paragraphs) - 1, -1, -1) if reverse else range(len(paragraphs))
-    for index in indices:
-        if index in excluded_indices:
-            continue
-        paragraph = paragraphs[index]
-        added_size = len(paragraph) + (2 if selected else 0)
-        if used + added_size > budget:
+    for size in paragraph_sizes:
+        used += size + (2 if count else 0)
+        if used > budget:
             break
-        selected.append((index, paragraph))
-        used += added_size
-    if reverse:
-        selected.reverse()
-    return selected, used
+        count += 1
+    return count
 
 
-def _trim_research_section_to_budget(
-    section: str,
-    limit: int,
-    notice: str,
-    research_collection_ranges: Sequence[tuple[int, int]] | None = None,
-) -> str:
-    """Trim optional research paragraphs while reserving complete publication disclosures."""
+def _head_and_tail_counts(paragraphs: Sequence[str], budget: int) -> tuple[int, int]:
+    """Leading paragraphs filling half of ``budget``, then trailing paragraphs filling the rest."""
+    sizes = [len(paragraph) for paragraph in paragraphs]
+    head_budget = budget // 2
+    head_count = _count_paragraphs_that_fit(sizes, head_budget)
+    tail_count = _count_paragraphs_that_fit(reversed(sizes[head_count:]), budget - head_budget)
+    return head_count, tail_count
+
+
+def _trim_research_section_to_budget(section: str, limit: int, notice: str) -> str:
+    """Drop whole optional research paragraphs, keeping every disclosure block complete.
+
+    Disclosures (summarizer banner, driver corrections, pending leads, provider diagnostics) are
+    always kept, so the result can exceed ``limit`` when they alone do; callers check the total.
+    """
     if len(section) <= limit:
         return section
 
@@ -491,25 +484,24 @@ def _trim_research_section_to_budget(
         trimmed, _ = _trim_with_notice(section, limit, notice, preserve_header=True)
         return trimmed
 
-    segments = _research_segments(section, len(header) + 1, research_collection_ranges)
-    required_segments = [segment for segment in segments if segment.required]
-    optional_segments = [segment for segment in segments if not segment.required]
-    fixed_parts = [header, *(segment.text for segment in required_segments), notice]
-    optional_budget = max(0, limit - len("\n\n".join(fixed_parts)) - 2)
-    selected_optional = _select_optional_research_segments(optional_segments, optional_budget)
-    kept = sorted([*required_segments, *selected_optional], key=lambda segment: segment.start)
-    parts = [header, *(segment.text for segment in kept), notice]
-    return "\n\n".join(parts) + "\n\n"
+    segments = _research_segments(section, body_start=len(header) + 1)
+    required = [segment for segment in segments if segment.required]
+    optional = [segment for segment in segments if not segment.required]
+    fixed_size = len("\n\n".join([header, *(segment.text for segment in required), notice]))
+    optional_budget = limit - fixed_size - 4
+    kept_optional: list[_ResearchSegment] = []
+    if optional_budget > 0:
+        head_count, tail_count = _head_and_tail_counts([segment.text for segment in optional], optional_budget)
+        kept_optional = optional[:head_count] + optional[len(optional) - tail_count :]
+    kept = sorted([*required, *kept_optional], key=lambda segment: segment.start)
+    return "\n\n".join([header, *(segment.text for segment in kept), notice]) + "\n\n"
 
 
-def _research_segments(
-    section: str,
-    body_start: int,
-    research_collection_ranges: Sequence[tuple[int, int]] | None = None,
-) -> list[_ResearchSegment]:
+def _research_segments(section: str, body_start: int) -> list[_ResearchSegment]:
+    """Split the research body into required disclosure blocks and optional paragraphs."""
     segments: list[_ResearchSegment] = []
     cursor = body_start
-    for start, end in _research_disclosure_ranges(section, body_start, research_collection_ranges):
+    for start, end in _research_disclosure_ranges(section, body_start):
         segments.extend(_research_paragraph_segments(section, cursor, start))
         disclosure = section[start:end].strip()
         if disclosure:
@@ -519,66 +511,44 @@ def _research_segments(
     return segments
 
 
-def _select_optional_research_segments(segments: list[_ResearchSegment], budget: int) -> list[_ResearchSegment]:
-    if not segments or budget <= 0:
-        return []
+def _research_paragraph_segments(section: str, start: int, end: int) -> list[_ResearchSegment]:
+    boundaries = [start]
+    for delimiter in _RESEARCH_PARAGRAPH_DELIMITER_RE.finditer(section, start, end):
+        boundaries.extend([delimiter.start(), delimiter.end()])
+    boundaries.append(end)
+    return [
+        _ResearchSegment(start=paragraph_start, text=section[paragraph_start:paragraph_end].strip(), required=False)
+        for paragraph_start, paragraph_end in batched(boundaries, 2)
+        if section[paragraph_start:paragraph_end].strip()
+    ]
 
-    paragraph_budget = max(0, budget - 2)
-    head_budget = paragraph_budget // 2
-    paragraph_text = [segment.text for segment in segments]
-    head, _ = _take_paragraphs(paragraph_text, head_budget)
-    head_indices = {index for index, _ in head}
-    tail, _ = _take_paragraphs(
-        paragraph_text,
-        paragraph_budget - head_budget,
-        reverse=True,
-        excluded=head_indices,
+
+def _research_disclosure_ranges(section: str, body_start: int) -> list[tuple[int, int]]:
+    """Spans of every disclosure block, found per research collection and merged where they overlap."""
+    ranges = sorted(
+        disclosure
+        for collection_start, collection_end in _research_collection_ranges(section, body_start)
+        for disclosure in _collection_disclosure_ranges(section, collection_start, collection_end)
     )
-    selected_indices = head_indices | {index for index, _ in tail}
-    return [segments[index] for index in sorted(selected_indices)]
-
-
-def _research_disclosure_ranges(
-    section: str,
-    body_start: int,
-    research_collection_ranges: Sequence[tuple[int, int]] | None = None,
-) -> list[tuple[int, int]]:
-    """Find whole rendered disclosure blocks without crossing collection ownership."""
-    if research_collection_ranges is None:
-        research_collection_ranges = _infer_research_collection_ranges(section, body_start)
-
-    ranges: list[tuple[int, int]] = []
-    previous_end = body_start
-    for collection_start, collection_end in research_collection_ranges:
-        if collection_start < body_start or collection_end <= collection_start or collection_end > len(section):
-            raise ValueError("Research collection ranges must be ordered spans inside the research body")
-        if collection_start < previous_end:
-            raise ValueError("Research collection ranges must not overlap")
-        previous_end = collection_end
-        ranges.extend(_collection_disclosure_ranges(section, collection_start, collection_end))
-
     merged: list[tuple[int, int]] = []
-    for start, end in sorted(ranges):
+    for start, end in ranges:
         if merged and start < merged[-1][1]:
-            previous_start, previous_end = merged[-1]
-            merged[-1] = (previous_start, max(previous_end, end))
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
         else:
             merged.append((start, end))
     return merged
 
 
-def _infer_research_collection_ranges(section: str, body_start: int) -> list[tuple[int, int]]:
-    """Use the framework's exact report heading when the caller has no composition context."""
-    collection_headers = list(_RESEARCH_COLLECTION_HEADER_RE.finditer(section, body_start))
-    if not collection_headers:
+def _research_collection_ranges(section: str, body_start: int) -> list[tuple[int, int]]:
+    """One span per ``## Report N Research`` collection, or the whole body when there is none.
+
+    The framework renders collection content at heading level 3 or deeper (or escapes its ``#``s),
+    so a level-2 report heading can only be the framework's own collection header.
+    """
+    header_starts = [header.start() for header in _RESEARCH_COLLECTION_HEADER_RE.finditer(section, body_start)]
+    if not header_starts:
         return [(body_start, len(section))]
-    return [
-        (
-            header.start(),
-            collection_headers[index + 1].start() if index + 1 < len(collection_headers) else len(section),
-        )
-        for index, header in enumerate(collection_headers)
-    ]
+    return list(pairwise([*header_starts, len(section)]))
 
 
 def _collection_disclosure_ranges(section: str, start: int, end: int) -> list[tuple[int, int]]:
@@ -587,10 +557,9 @@ def _collection_disclosure_ranges(section: str, start: int, end: int) -> list[tu
     pending_markers = list(_PENDING_LEADS_MARKER_RE.finditer(section, start, end))
     if len(pending_markers) % 2:
         raise ValueError("Pending lead disclosure markers must appear as pairs in each research collection")
-    for marker_index in range(0, len(pending_markers), 2):
-        pending_start, pending_end = pending_markers[marker_index : marker_index + 2]
+    for pending_start, pending_end in batched(pending_markers, 2):
         if pending_start.group() != PENDING_LEADS_START_MARKER or pending_end.group() != PENDING_LEADS_END_MARKER:
-            raise ValueError("Pending lead disclosure markers must be properly nested in each research collection")
+            raise ValueError("Pending lead disclosure markers must be properly paired in each research collection")
         ranges.append((pending_start.start(), pending_end.end()))
 
     for match in _CORRECTION_DISCLOSURE_HEADER_RE.finditer(section, start, end):
@@ -601,27 +570,9 @@ def _collection_disclosure_ranges(section: str, start: int, end: int) -> list[tu
             disclosure_end = pending_start
         ranges.append((match.start(), disclosure_end))
 
+    # The diagnostics block is appended last, so it runs to the end of its collection.
     ranges.extend((match.start(), end) for match in _PROVIDER_DIAGNOSTICS_HEADER_RE.finditer(section, start, end))
     return ranges
-
-
-def _research_paragraph_segments(section: str, start: int, end: int) -> list[_ResearchSegment]:
-    segments: list[_ResearchSegment] = []
-    cursor = start
-    for delimiter_match in _RESEARCH_PARAGRAPH_DELIMITER_RE.finditer(section, start, end):
-        _append_research_paragraph_segment(segments, section, cursor, delimiter_match.start())
-        cursor = delimiter_match.end()
-    _append_research_paragraph_segment(segments, section, cursor, end)
-    return segments
-
-
-def _append_research_paragraph_segment(segments: list[_ResearchSegment], section: str, start: int, end: int) -> None:
-    paragraph = section[start:end]
-    left_trimmed = paragraph.lstrip()
-    text = left_trimmed.rstrip()
-    if text:
-        leading_whitespace = len(paragraph) - len(left_trimmed)
-        segments.append(_ResearchSegment(start=start + leading_whitespace, text=text, required=False))
 
 
 def _trim_summary_section_to_budget(section: str, limit: int, notice: str) -> str | None:
@@ -639,143 +590,147 @@ def _trim_summary_section_to_budget(section: str, limit: int, notice: str) -> st
     if paragraph_budget < 0:
         return None
 
-    paragraphs = [paragraph.strip() for paragraph in re.split(r"\n[ \t]*\n", body) if paragraph.strip()]
-    head_budget = paragraph_budget // 2
-    head, _ = _take_paragraphs(paragraphs, head_budget)
-    head_indices = {index for index, _ in head}
-    tail, _ = _take_paragraphs(paragraphs, paragraph_budget - head_budget, reverse=True, excluded=head_indices)
-    kept = [paragraph for _, paragraph in head + tail]
-    parts = [prefix, *kept[: len(head)], notice, *kept[len(head) :]]
-    trimmed = "\n\n".join(parts) + "\n\n"
+    paragraphs = [paragraph.strip() for paragraph in _RESEARCH_PARAGRAPH_DELIMITER_RE.split(body) if paragraph.strip()]
+    head_count, tail_count = _head_and_tail_counts(paragraphs, paragraph_budget)
+    tail = paragraphs[len(paragraphs) - tail_count :] if tail_count else []
+    trimmed = "\n\n".join([prefix, *paragraphs[:head_count], notice, *tail]) + "\n\n"
     return trimmed if len(trimmed) <= limit else None
 
 
 def _rationale_content_preserved(original: str, trimmed: str) -> bool:
-    original_models = Counter(_MODEL_PREFIX_RE.findall(original))
-    trimmed_models = Counter(_MODEL_PREFIX_RE.findall(trimmed))
-    original_json = Counter(_JSON_BLOCK_RE.findall(original))
-    trimmed_json = Counter(_JSON_BLOCK_RE.findall(trimmed))
-    return not (original_models - trimmed_models or original_json - trimmed_json)
+    """Every ``Model:`` line and json forecast block in ``original`` is still in ``trimmed``."""
+    missing_models = Counter(_MODEL_PREFIX_RE.findall(original)) - Counter(_MODEL_PREFIX_RE.findall(trimmed))
+    missing_json = Counter(_JSON_BLOCK_RE.findall(original)) - Counter(_JSON_BLOCK_RE.findall(trimmed))
+    return not (missing_models or missing_json)
 
 
-def _incomplete_explanation(
-    text: str,
-    cfg: TrimConfig,
-    research_collection_ranges: Sequence[tuple[int, int]] | None = None,
-) -> str:
-    """Build a bounded explanation that marks omitted rationale detail as unknown."""
+def _trim_rationales_to_fit(head: str, research_section: str, forecast_section: str, cfg: TrimConfig) -> str | None:
+    """Trim within rationale blocks; ``None`` if that cannot fit without losing a model or forecast."""
+    rationale_headers = list(_RATIONALE_HEADER_RE.finditer(forecast_section))
+    marker_starts = [
+        match.start()
+        for match in _TRAILING_COMMENT_MARKER_RE.finditer(forecast_section)
+        if match.start() > rationale_headers[-1].end()
+    ]
+    rationale_start = rationale_headers[0].start()
+    rationale_end = marker_starts[0] if marker_starts else len(forecast_section)
+    rationale_prefix = forecast_section[:rationale_start]
+    rationale_text = forecast_section[rationale_start:rationale_end]
+    trailing_markers = forecast_section[rationale_end:]
+    rationale_budget = (
+        cfg.comment_limit - len(head) - len(research_section) - len(rationale_prefix) - len(trailing_markers)
+    )
+    if rationale_budget <= 0:
+        return None
+    trimmed_rationales, _ = _trim_rationales_within_blocks(rationale_text, rationale_budget, cfg.notice)
+    candidate = f"{head}{research_section}{rationale_prefix}{trimmed_rationales}{trailing_markers}"
+    if len(candidate) > cfg.comment_limit or not _rationale_content_preserved(rationale_text, trimmed_rationales):
+        return None
+    return candidate
+
+
+def _trim_complete_comment(text: str, cfg: TrimConfig) -> tuple[str, str] | None:
+    """Trim a structured comment with rationale blocks; returns ``(trimmed, strategy)``.
+
+    Research paragraphs go first, then the summary prose, then the middle of each rationale (keeping
+    every model's attribution and forecast block). If even that cannot fit, the comment is replaced by
+    the explicitly incomplete explanation. ``None`` when the comment lacks that structure.
+    """
+    sections = _split_structured_comment(text)
+    if sections is None:
+        return None
+    head, research_section, forecast_section = sections
+    if _RATIONALE_HEADER_RE.search(forecast_section) is None:
+        return None
+
+    research_section = _trim_research_section_to_budget(
+        research_section, cfg.comment_limit - len(head) - len(forecast_section), cfg.notice
+    )
+    if len(head) + len(research_section) + len(forecast_section) > cfg.comment_limit:
+        summary_budget = cfg.comment_limit - len(research_section) - len(forecast_section)
+        head = _trim_summary_section_to_budget(head, summary_budget, cfg.notice) or head
+    if len(head) + len(research_section) + len(forecast_section) <= cfg.comment_limit:
+        return f"{head}{research_section}{forecast_section}", "complete_comment_allocator"
+
+    trimmed = _trim_rationales_to_fit(head, research_section, forecast_section, cfg)
+    if trimmed is not None:
+        return trimmed, "complete_comment_allocator"
+    return _incomplete_explanation(text, cfg), "incomplete_explanation"
+
+
+def _final_prediction_block(text: str) -> str:
+    """The ``*Final Prediction*`` line plus its continuation lines (multiple choice and numeric span several)."""
     prediction_match = _FINAL_PREDICTION_LINE_RE.search(text)
     if prediction_match is None:
-        prediction_block = "*Final Prediction*: retained in the published forecast report."
-    else:
-        next_metadata = re.search(
-            r"(?m)^\*(?:Total Cost|Time Spent|LLMs|Bot Name)\*:",
-            text[prediction_match.end() :],
-        )
-        prediction_end = len(text) if next_metadata is None else prediction_match.end() + next_metadata.start()
-        prediction_block = text[prediction_match.start() : prediction_end].rstrip()
+        return _FORECAST_IN_REPORT_LINE
+    next_metadata = _SUMMARY_METADATA_LINE_RE.search(text, prediction_match.end())
+    prediction_end = len(text) if next_metadata is None else next_metadata.start()
+    return text[prediction_match.start() : prediction_end].rstrip()
 
+
+def _incomplete_explanation(text: str, cfg: TrimConfig) -> str:
+    """A bounded explanation that marks omitted rationale detail as unknown.
+
+    Tries progressively shorter renderings and returns the first that fits: full disclosures, then
+    compacted corrections, then compacted pending leads, each first with the readable prediction and
+    then with a pointer to the published report. Provider diagnostics run to the end of their
+    collection, so many collections can overflow even the compact forms; the last rendering then
+    drops the disclosures and keeps only the prediction pointer and the markers.
+    """
+    prediction_block = _final_prediction_block(text)
     markers = list(dict.fromkeys(match.group(1) for match in _TRAILING_COMMENT_MARKER_RE.finditer(text)))
-    disclosure_blocks = _comment_research_disclosures(text, research_collection_ranges)
-    fixed_lines = [
-        "# SUMMARY",
-        prediction_block,
-        "### Research Summary",
-        "Rationale detail was omitted for length; missing model attribution and reasoning are unknown.",
-        *disclosure_blocks,
-        "# FORECASTS",
-        cfg.notice,
-        EXPLANATION_DETAIL_UNKNOWN_MARKER,
-        *markers,
-    ]
-    kept_lines = [line for line in fixed_lines if line]
-    rendered = "\n".join(kept_lines)
-    if len(rendered) <= cfg.comment_limit:
-        return rendered
+    disclosures = _comment_research_disclosures(text)
+    compact_corrections = _compact_research_disclosures(disclosures)
+    compact_all = _compact_research_disclosures(disclosures, compact_pending_leads=True)
 
-    # Multiple-choice labels can be long. If the complete readable distribution cannot fit beside
-    # the required markers, the published report remains the source of the full forecast.
-    bounded_prediction = prediction_block
-    compact_lines = [
-        "# SUMMARY",
-        bounded_prediction,
-        "Rationale detail was omitted for length; missing model attribution and reasoning are unknown.",
-        "# FORECASTS",
-        EXPLANATION_DETAIL_UNKNOWN_MARKER,
-        *markers,
-    ]
-    compact_disclosures = _compact_research_disclosures(disclosure_blocks)
-
-    def render_compact(prediction: str) -> str:
+    def render(prediction: str, disclosure_blocks: list[str]) -> str:
         return "\n".join(
             [
                 "# SUMMARY",
                 prediction,
-                "### Research Summary",
-                compact_lines[2],
-                *compact_disclosures,
-                *compact_lines[3:],
+                _SUMMARY_END_MARKER,
+                _DETAIL_OMITTED_SENTENCE,
+                *disclosure_blocks,
+                "# FORECASTS",
+                cfg.notice,
+                EXPLANATION_DETAIL_UNKNOWN_MARKER,
+                *markers,
             ]
         )
 
-    compact = render_compact(bounded_prediction)
-    if len(compact) <= cfg.comment_limit:
-        return compact
+    for candidate in (
+        render(prediction_block, disclosures),
+        render(prediction_block, compact_corrections),
+        render(_FORECAST_IN_REPORT_LINE, compact_corrections),
+        render(prediction_block, compact_all),
+        render(_FORECAST_IN_REPORT_LINE, compact_all),
+    ):
+        if len(candidate) <= cfg.comment_limit:
+            return candidate
 
-    report_reference = "*Final Prediction*: the full forecast remains in the published report."
-    compact = render_compact(report_reference)
-    if len(compact) <= cfg.comment_limit:
-        return compact
-
-    compact_disclosures = _compact_research_disclosures(disclosure_blocks, compact_pending_leads=True)
-    compact = render_compact(bounded_prediction)
-    if len(compact) <= cfg.comment_limit:
-        return compact
-
-    compact = render_compact(report_reference)
-    if len(compact) <= cfg.comment_limit:
-        return compact
-
-    # These fields are bounded by the small, fixed marker vocabulary and disclosure headers. Keep
-    # the explicit incomplete status and all essential disclosures; do not cut a value or marker.
-    return "\n".join(
-        [
-            "# SUMMARY",
-            report_reference,
-            *compact_disclosures,
-            "# FORECASTS",
-            EXPLANATION_DETAIL_UNKNOWN_MARKER,
-            *markers,
-        ]
-    )
+    bare = render(_FORECAST_IN_REPORT_LINE, [])
+    if len(bare) > cfg.comment_limit:
+        raise ValueError(f"Minimal incomplete explanation is {len(bare)} chars, over the {cfg.comment_limit} limit")
+    logger.warning("Research disclosures dropped from the incomplete explanation: they alone exceed the limit")
+    return bare
 
 
-def _comment_research_disclosures(
-    text: str,
-    research_collection_ranges: Sequence[tuple[int, int]] | None = None,
-) -> list[str]:
-    research_match = _RESEARCH_HEADER_RE.search(text)
-    forecasts_match = _FORECASTS_HEADER_RE.search(text)
-    if research_match is None or forecasts_match is None or research_match.start() >= forecasts_match.start():
+def _comment_research_disclosures(text: str) -> list[str]:
+    sections = _split_structured_comment(text)
+    if sections is None:
         return []
-    section = text[research_match.start() : forecasts_match.start()]
-    relative_ranges = _relative_research_collection_ranges(
-        research_collection_ranges,
-        section_start=research_match.start(),
-        body_start=research_match.end(),
-        section_end=forecasts_match.start(),
-    )
-    ranges = _research_disclosure_ranges(section, len("# RESEARCH\n"), relative_ranges)
-    return [section[start:end].strip() for start, end in ranges]
+    _, research_section, _ = sections
+    body_start = research_section.index("\n") + 1
+    return [
+        research_section[start:end].strip() for start, end in _research_disclosure_ranges(research_section, body_start)
+    ]
 
 
 def _compact_research_disclosures(disclosures: list[str], *, compact_pending_leads: bool = False) -> list[str]:
     compact: list[str] = []
     for disclosure in disclosures:
         if _CORRECTION_DISCLOSURE_HEADER_RE.match(disclosure):
-            lines = disclosure.splitlines()
-            correction_notice = "[Correction details omitted for length.]"
-            compact.append("\n".join([*lines[:2], correction_notice]))
+            compact.append("\n".join([*disclosure.splitlines()[:2], "[Correction details omitted for length.]"]))
         elif compact_pending_leads and disclosure.startswith(PENDING_LEADS_START_MARKER):
             compact.append(
                 "\n".join(
@@ -792,179 +747,24 @@ def _compact_research_disclosures(disclosures: list[str], *, compact_pending_lea
     return compact
 
 
-def _relative_research_collection_ranges(
-    research_collection_ranges: Sequence[tuple[int, int]] | None,
-    *,
-    section_start: int,
-    body_start: int,
-    section_end: int,
-) -> tuple[tuple[int, int], ...] | None:
-    if research_collection_ranges is None:
-        return None
-
-    relative_ranges: list[tuple[int, int]] = []
-    previous_end = body_start
-    for start, end in research_collection_ranges:
-        if start < body_start or end <= start or end > section_end or start < previous_end:
-            raise ValueError("Research collection ranges must be ordered spans inside # RESEARCH")
-        relative_ranges.append((start - section_start, end - section_start))
-        previous_end = end
-    return tuple(relative_ranges)
-
-
-def _complete_comment_sections(
-    text: str,
-    research_collection_ranges: Sequence[tuple[int, int]] | None = None,
-) -> tuple[str, str, str, list[re.Match[str]], tuple[tuple[int, int], ...] | None] | None:
-    research_match = _RESEARCH_HEADER_RE.search(text)
-    forecasts_match = _FORECASTS_HEADER_RE.search(text)
-    if research_match is None or forecasts_match is None or research_match.start() >= forecasts_match.start():
-        return None
-
-    forecast_section = text[forecasts_match.start() :]
-    rationale_headers = list(_RATIONALE_HEADER_RE.finditer(forecast_section))
-    if not rationale_headers:
-        return None
-
-    research_section = text[research_match.start() : forecasts_match.start()]
-    relative_ranges = _relative_research_collection_ranges(
-        research_collection_ranges,
-        section_start=research_match.start(),
-        body_start=research_match.end(),
-        section_end=forecasts_match.start(),
-    )
-    return text[: research_match.start()], research_section, forecast_section, rationale_headers, relative_ranges
-
-
-def _allocate_research_and_summary(
-    head: str,
-    research_section: str,
-    forecast_section: str,
-    cfg: TrimConfig,
-    *,
-    research_collection_ranges: Sequence[tuple[int, int]] | None = None,
-) -> tuple[str, str, str]:
-    research_budget = cfg.comment_limit - len(head) - len(forecast_section)
-    trimmed_research = _trim_research_section_to_budget(
-        research_section,
-        research_budget,
-        cfg.notice,
-        research_collection_ranges,
-    )
-    candidate = f"{head}{trimmed_research}{forecast_section}"
-    if len(candidate) <= cfg.comment_limit:
-        return head, trimmed_research, forecast_section
-
-    summary_budget = cfg.comment_limit - len(trimmed_research) - len(forecast_section)
-    trimmed_head = _trim_summary_section_to_budget(head, summary_budget, cfg.notice)
-    if (
-        trimmed_head is not None
-        and len(trimmed_head) + len(trimmed_research) + len(forecast_section) <= cfg.comment_limit
-    ):
-        return trimmed_head, trimmed_research, forecast_section
-    return head, trimmed_research, forecast_section
-
-
-def _trim_rationales_to_fit(
-    head: str,
-    research_section: str,
-    forecast_section: str,
-    *,
-    rationale_headers: list[re.Match[str]],
-    cfg: TrimConfig,
-) -> str | None:
-    final_rationale_header = rationale_headers[-1]
-    marker_matches = [
-        match
-        for match in _TRAILING_COMMENT_MARKER_RE.finditer(forecast_section)
-        if match.start() > final_rationale_header.end()
-    ]
-    marker_start = marker_matches[0].start() if marker_matches else len(forecast_section)
-    rationale_end = marker_start
-    rationale_prefix = forecast_section[: rationale_headers[0].start()]
-    rationale_text = forecast_section[rationale_headers[0].start() : rationale_end]
-    trailing_markers = forecast_section[marker_start:]
-    rationale_budget = (
-        cfg.comment_limit - len(head) - len(research_section) - len(rationale_prefix) - len(trailing_markers)
-    )
-    if rationale_budget > 0:
-        trimmed_rationales, _ = _trim_rationales_within_blocks(rationale_text, rationale_budget, cfg.notice)
-        trimmed_forecast = f"{rationale_prefix}{trimmed_rationales}{trailing_markers}"
-        candidate = f"{head}{research_section}{trimmed_forecast}"
-        if len(candidate) <= cfg.comment_limit and _rationale_content_preserved(rationale_text, trimmed_rationales):
-            return candidate
-    return None
-
-
-def _trim_complete_comment(
-    text: str,
-    cfg: TrimConfig,
-    research_collection_ranges: Sequence[tuple[int, int]] | None = None,
-) -> str | None:
-    sections = _complete_comment_sections(text, research_collection_ranges)
-    if sections is None:
-        return None
-
-    head, research_section, forecast_section, rationale_headers, relative_collection_ranges = sections
-    head, research_section, forecast_section = _allocate_research_and_summary(
-        head,
-        research_section,
-        forecast_section,
-        cfg,
-        research_collection_ranges=relative_collection_ranges,
-    )
-    if len(head) + len(research_section) + len(forecast_section) <= cfg.comment_limit:
-        return f"{head}{research_section}{forecast_section}"
-
-    trimmed = _trim_rationales_to_fit(
-        head,
-        research_section,
-        forecast_section,
-        rationale_headers=rationale_headers,
-        cfg=cfg,
-    )
-    if trimmed is not None:
-        return trimmed
-
-    return _incomplete_explanation(text, cfg, research_collection_ranges)
-
-
-def trim_comment(
-    text: str,
-    *,
-    config: TrimConfig | None = None,
-    research_collection_ranges: Sequence[tuple[int, int]] | None = None,
-) -> str:
+def trim_comment(text: str, *, config: TrimConfig | None = None) -> str:
     cfg = config or TrimConfig()
     if len(text) <= cfg.comment_limit:
         return text
 
-    # The complete composition is available here, after metadata and markers have been appended.
-    # Keep fitting comments byte-identical; on real overflow shrink whole research paragraphs,
-    # then trim rationale blocks while preserving each model and structured forecast.
-    trimmed = _trim_complete_comment(text, cfg, research_collection_ranges)
-    if trimmed is not None:
-        strategy = "complete_comment_allocator"
+    # Every strategy in this chain preserves the leading "#", so the validator invariant holds.
+    complete = _trim_complete_comment(text, cfg)
+    if complete is not None:
+        trimmed, strategy = complete
     else:
-        # Historical or unstructured shapes keep the established fallbacks.
-        trimmed, used = _trim_research_section_first(text, cfg, research_collection_ranges)
-        if used:
-            strategy = "research_first"
-        else:
-            if (
-                research_collection_ranges is not None
-                and _RESEARCH_HEADER_RE.search(text) is not None
-                and _FORECASTS_HEADER_RE.search(text) is not None
-            ):
-                trimmed = _incomplete_explanation(text, cfg, research_collection_ranges)
-                strategy = "incomplete_explanation"
-            else:
-                trimmed, used = _trim_preserving_summary_and_tail(text, cfg)
-                if used:
-                    strategy = "summary_and_tail"
-                else:
-                    trimmed, _ = _trim_with_notice(text, cfg.comment_limit, cfg.notice, preserve_header=True)
-                    strategy = "header_and_tail"
+        trimmed, used = _trim_research_section_first(text, cfg)
+        strategy = "research_first"
+        if not used:
+            trimmed, used = _trim_preserving_summary_and_tail(text, cfg)
+            strategy = "summary_and_tail"
+        if not used:
+            trimmed, _ = _trim_with_notice(text, cfg.comment_limit, cfg.notice, preserve_header=True)
+            strategy = "header_and_tail"
 
     logger.warning(
         "Trimmed Metaculus comment from %s to %s characters (strategy=%s)",

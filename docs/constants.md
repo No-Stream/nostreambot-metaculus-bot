@@ -239,7 +239,8 @@ the framework has assembled metadata and the bot has appended disclosure markers
 On overflow, the allocator trims whole research paragraphs first, summary prose after the parser
 boundary next, and rationale bodies only when required. It preserves model attribution and fenced
 JSON forecast blocks while they fit. If those blocks cannot fit, the bounded incomplete-comment
-fallback keeps the final prediction and disclosures and marks missing rationale detail as unknown.
+fallback keeps the final prediction and disclosures and marks missing rationale detail as unknown. Its
+last rendering drops the disclosures too when they alone exceed the limit, so the result always fits.
 
 ### RESEARCH_PROVIDER_ENV
 

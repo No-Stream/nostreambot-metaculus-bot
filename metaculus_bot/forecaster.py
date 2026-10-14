@@ -3,7 +3,6 @@ import logging
 import time
 from collections import defaultdict
 from collections.abc import Callable, Coroutine, Sequence
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, cast, override
 
@@ -30,8 +29,6 @@ from metaculus_bot.aggregation_strategies import (
 from metaculus_bot.close_margin import format_close_margin_marker
 from metaculus_bot.comment.formatting import (
     build_unified_explanation,
-    format_forecaster_rationales_section,
-    format_main_research_section,
     format_research_summary_with_models,
 )
 from metaculus_bot.config import load_environment
@@ -102,28 +99,6 @@ logger = logging.getLogger(__name__)
 _CLOSE_TIME_MAX = datetime.max.replace(tzinfo=UTC)
 
 load_environment()
-
-
-@dataclass(frozen=True, slots=True)
-class _CommentCompositionInput:
-    question: MetaculusQuestion
-    research_prediction_collections: list[ResearchWithPredictions]
-    aggregated_prediction: PredictionTypes
-    final_cost: float
-    time_spent_in_minutes: float
-
-
-class _ComposedComment(str):
-    research_collection_ranges: tuple[tuple[int, int], ...]
-
-    def __new__(
-        cls,
-        value: str,
-        research_collection_ranges: tuple[tuple[int, int], ...],
-    ) -> "_ComposedComment":
-        comment = super().__new__(cls, value)
-        comment.research_collection_ranges = research_collection_ranges
-        return comment
 
 
 def _forecast_history_is_readable(question: MetaculusQuestion) -> bool:
@@ -788,24 +763,14 @@ class TemplateForecaster(CompactLoggingForecastBot):
         predicted_research: ResearchWithPredictions,
     ) -> str:
         text = super()._format_and_expand_research_summary(report_number, report_type, predicted_research)
-        return format_research_summary_with_models(text, predicted_research.predictions, report_number)
-
-    @classmethod
-    def _format_main_research(
-        cls,
-        report_number: int,
-        predicted_research: ResearchWithPredictions,
-    ) -> str:
-        text = super()._format_main_research(report_number, predicted_research)
-        return format_main_research_section(text, report_number)
+        return format_research_summary_with_models(text, predicted_research.predictions)
 
     def _format_forecaster_rationales(
         self,
         report_number: int,
         researched_predictions: ResearchWithPredictions,
     ) -> str:
-        text = super()._format_forecaster_rationales(report_number, researched_predictions).lstrip()
-        return format_forecaster_rationales_section(text, report_number)
+        return super()._format_forecaster_rationales(report_number, researched_predictions).lstrip()
 
     @override
     def _create_comment(
@@ -816,91 +781,42 @@ class TemplateForecaster(CompactLoggingForecastBot):
         final_cost: float,
         time_spent_in_minutes: float,
     ) -> str:
-        """Assemble report sections before the repository's single comment allocation.
+        """The framework's comment layout, without its destructive size guard.
 
-        ``ForecastBot._create_comment`` replaces comments above 150,000 characters with the
-        first 2,000 characters. That runs before ``_create_unified_explanation`` can apply the
-        repository's 149,999-character allocator, so keep its section composition here and omit
-        that destructive pre-allocation fallback.
+        ``ForecastBot._create_comment`` replaces a comment above 150,000 characters with its first
+        2,000 characters, before ``_create_unified_explanation`` can run ``trim_comment``, which
+        keeps every model's attribution and forecast. So this rebuilds the same sections and leaves
+        all trimming to ``trim_comment``.
         """
-        comment, research_collection_ranges = self._compose_comment(
-            _CommentCompositionInput(
-                question,
-                research_prediction_collections,
-                aggregated_prediction,
-                final_cost,
-                time_spent_in_minutes,
-            )
+        report_type = DataOrganizer.get_report_type_for_question_type(type(question))
+        collections = list(enumerate(research_prediction_collections, start=1))
+        combined_summaries = "\n".join(
+            self._format_and_expand_research_summary(number, report_type, collection)
+            for number, collection in collections
         )
-        # ForecastBot's unified-explanation method calls this override and returns the
-        # resulting str. Carry the join-time spans on that value instead of storing
-        # per-question state on the forecaster instance.
-        return _ComposedComment(comment, research_collection_ranges)
-
-    def _compose_comment(
-        self,
-        composition: _CommentCompositionInput,
-    ) -> tuple[str, tuple[tuple[int, int], ...]]:
-        metadata, combined_summaries, research_sections, combined_rationales = self._format_comment_sections(
-            composition
+        combined_research = "\n".join(
+            self._format_main_research(number, collection) for number, collection in collections
         )
-        research_prefix = f"{metadata}\n{combined_summaries}\n\n# RESEARCH\n"
-        combined_research, research_collection_ranges = self._join_research_sections(
-            len(research_prefix),
-            research_sections,
+        combined_rationales = "\n".join(
+            self._format_forecaster_rationales(number, collection) for number, collection in collections
         )
-        comment = f"{research_prefix}{combined_research}\n\n# FORECASTS\n{combined_rationales}\n"
-        return comment, research_collection_ranges
-
-    def _format_comment_sections(
-        self,
-        composition: _CommentCompositionInput,
-    ) -> tuple[str, str, list[str], str]:
-        report_type = DataOrganizer.get_report_type_for_question_type(type(composition.question))
-
-        all_summaries = []
-        all_core_research = []
-        all_forecaster_rationales = []
-        for report_number, collection in enumerate(composition.research_prediction_collections, start=1):
-            all_summaries.append(self._format_and_expand_research_summary(report_number, report_type, collection))
-            all_core_research.append(self._format_main_research(report_number, collection))
-            all_forecaster_rationales.append(self._format_forecaster_rationales(report_number, collection))
-
-        combined_summaries = "\n".join(all_summaries)
-        combined_rationales = "\n".join(all_forecaster_rationales)
-        time_spent_formatted = f"{round(composition.time_spent_in_minutes, 2)} minutes"
-        cost_formatted = f"${round(composition.final_cost, 4)} (estimated)"
         metadata_disabled = "extra_metadata_in_explanation is disabled"
+        show_metadata = self.extra_metadata_in_explanation
         metadata = clean_indents(
             f"""
             # SUMMARY
-            *Question*: {composition.question.question_text}
-            *Final Prediction*: {report_type.make_readable_prediction(composition.aggregated_prediction)}
-            *Total Cost*: {cost_formatted if self.extra_metadata_in_explanation else metadata_disabled}
-            *Time Spent*: {time_spent_formatted if self.extra_metadata_in_explanation else metadata_disabled}
-            *LLMs*: `{self.make_llm_dict() if self.extra_metadata_in_explanation else metadata_disabled}`
-            *Bot Name*: {self.__class__.__name__ if self.extra_metadata_in_explanation else metadata_disabled}
+            *Question*: {question.question_text}
+            *Final Prediction*: {report_type.make_readable_prediction(aggregated_prediction)}
+            *Total Cost*: {f"${round(final_cost, 4)} (estimated)" if show_metadata else metadata_disabled}
+            *Time Spent*: {f"{round(time_spent_in_minutes, 2)} minutes" if show_metadata else metadata_disabled}
+            *LLMs*: `{self.make_llm_dict() if show_metadata else metadata_disabled}`
+            *Bot Name*: {self.__class__.__name__ if show_metadata else metadata_disabled}
             """
         )
-        return metadata, combined_summaries, all_core_research, combined_rationales
-
-    @staticmethod
-    def _join_research_sections(
-        prefix_length: int,
-        research_sections: Sequence[str],
-    ) -> tuple[str, tuple[tuple[int, int], ...]]:
-        parts: list[str] = []
-        ranges: list[tuple[int, int]] = []
-        cursor = prefix_length
-        for index, section in enumerate(research_sections):
-            if index:
-                parts.append("\n")
-                cursor += 1
-            start = cursor
-            parts.append(section)
-            cursor += len(section)
-            ranges.append((start, cursor))
-        return "".join(parts), tuple(ranges)
+        return (
+            f"{metadata}\n{combined_summaries}\n\n# RESEARCH\n{combined_research}\n\n"
+            f"# FORECASTS\n{combined_rationales}\n"
+        )
 
     @override
     def _create_unified_explanation(
@@ -918,9 +834,6 @@ class TemplateForecaster(CompactLoggingForecastBot):
             final_cost,
             time_spent_in_minutes,
         )
-        research_collection_ranges = (
-            base_text.research_collection_ranges if isinstance(base_text, _ComposedComment) else None
-        )
         qid = question.id_of_question
         stacker_outcome = self._pipeline.outcomes.pop(qid, None) if qid is not None else None
         stacker_skip_reason = self._pipeline.skip_reasons.pop(qid, None) if qid is not None else None
@@ -933,14 +846,13 @@ class TemplateForecaster(CompactLoggingForecastBot):
         )
         n_configured = len(self._forecaster_llms) or self.predictions_per_research_report
         return build_unified_explanation(
-            str(base_text),
+            base_text,
             question,
             self.aggregation_strategy,
             stacker_outcome,
             skip_reason=stacker_skip_reason,
             n_used=n_used,
             n_configured=n_configured,
-            research_collection_ranges=research_collection_ranges,
         )
 
     async def _forecaster_with_soft_deadline(

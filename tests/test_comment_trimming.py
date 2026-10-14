@@ -15,7 +15,7 @@ from typing import ClassVar
 import pytest
 from forecasting_tools import ReasonedPrediction
 
-from metaculus_bot.comment.markers import STACKED_BASE_REASONING_HEADER
+from metaculus_bot.comment.markers import EXPLANATION_DETAIL_UNKNOWN_MARKER, STACKED_BASE_REASONING_HEADER
 from metaculus_bot.comment.trimming import (
     TRIM_NOTICE,
     TrimConfig,
@@ -86,6 +86,62 @@ def test_overflow_preserves_optional_research_before_single_newline_diagnostics_
     assert len(trimmed) <= 800
     assert recent_evidence in trimmed
     assert "lost=summarizer:error(timeout)" in trimmed
+
+
+def test_incomplete_fallback_stays_within_limit_when_disclosures_alone_overflow() -> None:
+    # Each diagnostics block runs to the end of its collection, so enough collections make the
+    # disclosures alone exceed the budget even after every other part has been compacted.
+    limit = 2_000
+    diagnostics = f"{PROVIDER_DIAGNOSTICS_HEADER}\n" + "\n".join(
+        f"- provider_{index}: fallback | lost=source_{index}:error(timeout)" for index in range(40)
+    )
+    research_body = f"evidence 1\n\n{diagnostics}" + "".join(
+        f"\n## Report {report} Research\nevidence {report}\n\n{diagnostics}" for report in range(2, 6)
+    )
+    comment = _build_sectioned_comment(
+        summary_body="*Forecaster 1*: 65%",
+        research_body=research_body,
+        forecasts_body=(
+            "## R1: Forecaster 1 Reasoning\n"
+            "Model: openrouter/provider/model-1\n\n"
+            '```json\n{"evidence": "' + ("x" * limit) + '"}\n```'
+        ),
+    )
+
+    trimmed = trim_comment(comment, config=TrimConfig(comment_limit=limit))
+
+    assert len(trimmed) <= limit
+    assert trimmed.startswith("# SUMMARY")
+    assert EXPLANATION_DETAIL_UNKNOWN_MARKER in trimmed
+    assert "<!-- STACKED=true -->" in trimmed
+    assert "<!-- TOOLS_USED=false -->" in trimmed
+
+
+def test_report_heading_inside_research_content_does_not_split_collections() -> None:
+    # The framework renders collection content at heading level 3 or deeper, so only a level-2
+    # "## Report N Research" line opens a collection. A deeper look-alike stays inside report 1,
+    # and report 1's diagnostics block (which runs to the end of its collection) is kept whole.
+    diagnostics = f"{PROVIDER_DIAGNOSTICS_HEADER}\n- asknews: fallback | lost=summarizer:error(timeout)"
+    research_body = (
+        ("optional evidence " * 500)
+        + f"\n\n{diagnostics}\n\n### Report 2 Research\nLook-alike heading kept with the diagnostics. "
+        + ("diagnostic detail " * 500)
+    )
+    comment = _build_sectioned_comment(
+        summary_body="*Forecaster 1*: 65%",
+        research_body=research_body,
+        forecasts_body=(
+            "## R1: Forecaster 1 Reasoning\n"
+            "Model: openrouter/provider/model-1\n\n"
+            'A concise rationale.\n\n```json\n{"probability": 0.65}\n```'
+        ),
+    )
+
+    trimmed = trim_comment(comment, config=TrimConfig(comment_limit=len(comment) - 3_000))
+
+    assert "lost=summarizer:error(timeout)" in trimmed
+    assert "Look-alike heading kept with the diagnostics." in trimmed
+    assert "Model: openrouter/provider/model-1" in trimmed
 
 
 # ---------------------------------------------------------------------------

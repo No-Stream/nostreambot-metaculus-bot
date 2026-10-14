@@ -588,7 +588,10 @@ If the required model and JSON forecast blocks themselves cannot fit, the bounde
 the readable final prediction when it fits beside publication disclosures; otherwise it names the
 published report as the location of the full forecast. It omits rationale detail and adds
 `EXPLANATION_DETAIL=unknown`. The parser records that explicit state and does not infer attribution
-for the missing rationale. The typed prediction stays on the ordinary report path, independent of
+for the missing rationale. Provider diagnostics run to the end of their research collection (a level-2
+`## Report N Research` heading, which collection content can never produce), so when the disclosures
+themselves exceed the budget the last rendering drops them, logs a warning, and keeps only the
+prediction pointer and markers. The typed prediction stays on the ordinary report path, independent of
 comment length. A large multiple-choice distribution can exceed the comment budget even when each
 option label is within the backend's ordinary label limit, so the fallback points to the published
 report rather than presenting an incomplete distribution. Tests exercise `forecast_questions`
