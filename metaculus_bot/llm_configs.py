@@ -136,13 +136,10 @@ FORECASTER_LLMS: list[GeneralLlm] = [
         "openrouter/anthropic/claude-opus-5.5",
         reasoning={"effort": "xhigh"},
     ),
-    # Google slot. No explicit reasoning-effort kwarg — gemini-3.1-pro-preview has
-    # no xhigh tier and uses provider defaults. PINNED to the personal
-    # OPENROUTER_API_KEY via the DONATED_KEY_BLOCKED_GOOGLE_MODELS blocklist in
-    # fallback_openrouter (the donated key routes it through a free-tier Google
-    # AI Studio BYOK integration with quota 0, so it would 429 there); see the
-    # TODO(gemini-3.1-pro-donated) tag pending the Metaculus-side BYOK fix.
-    _forecaster_slot("openrouter/google/gemini-3.1-pro-preview"),
+    # Google slot. No explicit reasoning-effort kwarg; use provider defaults.
+    # Pinned to the personal key: the donated account's Google AI Studio BYOK
+    # integration returned quota 0 for Argon in the 2026-10-13 live probe.
+    _forecaster_slot("openrouter/google/gemini-4-argon"),
 ]
 
 

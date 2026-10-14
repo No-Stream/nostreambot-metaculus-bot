@@ -34,6 +34,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from metaculus_bot.research.source_capture_persistence import ingest_source_capture_records
+
 # Enumeration + download go through the shared core; the run-log family (research-* +
 # logs-*) constant lives with the run-log harvester. Raw research rides in the same
 # artifacts as the run logs.
@@ -51,7 +53,7 @@ DEFAULT_ARCHIVE_DIR = "backtests/research_archive/raw"
 RAW_LOG_FILENAME_RE = re.compile(r"^raw_research_(?P<run_id>.+)\.jsonl$")
 
 
-def harvest_raw_logs_from_dir(run_dir: Path) -> dict[str, list[dict]]:
+def harvest_raw_logs_from_dir(run_dir: Path, *, source_archive_dir: Path | None = None) -> dict[str, list[dict]]:
     """Return ``{run_id: [records]}`` from every ``raw_research_*.jsonl`` under ``run_dir``.
 
     ``run_id`` comes from the filename (the records themselves don't carry it). A dir
@@ -63,7 +65,10 @@ def harvest_raw_logs_from_dir(run_dir: Path) -> dict[str, list[dict]]:
         match = RAW_LOG_FILENAME_RE.match(path.name)
         if match is None:
             continue
-        out.setdefault(match.group("run_id"), []).extend(load_jsonl_records(path))
+        records = load_jsonl_records(path)
+        if source_archive_dir is not None:
+            ingest_source_capture_records(records, path.parent, source_archive_dir)
+        out.setdefault(match.group("run_id"), []).extend(records)
     return out
 
 
@@ -145,7 +150,7 @@ def download_and_harvest(
     for _run_id, _art, run_dir in persisted_run_dirs(
         selection, repo, store_dir=store_dir, from_store=from_store, progress_noun="run-log artifacts"
     ):
-        for harvested_run_id, records in harvest_raw_logs_from_dir(run_dir).items():
+        for harvested_run_id, records in harvest_raw_logs_from_dir(run_dir, source_archive_dir=archive_dir).items():
             harvested.setdefault(harvested_run_id, []).extend(records)
 
     totals = merge_and_write(archive_dir, harvested)

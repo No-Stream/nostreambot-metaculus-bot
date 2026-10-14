@@ -183,9 +183,7 @@ async def test_archive_inventory_then_late_member_query_banks_grounded_finding_w
                                 "findings": [
                                     {
                                         "claim": "The final official count is 947.",
-                                        "source_url": urls["/data.zip"],
-                                        "quote": late_quote,
-                                        "retrieved_how": "read_document",
+                                        "evidence_refs": ["ev_1"],
                                     }
                                 ]
                             },
@@ -218,8 +216,14 @@ async def test_archive_inventory_then_late_member_query_banks_grounded_finding_w
     assert "final official hospitalizations" not in inventory
     assert "method: digest_local" in query
     assert late_quote in query
+    assert len(result.delivered_evidence) == 1
+    assert result.delivered_evidence[0].source_url == urls["/data.zip"]
+    assert result.delivered_evidence[0].retrieval_method == "digest_local"
+    assert result.delivered_evidence[0].content_origin == "source_text"
+    assert late_quote in result.delivered_evidence[0].text
     assert result.telemetry.findings_count == 1
     assert "The final official count is 947." in result.findings_markdown
+    assert late_quote in result.findings_markdown
     assert hits["/data.zip"] == 1
     assert hits["/broken.zip"] == 1
     assert cached_inventory.method == "local_navigation"

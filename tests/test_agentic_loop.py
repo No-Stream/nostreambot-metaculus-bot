@@ -3,12 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
 from metaculus_bot.research.agentic.loop import _summarize_ghost, run_agentic_loop
-from metaculus_bot.research.agentic.types import ToolOutcome
+from metaculus_bot.research.agentic.types import EvidencePassage, ToolOutcome
 from metaculus_bot.structured_output_schema import NumericStructured
 from tests.agentic_fakes import FakeLlm
 from tests.agentic_fakes import gap_accounting as _accounting
@@ -35,6 +35,21 @@ def _tool_names(tools_json: list[dict[str, Any]] | None) -> list[str]:
     return [] if tools_json is None else [tool["function"]["name"] for tool in tools_json]
 
 
+def _passage(
+    source_url: str,
+    text: str,
+    *,
+    retrieval_method: str = "plain",
+    content_origin: Literal["source_text", "provider_summary", "generated_answer"] = "source_text",
+) -> EvidencePassage:
+    return EvidencePassage(
+        source_url=source_url,
+        text=text,
+        retrieval_method=retrieval_method,
+        content_origin=content_origin,
+    )
+
+
 @pytest.mark.asyncio
 async def test_happy_path_records_findings_and_emits_telemetry(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO, logger="metaculus_bot.research.agentic.loop")
@@ -43,7 +58,17 @@ async def test_happy_path_records_findings_and_emits_telemetry(caplog: pytest.Lo
         # Reach a primary source: a rendered fetch tiers the URL "fetched", so the
         # conclude gate's fetch floor is satisfied by a real retrieval — not by the
         # accounting's fetch-verb prose alone.
-        return ToolOutcome(content_markdown="Authoritative page text.", method="rendered")
+        return ToolOutcome(
+            content_markdown="Authoritative page text.",
+            method="rendered",
+            evidence_passages=[
+                _passage(
+                    "https://example.com",
+                    "Published on July 1, 2026.",
+                    retrieval_method="rendered",
+                )
+            ],
+        )
 
     fake_llm = FakeLlm(
         [
@@ -58,10 +83,8 @@ async def test_happy_path_records_findings_and_emits_telemetry(caplog: pytest.Lo
                             "findings": [
                                 {
                                     "claim": "The report was published on July 1.",
-                                    "source_url": "https://example.com",
-                                    "quote": "Published on July 1, 2026.",
+                                    "evidence_refs": ["ev_1"],
                                     "date": "2026-07-01",
-                                    "retrieved_how": "fetch",
                                     "topic": "timeline",
                                 }
                             ]
@@ -348,6 +371,13 @@ async def test_budget_threshold_switches_to_conclude_mode_and_shrinks_tools() ->
 
 @pytest.mark.asyncio
 async def test_deadline_mid_tool_still_returns_banked_findings() -> None:
+    async def source_tool(**_: Any) -> ToolOutcome:
+        return ToolOutcome(
+            content_markdown="The statute text was delivered.",
+            method="plain",
+            evidence_passages=[_passage("https://example.com/statute", "This act takes effect in 2025.")],
+        )
+
     async def slow_tool(**_: Any) -> ToolOutcome:
         await asyncio.sleep(0.2)
         return ToolOutcome(content_markdown="too slow", method="plain")
@@ -357,6 +387,7 @@ async def test_deadline_mid_tool_still_returns_banked_findings() -> None:
     fake_llm = FakeLlm(
         [
             _response(tool_calls=[_plan_call()]),
+            _response(tool_calls=[_tool_call("source1", "source_tool")]),
             _response(
                 tool_calls=[
                     _tool_call(
@@ -366,8 +397,7 @@ async def test_deadline_mid_tool_still_returns_banked_findings() -> None:
                             "findings": [
                                 {
                                     "claim": "The statute took effect in 2025.",
-                                    "source_url": "https://example.com/statute",
-                                    "quote": "This act takes effect in 2025.",
+                                    "evidence_refs": ["ev_1"],
                                     "topic": "law",
                                 }
                             ]
@@ -384,7 +414,10 @@ async def test_deadline_mid_tool_still_returns_banked_findings() -> None:
         # Briefing embeds the cited URL, so the finding is provenance-grounded
         # (a non-discrepancy finding may cite a briefing URL).
         "briefing cites https://example.com/statute",
-        [_tool_spec("slow_tool", slow_tool, timeout_s=1.0)],
+        [
+            _tool_spec("source_tool", source_tool),
+            _tool_spec("slow_tool", slow_tool, timeout_s=1.0),
+        ],
         _config(wall_deadline_s=0.05, max_steps=3),
         llm_call=fake_llm,
     )
@@ -423,8 +456,17 @@ async def test_tool_timeout_is_reported_and_loop_continues() -> None:
 
 @pytest.mark.asyncio
 async def test_record_findings_rejects_lint_and_banks_clean_findings() -> None:
+    async def fetch(**_: Any) -> ToolOutcome:
+        return ToolOutcome(
+            content_markdown="Minutes were published on Tuesday.",
+            method="plain",
+            evidence_passages=[_passage("https://example.com/good", "Minutes were published on Tuesday.")],
+        )
+
     fake_llm = FakeLlm(
         [
+            _response(tool_calls=[_plan_call()]),
+            _response(tool_calls=[_tool_call("fetch1", "fetch", {"url": "https://example.com/good"})]),
             _response(
                 tool_calls=[
                     _tool_call(
@@ -434,14 +476,12 @@ async def test_record_findings_rejects_lint_and_banks_clean_findings() -> None:
                             "findings": [
                                 {
                                     "claim": "This likely resolves soon.",
-                                    "source_url": "https://example.com/bad",
-                                    "quote": "Likely to resolve soon.",
+                                    "evidence_refs": ["ev_1"],
                                     "topic": "general",
                                 },
                                 {
                                     "claim": "The board published the minutes.",
-                                    "source_url": "https://example.com/good",
-                                    "quote": "Minutes were published on Tuesday.",
+                                    "evidence_refs": ["ev_1"],
                                     "topic": "minutes",
                                 },
                             ]
@@ -453,16 +493,18 @@ async def test_record_findings_rejects_lint_and_banks_clean_findings() -> None:
         ]
     )
 
-    # Briefing embeds the clean finding's URL so it clears the provenance gate;
-    # the lint rejection is what this test exercises.
     result = await run_agentic_loop(
-        "system", "briefing cites https://example.com/good", [], _config(), llm_call=fake_llm
+        "system",
+        "briefing without this fact",
+        [_tool_spec("fetch", fetch)],
+        _config(max_conclude_gate_rejections=0),
+        llm_call=fake_llm,
     )
 
     assert "The board published the minutes." in result.findings_markdown
     assert "This likely resolves soon." not in result.findings_markdown
     assert result.telemetry.lint_rejections == 1
-    assert "findings[0] rejected" in _tool_messages(result)[0]["content"]
+    assert "findings[0] rejected" in _tool_messages(result)[2]["content"]
 
 
 @pytest.mark.asyncio
@@ -470,9 +512,22 @@ async def test_derivation_banned_phrase_is_not_a_lint_rejection() -> None:
     """W3: a banned-register phrase confined to the ``derivation`` field is the
     arithmetic-synthesis carve-out — it clears the lint, banks, and does NOT bump
     lint_rejections. The same phrase in ``claim`` would still be rejected."""
+
+    async def read_document(**_: Any) -> ToolOutcome:
+        return ToolOutcome(
+            content_markdown="The report gives the annual record values.",
+            method="read_document",
+            evidence_passages=[
+                _passage(
+                    "https://example.com/grg", "1997: 122; 1998: 116; 1999: 119.", retrieval_method="read_document"
+                )
+            ],
+        )
+
     fake_llm = FakeLlm(
         [
             _response(tool_calls=[_plan_call(gaps=[{"id": "g1", "question": "What are the yearly records?"}])]),
+            _response(tool_calls=[_tool_call("read1", "read_document", {"url": "https://example.com/grg"})]),
             _response(
                 tool_calls=[
                     _tool_call(
@@ -482,10 +537,8 @@ async def test_derivation_banned_phrase_is_not_a_lint_rejection() -> None:
                             "findings": [
                                 {
                                     "claim": "Per-year oldest-human bound reconstructed from the quoted record.",
-                                    "source_url": "https://example.com/grg",
-                                    "quote": "1997: 122; 1998: 116; 1999: 119.",
+                                    "evidence_refs": ["ev_1"],
                                     "date": "2026-07-01",
-                                    "retrieved_how": "fetch",
                                     "topic": "oldest-human bounds",
                                     "derivation": (
                                         "1997 max 122; the annual record probably tops the prior year by 1 — "
@@ -506,8 +559,8 @@ async def test_derivation_banned_phrase_is_not_a_lint_rejection() -> None:
     # research/accounting.
     result = await run_agentic_loop(
         "system",
-        "briefing cites https://example.com/grg",
-        [],
+        "briefing cites no source for the annual values",
+        [_tool_spec("read_document", read_document)],
         _config(max_conclude_gate_rejections=0),
         llm_call=fake_llm,
     )
@@ -519,18 +572,14 @@ async def test_derivation_banned_phrase_is_not_a_lint_rejection() -> None:
 
 _FINDING_UN = {
     "claim": "The UN projects a population peak of ~10.3 billion in the mid-2080s.",
-    "source_url": "https://example.com/un",
-    "quote": "peak of around 10.3 billion people in the mid-2080s",
+    "evidence_refs": ["ev_1"],
     "date": "2024-07-11",
-    "retrieved_how": "fetch",
     "topic": "demographics",
 }
 _FINDING_NASA = {
     "claim": "NASA reports no known >140m asteroid with significant 100-year impact risk.",
-    "source_url": "https://example.com/nasa",
-    "quote": "no known asteroid larger than 140 meters",
+    "evidence_refs": ["ev_2"],
     "date": "2023-09-08",
-    "retrieved_how": "fetch",
     "topic": "asteroids",
 }
 
@@ -541,19 +590,40 @@ async def test_findings_recorded_then_relisted_in_conclude_are_not_duplicated() 
     then re-lists the SAME findings in conclude's final_findings must not double
     them (observed: 8 findings rendered 16 times). Banking is idempotent by
     full-field identity."""
+
+    async def search_web(**_: Any) -> ToolOutcome:
+        return ToolOutcome(
+            content_markdown="Two source summaries.",
+            method="search",
+            evidence_passages=[
+                _passage(
+                    "https://example.com/un",
+                    "Peak of around 10.3 billion people in the mid-2080s.",
+                    retrieval_method="search",
+                    content_origin="provider_summary",
+                ),
+                _passage(
+                    "https://example.com/nasa",
+                    "No known asteroid larger than 140 meters.",
+                    retrieval_method="search",
+                    content_origin="provider_summary",
+                ),
+            ],
+        )
+
     fake_llm = FakeLlm(
         [
+            _response(tool_calls=[_plan_call()]),
+            _response(tool_calls=[_tool_call("search1", "search_web", {"query": "UN and NASA reports"})]),
             _response(tool_calls=[_tool_call("rec1", "record_findings", {"findings": [_FINDING_UN, _FINDING_NASA]})]),
             _response(tool_calls=[_tool_call("done1", "conclude", {"final_findings": [_FINDING_UN, _FINDING_NASA]})]),
         ]
     )
 
-    # cap=0 disables the W2 conclude gate: this test never plans (dedup is the
-    # subject) and concludes without gap accounting.
     result = await run_agentic_loop(
         "system",
-        "briefing cites https://example.com/un and https://example.com/nasa",
-        [],
+        "briefing cites no sources for the two facts",
+        [_tool_spec("search_web", search_web)],
         _config(max_conclude_gate_rejections=0),
         llm_call=fake_llm,
     )
@@ -572,20 +642,42 @@ async def test_findings_sharing_source_but_distinct_claim_are_both_kept() -> Non
     """Dedup must key on the WHOLE finding, not just source_url: two findings
     from the same page with different claims/topics are genuinely distinct and
     must both survive (the Q578 log had exactly this shape for the NASA page)."""
+    nasa_finding = {**_FINDING_NASA, "evidence_refs": ["ev_1"]}
     long_claim = {
-        **_FINDING_NASA,
+        **nasa_finding,
         "topic": "asteroids (with NEO Surveyor context)",
         "claim": "NASA reports no known >140m asteroid impact risk and says NEO Surveyor will accelerate discovery.",
     }
+
+    async def search_web(**_: Any) -> ToolOutcome:
+        return ToolOutcome(
+            content_markdown="NASA reports no known asteroid above 140 meters.",
+            method="search",
+            evidence_passages=[
+                _passage(
+                    "https://example.com/nasa",
+                    "No known asteroid larger than 140 meters.",
+                    retrieval_method="search",
+                    content_origin="provider_summary",
+                )
+            ],
+        )
+
     fake_llm = FakeLlm(
         [
-            _response(tool_calls=[_tool_call("rec1", "record_findings", {"findings": [_FINDING_NASA, long_claim]})]),
+            _response(tool_calls=[_plan_call()]),
+            _response(tool_calls=[_tool_call("search1", "search_web", {"query": "NASA asteroid report"})]),
+            _response(tool_calls=[_tool_call("rec1", "record_findings", {"findings": [nasa_finding, long_claim]})]),
             _response(tool_calls=[_tool_call("done1", "conclude")]),
         ]
     )
 
     result = await run_agentic_loop(
-        "system", "briefing cites https://example.com/nasa", [], _config(), llm_call=fake_llm
+        "system",
+        "briefing cites no source for the asteroid report",
+        [_tool_spec("search_web", search_web)],
+        _config(max_conclude_gate_rejections=0),
+        llm_call=fake_llm,
     )
 
     assert result.telemetry.findings_count == 2
@@ -734,8 +826,7 @@ class TestStepCapForcesConclusion:
 
 _CLEAN_FINDING = {
     "claim": "The report was published on July 1.",
-    "source_url": "https://example.com",
-    "quote": "Published on July 1, 2026.",
+    "evidence_refs": ["ev_1"],
     "topic": "timeline",
 }
 
@@ -750,11 +841,18 @@ async def test_external_tool_bind_error_extra_key_becomes_error_and_loop_continu
 
     async def strict_tool(*, query: str) -> ToolOutcome:
         invoked.append(query)
+        if query == "evidence":
+            return ToolOutcome(
+                content_markdown="The report was published on July 1.",
+                method="plain",
+                evidence_passages=[_passage("https://example.com", "Published on July 1, 2026.")],
+            )
         return ToolOutcome(content_markdown="ran", method="search")
 
     fake_llm = FakeLlm(
         [
             _response(tool_calls=[_plan_call()]),
+            _response(tool_calls=[_tool_call("source1", "strict_tool", {"query": "evidence"})]),
             _response(tool_calls=[_tool_call("bad1", "strict_tool", {"query": "x", "unexpected": 1})]),
             _response(tool_calls=[_tool_call("record1", "record_findings", {"findings": [_CLEAN_FINDING]})]),
             _response(tool_calls=[_tool_call("done1", "conclude")]),
@@ -763,19 +861,19 @@ async def test_external_tool_bind_error_extra_key_becomes_error_and_loop_continu
 
     result = await run_agentic_loop(
         "system",
-        "briefing cites https://example.com",
+        "briefing without this fact",
         [_tool_spec("strict_tool", strict_tool)],
         _config(),
         llm_call=fake_llm,
     )
 
-    assert result.telemetry.steps == 4  # loop ran all four turns — no abort
-    # tool_messages[0] is the plan result; the bind-error tool result is [1].
-    bad_message = _tool_messages(result)[1]
+    assert result.telemetry.steps == 5  # loop ran all five turns — no abort
+    # tool_messages[0] is the plan result; evidence and bind-error results follow.
+    bad_message = _tool_messages(result)[2]
     assert bad_message["tool_call_id"] == "bad1"
     assert "status: error" in bad_message["content"]
     assert "TypeError" in bad_message["content"]
-    assert invoked == []  # handler body never ran; failure was at bind time
+    assert invoked == ["evidence"]  # the invalid call never entered the handler body
     assert "The report was published on July 1." in result.findings_markdown
 
 
@@ -787,11 +885,18 @@ async def test_external_tool_bind_error_missing_key_becomes_error_and_loop_conti
 
     async def strict_tool(*, query: str) -> ToolOutcome:
         invoked.append(query)
+        if query == "evidence":
+            return ToolOutcome(
+                content_markdown="The report was published on July 1.",
+                method="plain",
+                evidence_passages=[_passage("https://example.com", "Published on July 1, 2026.")],
+            )
         return ToolOutcome(content_markdown="ran", method="search")
 
     fake_llm = FakeLlm(
         [
             _response(tool_calls=[_plan_call()]),
+            _response(tool_calls=[_tool_call("source1", "strict_tool", {"query": "evidence"})]),
             _response(tool_calls=[_tool_call("bad1", "strict_tool", {})]),  # no `query`
             _response(tool_calls=[_tool_call("record1", "record_findings", {"findings": [_CLEAN_FINDING]})]),
             _response(tool_calls=[_tool_call("done1", "conclude")]),
@@ -800,19 +905,19 @@ async def test_external_tool_bind_error_missing_key_becomes_error_and_loop_conti
 
     result = await run_agentic_loop(
         "system",
-        "briefing cites https://example.com",
+        "briefing without this fact",
         [_tool_spec("strict_tool", strict_tool)],
         _config(),
         llm_call=fake_llm,
     )
 
-    assert result.telemetry.steps == 4
-    # tool_messages[0] is the plan result; the bind-error tool result is [1].
-    bad_message = _tool_messages(result)[1]
+    assert result.telemetry.steps == 5
+    # tool_messages[0] is the plan result; evidence and bind-error results follow.
+    bad_message = _tool_messages(result)[2]
     assert bad_message["tool_call_id"] == "bad1"
     assert "status: error" in bad_message["content"]
     assert "TypeError" in bad_message["content"]
-    assert invoked == []
+    assert invoked == ["evidence"]
     assert "The report was published on July 1." in result.findings_markdown
 
 
@@ -827,7 +932,18 @@ async def test_batch_clamped_to_remaining_budget_rejects_overflow_external_calls
 
     async def search_web(*, query: str) -> ToolOutcome:
         invoked.append(query)
-        return ToolOutcome(content_markdown=f"result {query}", method="search")
+        return ToolOutcome(
+            content_markdown=f"result {query}",
+            method="search",
+            evidence_passages=[
+                _passage(
+                    "https://example.com",
+                    "Published on July 1, 2026.",
+                    retrieval_method="search",
+                    content_origin="provider_summary",
+                )
+            ],
+        )
 
     # Budget of 3: the plan call (1) leaves two external slots, so q1/q2 run and
     # the overflow q3 is budget-rejected — the shape this test exercises.
@@ -900,8 +1016,17 @@ async def test_append_only_message_history_is_preserved_across_steps() -> None:
 
 @pytest.mark.asyncio
 async def test_soft_fail_preserves_banked_findings_on_broken_llm_response() -> None:
+    async def fetch(**_: Any) -> ToolOutcome:
+        return ToolOutcome(
+            content_markdown="The bulletin was released Friday.",
+            method="plain",
+            evidence_passages=[_passage("https://example.com/bulletin", "Bulletin released Friday.")],
+        )
+
     fake_llm = FakeLlm(
         [
+            _response(tool_calls=[_plan_call()]),
+            _response(tool_calls=[_tool_call("fetch1", "fetch", {"url": "https://example.com/bulletin"})]),
             _response(
                 tool_calls=[
                     _tool_call(
@@ -911,8 +1036,7 @@ async def test_soft_fail_preserves_banked_findings_on_broken_llm_response() -> N
                             "findings": [
                                 {
                                     "claim": "The agency released the bulletin.",
-                                    "source_url": "https://example.com/bulletin",
-                                    "quote": "Bulletin released Friday.",
+                                    "evidence_refs": ["ev_1"],
                                     "topic": "bulletin",
                                 }
                             ]
@@ -925,7 +1049,11 @@ async def test_soft_fail_preserves_banked_findings_on_broken_llm_response() -> N
     )
 
     result = await run_agentic_loop(
-        "system", "briefing cites https://example.com/bulletin", [], _config(), llm_call=fake_llm
+        "system",
+        "briefing does not state the release date",
+        [_tool_spec("fetch", fetch)],
+        _config(max_conclude_gate_rejections=0),
+        llm_call=fake_llm,
     )
 
     assert "The agency released the bulletin." in result.findings_markdown

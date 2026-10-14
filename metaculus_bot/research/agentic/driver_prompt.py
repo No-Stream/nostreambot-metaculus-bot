@@ -152,18 +152,18 @@ record_findings as you confirm them — do not hold everything for the end. The
 per-turn budget line shows the time, tool calls and turns you have left, and
 lists your plan's gap ids.
 
-  YOU MAY DERIVE. When your quoted source values allow a decision-relevant
+  YOU MAY DERIVE. When your cited source values allow a decision-relevant
   computation the panel would otherwise have to do itself — a bound, a rate,
   a reconciliation of two metrics — put the arithmetic in the finding's
   `derivation` field. Every input number in the derivation must ALSO appear as
-  a quoted value with its URL in the same finding's quote/source. The
+  a value in the same finding's cited passages. The
   derivation holds arithmetic and its result only: no likelihood language, no
-  new facts, no read on the outcome. Example shape: from a quoted record of the
+  new facts, no read on the outcome. Example shape: from a cited record of the
   oldest verified human by year, derive a per-year bound table (each year's
-  maximum, and the year-over-year step) — the inputs are the quoted ages, the
+  maximum, and the year-over-year step) — the inputs are the cited ages, the
   derivation is the table and its arithmetic. Derived findings are labeled to
   the panel as our synthesis; use the field only for arithmetic you can show
-  entirely from quoted numbers.
+  entirely from cited numbers.
 
 STEP 3 — CONCLUDE. Call conclude when (a) every fill/verify/resolution target
 is resolved or confidently unreachable, or (b) the budget line tells you to.
@@ -197,29 +197,31 @@ Most questions need little; a few need a lot. Spend accordingly.
   sake of it.
 
 RULES FOR FINDINGS (strictly enforced; violating findings are rejected):
-  - Each text finding: one factual claim + source URL + verbatim quote from
-    that source + the source's date + how you retrieved it. For a visual
-    finding, set evidence_kind=image and provide the delivered image_id, its
+  - Each text finding: one factual claim + one or more evidence_refs from numbered
+    passages delivered by research tools + the source's date. Do not retype quotes
+    or source URLs: code copies the exact passage and its adapter-owned source.
+    Cite adjacent references together when units, denominator, date, or a caveat
+    require context. If support exceeds the limit, choose a smaller adequate set.
+    For a visual finding, set evidence_kind=image and provide the delivered image_id, its
     exact source or final URL, and visual_observation; label numerical readings
     as transcribed or estimated. Image delivery proves which source pixels you
-    saw, not that your interpretation is correct. For comparisons across
-    sources, record a separate finding for each source so every excerpt keeps
-    its own link. State each source's evidence in its own claim and quote or
-    visual observation.
+    saw, not that your interpretation is correct. One text finding may cite
+    multiple sources; each source keeps
+    its own passage, retrieval method, and origin in the rendered output.
   - DISCREPANCY findings (highest-value output): if a check shows the
     briefing states something the source does not support — a wrong number,
     a misread clause, a misattributed or hallucinated fact, a stale figure
     presented as current — record the finding with discrepancy=true. The
     claim must state BOTH sides plainly: what the briefing says, and what
-    the source actually says (with the quote). Discrepancy findings are
-    surfaced to the panel above everything else and supersede the
-    corresponding briefing content, so reserve the flag for genuine
-    briefing errors, not mere source-vs-source conflicts. Detachment still
+    the source actually says (with cited evidence). Discrepancy findings are
+    surfaced to the panel above everything else for comparison with the briefing;
+    reserve the flag for genuine briefing errors, not mere source-vs-source conflicts. Detachment still
     applies: state what the source says; do not add what the correction
-    implies for the forecast. A discrepancy sourced only from search
-    snippets will be demoted to "possible corrections" and will NOT supersede
-    the briefing; if you intend to contradict the briefing, fetch the primary
-    source first.
+    implies for the forecast. Search snippets and generated reader answers
+    carry their own origin labels; fetch the primary source when a correction
+    depends on what the source itself says.
+  - To revise a banked finding, set replaces_finding_id to the identity returned
+    by record_findings. A new proposal without that identity is a separate finding.
   - State facts. Never state or imply a view on how the question will
     resolve: no likelihood language, no "suggests/indicates", no
     recommendations, no summing-up of which way the evidence points.

@@ -4,7 +4,7 @@ import time
 from collections import defaultdict
 from collections.abc import Callable, Coroutine, Sequence
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, cast, override
 
 from forecasting_tools import (
     BinaryQuestion,
@@ -16,10 +16,11 @@ from forecasting_tools import (
     PredictedOptionList,
     ReasonedPrediction,
 )
-from forecasting_tools.data_models.data_organizer import PredictionTypes
+from forecasting_tools.data_models.data_organizer import DataOrganizer, PredictionTypes
 from forecasting_tools.data_models.forecast_report import ForecastReport, ResearchWithPredictions
 from forecasting_tools.data_models.questions import ConditionalQuestion, DateQuestion
 from forecasting_tools.helpers.metaculus_client import MetaculusClient
+from forecasting_tools.util.misc import clean_indents
 
 from metaculus_bot.aggregation_pipeline import AggregationPipeline
 from metaculus_bot.aggregation_strategies import (
@@ -28,8 +29,6 @@ from metaculus_bot.aggregation_strategies import (
 from metaculus_bot.close_margin import format_close_margin_marker
 from metaculus_bot.comment.formatting import (
     build_unified_explanation,
-    format_forecaster_rationales_section,
-    format_main_research_section,
     format_research_summary_with_models,
 )
 from metaculus_bot.config import load_environment
@@ -764,27 +763,63 @@ class TemplateForecaster(CompactLoggingForecastBot):
         predicted_research: ResearchWithPredictions,
     ) -> str:
         text = super()._format_and_expand_research_summary(report_number, report_type, predicted_research)
-        return format_research_summary_with_models(text, predicted_research.predictions, report_number)
-
-    @classmethod
-    def _format_main_research(
-        cls,
-        report_number: int,
-        predicted_research: ResearchWithPredictions,
-    ) -> str:
-        text = super()._format_main_research(report_number, predicted_research)
-        return format_main_research_section(text, report_number)
+        return format_research_summary_with_models(text, predicted_research.predictions)
 
     def _format_forecaster_rationales(
         self,
         report_number: int,
         researched_predictions: ResearchWithPredictions,
     ) -> str:
-        text = super()._format_forecaster_rationales(report_number, researched_predictions).lstrip()
-        return format_forecaster_rationales_section(text, report_number)
+        return super()._format_forecaster_rationales(report_number, researched_predictions).lstrip()
 
-    # The PLR0917 noqa is permanent: forecasting-tools calls this override POSITIONALLY, so nothing can go keyword-only.
-    def _create_unified_explanation(  # noqa: PLR0917  # signature is fixed by the ft base class, see comment above
+    @override
+    def _create_comment(
+        self,
+        question: MetaculusQuestion,
+        research_prediction_collections: list[ResearchWithPredictions],
+        aggregated_prediction: PredictionTypes,
+        final_cost: float,
+        time_spent_in_minutes: float,
+    ) -> str:
+        """The framework's comment layout, without its destructive size guard.
+
+        ``ForecastBot._create_comment`` replaces a comment above 150,000 characters with its first
+        2,000 characters, before ``_create_unified_explanation`` can run ``trim_comment``, which
+        keeps every model's attribution and forecast. So this rebuilds the same sections and leaves
+        all trimming to ``trim_comment``.
+        """
+        report_type = DataOrganizer.get_report_type_for_question_type(type(question))
+        collections = list(enumerate(research_prediction_collections, start=1))
+        combined_summaries = "\n".join(
+            self._format_and_expand_research_summary(number, report_type, collection)
+            for number, collection in collections
+        )
+        combined_research = "\n".join(
+            self._format_main_research(number, collection) for number, collection in collections
+        )
+        combined_rationales = "\n".join(
+            self._format_forecaster_rationales(number, collection) for number, collection in collections
+        )
+        metadata_disabled = "extra_metadata_in_explanation is disabled"
+        show_metadata = self.extra_metadata_in_explanation
+        metadata = clean_indents(
+            f"""
+            # SUMMARY
+            *Question*: {question.question_text}
+            *Final Prediction*: {report_type.make_readable_prediction(aggregated_prediction)}
+            *Total Cost*: {f"${round(final_cost, 4)} (estimated)" if show_metadata else metadata_disabled}
+            *Time Spent*: {f"{round(time_spent_in_minutes, 2)} minutes" if show_metadata else metadata_disabled}
+            *LLMs*: `{self.make_llm_dict() if show_metadata else metadata_disabled}`
+            *Bot Name*: {self.__class__.__name__ if show_metadata else metadata_disabled}
+            """
+        )
+        return (
+            f"{metadata}\n{combined_summaries}\n\n# RESEARCH\n{combined_research}\n\n"
+            f"# FORECASTS\n{combined_rationales}\n"
+        )
+
+    @override
+    def _create_unified_explanation(
         self,
         question: MetaculusQuestion,
         research_prediction_collections: list[ResearchWithPredictions],

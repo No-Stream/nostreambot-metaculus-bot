@@ -594,6 +594,12 @@ async def _rendered_rung(
         remaining_wall_s=ctx.rung_budget_s(),
         pol=ctx.policy,
     )
+    classify.record_html_capture(
+        classified,
+        retrieval_method="rendered",
+        content_type=page.content_type or "text/html",
+        raw_body=page.html.encode("utf-8", errors="replace"),
+    )
     classify.capture_html_read(ctx, classified)
     if classified.result.chrome_metric_withheld:
         # The metric withheld the rendered DOM's extraction. `chrome_metric_withholds` counts a

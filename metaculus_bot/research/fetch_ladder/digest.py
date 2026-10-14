@@ -15,6 +15,8 @@ from typing import Protocol
 
 from metaculus_bot.constants import DOCUMENT_DIGEST_TOP_K
 from metaculus_bot.research.document_text import select_passages
+from metaculus_bot.research.page_digest import DigestOutcome, DigestScope
+from metaculus_bot.research.source_evidence import SourceExcerpt
 
 # `agentic.local_document.DIGEST_LOCAL_METHOD`, spelled here so the ladder needs no caller import.
 DIGEST_METHOD_BM25 = "digest_local"
@@ -24,9 +26,9 @@ class DigestPassages(Protocol):
     """What any digest hands back: the passages to show, and the three counters the fetch marker carries.
 
     ``passages`` opens with the page's opening window when the digest keeps one, then the accepted
-    passages in rank order; an empty list means the page does not discuss the query, which is
-    information rather than a failure. ``passages_returned`` and ``passages_grounded`` are a
-    model-run digest's raw answer count and how many of those were literal substrings of the page,
+    passages in rank order. An empty selection means no passage was selected from the stated
+    inspection scope; it does not establish absence from the entire document. ``passages_returned``
+    and ``passages_grounded`` are a model-run digest's raw answer count and how many were literal substrings of the page,
     both zero when no model ran; ``fallback_used`` says the ranked passages came from BM25 after a
     model call failed or grounded nothing; ``method`` names which produced them.
     """
@@ -41,6 +43,12 @@ class DigestPassages(Protocol):
     def fallback_used(self) -> bool: ...
     @property
     def method(self) -> str: ...
+    @property
+    def outcome(self) -> str: ...
+    @property
+    def scope(self) -> str: ...
+    @property
+    def evidence_passages(self) -> tuple[SourceExcerpt, ...]: ...
 
 
 class DigestFn(Protocol):
@@ -58,6 +66,13 @@ class LadderDigest:
     passages_grounded: int
     fallback_used: bool
     method: str
+    outcome: DigestOutcome = "answered"
+    scope: DigestScope = "full_page"
+    evidence_passages: tuple[SourceExcerpt, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.passages and self.outcome == "answered":
+            object.__setattr__(self, "outcome", "valid_empty")
 
 
 async def bm25_digest(text: str, query: str, *, budget_seconds: float) -> LadderDigest:
@@ -69,10 +84,15 @@ async def bm25_digest(text: str, query: str, *, budget_seconds: float) -> Ladder
     """
     del budget_seconds
     ranked = await asyncio.to_thread(select_passages, text, query, top_k=DOCUMENT_DIGEST_TOP_K)
+    excerpts = tuple(
+        SourceExcerpt(source_url="", text=passage.text, retrieval_method="bm25_candidate") for passage in ranked
+    )
     return LadderDigest(
         passages=[passage.text for passage in ranked],
         passages_returned=len(ranked),
         passages_grounded=len(ranked),
         fallback_used=False,
         method=DIGEST_METHOD_BM25,
+        outcome="answered" if ranked else "valid_empty",
+        evidence_passages=excerpts,
     )

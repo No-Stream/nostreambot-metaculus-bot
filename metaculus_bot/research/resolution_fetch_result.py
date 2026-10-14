@@ -25,6 +25,7 @@ from urllib.parse import urlparse
 from metaculus_bot.constants import RESOLUTION_SOURCE_WAYBACK_MAX_AGE_DAYS
 from metaculus_bot.research.http_fetch import MAX_UNDECODABLE_CHAR_RATIO, DatawrapperChartRef
 from metaculus_bot.research.image_leads import ImageLead
+from metaculus_bot.research.source_evidence import SourceExcerpt
 
 # `stale_data` has two producers, and only one of them earns the benign diagnostics token.
 # The Tier-2 Datawrapper hop reached a dataset whose Last-Modified is outside the freshness
@@ -538,6 +539,9 @@ class FetchResult:
     passages_returned: int | None = None
     passages_grounded: int | None = None
     fallback_used: bool | None = None
+    digest_outcome: str | None = None
+    digest_scope: str | None = None
+    evidence_passages: list[SourceExcerpt] = field(default_factory=list)
     # Small routing metadata only. Parsed source contents and raster bytes stay in the bounded
     # process-run cache, never in the archive-facing result.
     local_kind: LocalKind | None = None

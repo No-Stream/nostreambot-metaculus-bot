@@ -132,6 +132,7 @@ async def run_gap_fill_v2(
         if archive_sink is not None:
             archive_payload: dict[str, Any] = {
                 "transcript": result.transcript,
+                "delivered_evidence": [item.model_dump() for item in result.delivered_evidence],
                 "telemetry": dataclasses.asdict(result.telemetry),
                 "ghost": result.ghost.model_dump() if result.ghost is not None else None,
             }

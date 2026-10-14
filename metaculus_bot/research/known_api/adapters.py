@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import cast
 
-from metaculus_bot.research.agentic.types import ToolOutcome
+from metaculus_bot.research.agentic.types import EvidencePassage, ToolOutcome
 from metaculus_bot.research.known_api.result import KnownApiResult
 from metaculus_bot.research.resolution_fetch_result import FetchResult, FetchRoute, FetchStatus
 
@@ -32,6 +32,18 @@ def to_tool_outcome(result: KnownApiResult) -> ToolOutcome:
         links=list(result.links),
         method=KNOWN_API_METHOD,
         status=result.status,
+        evidence_passages=[
+            EvidencePassage(
+                source_url=passage.source_url,
+                text=passage.text,
+                retrieval_method=passage.retrieval_method,
+                content_origin=passage.content_origin,
+                clipped=passage.clipped,
+            )
+            for passage in result.evidence_passages
+        ]
+        if result.status == "ok"
+        else [],
     )
 
 
@@ -50,4 +62,5 @@ def to_fetch_result(result: KnownApiResult, *, url: str, route: FetchRoute = KNO
         content_type=None,
         route=route,
         links=list(result.links),
+        evidence_passages=list(result.evidence_passages) if result.status == "ok" else [],
     )

@@ -37,20 +37,24 @@ from forecasting_tools import (
     GeneralLlm,
     MetaculusQuestion,
     MultipleChoiceQuestion,
+    MultipleChoiceReport,
+    NumericDistribution,
+    NumericQuestion,
+    NumericReport,
+    PredictedOption,
+    PredictedOptionList,
     ReasonedPrediction,
 )
 from forecasting_tools.data_models.binary_report import BinaryReport
+from forecasting_tools.data_models.data_organizer import DataOrganizer
 from forecasting_tools.data_models.forecast_report import ResearchWithPredictions
-from forecasting_tools.data_models.multiple_choice_report import (
-    MultipleChoiceReport,
-    PredictedOption,
-    PredictedOptionList,
-)
+from forecasting_tools.data_models.numeric_report import Percentile
 
 from main import TemplateForecaster
 from metaculus_bot.aggregation_strategies import AggregationStrategy
 from metaculus_bot.comment.formatting import build_unified_explanation
 from metaculus_bot.comment.markers import (
+    EXPLANATION_DETAIL_UNKNOWN_MARKER,
     FORECASTERS_USED_MARKER_RE,
     STACKED_MARKER_FALSE,
     STACKED_MARKER_TRUE,
@@ -64,6 +68,7 @@ from metaculus_bot.comment.markers import (
 from metaculus_bot.constants import COMMENT_CHAR_LIMIT
 from metaculus_bot.performance_analysis.collector import _process_post, _process_single_question
 from metaculus_bot.performance_analysis.parsing import (
+    parse_explanation_detail_status,
     parse_per_model_forecasts,
     parse_per_model_numeric_percentiles,
     parse_per_model_reasoning_text,
@@ -71,6 +76,10 @@ from metaculus_bot.performance_analysis.parsing import (
     parse_stacker_outcome_marker,
     parse_stacker_skip_reason_marker,
 )
+from metaculus_bot.prompts import SUMMARIZER_SOFT_FAIL_BANNER
+from metaculus_bot.research.agentic.artifact import render_findings
+from metaculus_bot.research.agentic.types import Finding
+from metaculus_bot.research.provider_diagnostics import ProviderResult, format_provider_diagnostics_block
 from metaculus_bot.stacking import combine_stacker_and_base_reasoning
 from tests.conftest import gather_predictions_stub
 
@@ -853,7 +862,7 @@ class TestForecastersUsedDisclosure:
             post_id=post["id"],
             title=post["title"],
             q=q,
-            comment_text="# SUMMARY\nfoo\n<!-- FORECASTERS_USED=2/3 -->\n",
+            comment_text=("# SUMMARY\nfoo\n<!-- FORECASTERS_USED=2/3 -->\n<!-- EXPLANATION_DETAIL=unknown -->\n"),
             comment_id=5,
             per_model={},
             per_model_numeric_percentiles={},
@@ -864,6 +873,7 @@ class TestForecastersUsedDisclosure:
         assert rec is not None
         assert rec["forecasters_used"] == 2
         assert rec["forecasters_configured"] == 3
+        assert rec["explanation_detail_status"] == "unknown"
 
     def test_process_post_parses_marker_off_the_comment_onto_the_record(self):
         """The parse → pass → materialize chain, driven from the top.
@@ -1750,3 +1760,582 @@ class TestOfflineAssemblySmoke:
         # The exact 2026-06-05 crash: report construction must not raise.
         report = BinaryReport(question=q, explanation=explanation, prediction=0.65)
         assert report.explanation.lstrip().startswith("#")
+
+    def test_research_above_section_limit_survives_when_complete_comment_fits(self) -> None:
+        bot = _make_bot(AggregationStrategy.MEAN, n_forecasters=1)
+        q = BinaryQuestion(
+            question_text="Will it happen?", background_info="bg", resolution_criteria="rc", fine_print=""
+        )
+        middle_marker = "FITTING_RESEARCH_MIDDLE_SENTINEL"
+        research = (
+            "## Full Research\n"
+            + ("research detail " * 900)
+            + middle_marker
+            + (" research detail" * 3_500)
+            + "\nFITTING_RESEARCH_TAIL_SENTINEL"
+        )
+        collection = ResearchWithPredictions(
+            research_report=research,
+            summary_report="_Full research in the RESEARCH section below._",
+            errors=[],
+            predictions=[
+                ReasonedPrediction(
+                    prediction_value=0.65,
+                    reasoning=(
+                        "Model: openrouter/provider/model-1\n\n"
+                        "A concise rationale.\n\n"
+                        '```json\n{"probability": 0.65}\n```'
+                    ),
+                )
+            ],
+        )
+
+        explanation = bot._create_unified_explanation(q, [collection], 0.65, 0.01, 1.0)
+
+        assert len(explanation) < COMMENT_CHAR_LIMIT
+        assert middle_marker in explanation
+        assert "FITTING_RESEARCH_TAIL_SENTINEL" in explanation
+        assert "[... trimmed for length]" not in explanation
+
+    def test_multi_collection_overflow_uses_rationale_aware_budget_before_framework_guard(self) -> None:
+        bot = _make_bot(AggregationStrategy.MEAN, n_forecasters=2, research_reports=2)
+        q = BinaryQuestion(
+            question_text="Will it happen?", background_info="bg", resolution_criteria="rc", fine_print=""
+        )
+        collections = [
+            ResearchWithPredictions(
+                research_report=f"## Research Collection {index}\n" + (f"research_{index} " * 5_000),
+                summary_report="_Full research in the RESEARCH section below._",
+                errors=[],
+                predictions=[
+                    ReasonedPrediction(
+                        prediction_value=0.6 + index / 10,
+                        reasoning=(
+                            f"Model: openrouter/provider/model-{index}\n\n"
+                            + (f"rationale_{index} " * 9_000)
+                            + f'\n\n```json\n{{"forecast": {index}}}\n```'
+                        ),
+                    )
+                ],
+            )
+            for index in (1, 2)
+        ]
+
+        source_comment = bot._create_comment(q, collections, 0.65, 0.01, 1.0)
+        assert len(source_comment) > 150_000
+
+        explanation = bot._create_unified_explanation(q, collections, 0.65, 0.01, 1.0)
+
+        assert len(explanation) <= COMMENT_CHAR_LIMIT
+        assert "# FORECASTS" in explanation
+        assert "Model: openrouter/provider/model-1" in explanation
+        assert "Model: openrouter/provider/model-2" in explanation
+        assert explanation.count("```json") == 2
+        # The collector intentionally parses report 1 only; both report blocks remain in the
+        # published comment even though report 2 is outside that parser's current contract.
+        assert set(parse_per_model_reasoning_text(explanation)) == {"model-1"}
+        assert "<!-- FORECASTERS_USED=2/2 -->" in explanation
+        report = BinaryReport(question=q, explanation=explanation, prediction=0.65)
+        assert report.prediction == 0.65
+
+    def test_multi_collection_overflow_preserves_each_pending_lead_and_diagnostics_block(self) -> None:
+        bot = _make_bot(AggregationStrategy.MEAN, n_forecasters=2, research_reports=2)
+        q = BinaryQuestion(
+            question_text="Will it happen?", background_info="bg", resolution_criteria="rc", fine_print=""
+        )
+        collections: list[ResearchWithPredictions] = []
+        pending_leads = [
+            "Verify whether the first collection's source changed.",
+            "Check whether the second collection's source has a newer update.",
+        ]
+        lost_source_tokens = [
+            "lost=briefing_1:error(timeout)",
+            "lost=briefing_2:error(timeout)",
+        ]
+
+        for index, pending_lead in enumerate(pending_leads, start=1):
+            diagnostics = format_provider_diagnostics_block(
+                [
+                    ProviderResult(
+                        name=f"collection_{index}",
+                        status="fallback",
+                        chars=1_000,
+                        latency_ms=250,
+                        details={"sources": {f"briefing_{index}": "error(timeout)"}},
+                    )
+                ]
+            )
+            collections.append(
+                ResearchWithPredictions(
+                    research_report=(
+                        f"Optional evidence from collection {index}. " * 5_000
+                        + f"\n\n    Indented source note from collection {index}."
+                        + f"\n\n```text\n    Code block line from collection {index}.\n```"
+                        + "\n\n"
+                        + render_findings([], [pending_lead])
+                        + "\n\n"
+                        + diagnostics
+                    ),
+                    summary_report=f"Summary from collection {index}.",
+                    errors=[],
+                    predictions=[
+                        ReasonedPrediction(
+                            prediction_value=0.6 + index / 10,
+                            reasoning=(
+                                f"Model: openrouter/provider/model-{index}\n\n"
+                                + (f"Rationale from collection {index}. " * 20)
+                                + f'\n\n```json\n{{"forecast": {index}}}\n```'
+                            ),
+                        )
+                    ],
+                )
+            )
+
+        source_comment = bot._create_comment(q, collections, 0.65, 0.01, 1.0)
+        assert len(source_comment) > 150_000
+
+        explanation = bot._create_unified_explanation(q, collections, 0.65, 0.01, 1.0)
+
+        assert len(explanation) <= COMMENT_CHAR_LIMIT
+        assert "Verify whether the first collection's source changed." in explanation
+        assert "Check whether the second collection's source has a newer update." in explanation
+        assert all(token in explanation for token in lost_source_tokens)
+        assert EXPLANATION_DETAIL_UNKNOWN_MARKER not in explanation
+        assert "Model: openrouter/provider/model-1" in explanation
+        assert "Model: openrouter/provider/model-2" in explanation
+
+    def test_stacked_combined_overflow_keeps_base_model_attribution(self) -> None:
+        bot = _make_bot(AggregationStrategy.STACKING, n_forecasters=3)
+        q = BinaryQuestion(
+            question_text="Will it happen?", background_info="bg", resolution_criteria="rc", fine_print=""
+        )
+        q.id_of_question = 779
+        bot._pipeline.outcomes[q.id_of_question] = "primary"
+        base_predictions = [
+            ReasonedPrediction(
+                prediction_value=value,
+                reasoning=(
+                    f"Model: openrouter/provider/stacked-{index}\n\n"
+                    + (f"stacked_rationale_{index} " * 5_000)
+                    + f'\n\n```json\n{{"forecast": {value}}}\n```'
+                ),
+            )
+            for index, value in enumerate((0.4, 0.5, 0.6), start=1)
+        ]
+        combined = combine_stacker_and_base_reasoning("Stacker summary.\n\nPercentile 50: 0.5\n", base_predictions)
+        collection = ResearchWithPredictions(
+            research_report="short research",
+            summary_report="summary",
+            errors=[],
+            predictions=[ReasonedPrediction(prediction_value=0.5, reasoning=combined)],
+        )
+        source_comment = bot._create_comment(q, [collection], 0.5, 0.01, 1.0)
+        assert len(source_comment) > 150_000
+
+        explanation = bot._create_unified_explanation(q, [collection], 0.5, 0.01, 1.0)
+
+        assert len(explanation) <= COMMENT_CHAR_LIMIT
+        parsed_reasoning = parse_per_model_reasoning_text(explanation)
+        assert {"stacked-1", "stacked-2", "stacked-3"}.issubset(parsed_reasoning)
+        assert explanation.count("```json") == 3
+        assert "<!-- STACKED=true -->" in explanation
+
+    def test_unfittable_rationale_marks_detail_unknown_and_keeps_prediction(self) -> None:
+        bot = _make_bot(AggregationStrategy.MEAN, n_forecasters=1)
+        q = BinaryQuestion(
+            question_text="Will it happen?", background_info="bg", resolution_criteria="rc", fine_print=""
+        )
+        original_reasoning = (
+            "Model: openrouter/provider/oversized-json\n\n"
+            "A rationale whose structured output exceeds the complete comment budget.\n\n"
+            + '```json\n{"evidence": "'
+            + ("x" * COMMENT_CHAR_LIMIT)
+            + '"}\n```'
+        )
+        collection = ResearchWithPredictions(
+            research_report="Complete research evidence remains in the collection.",
+            summary_report="Full research is in the research section.",
+            errors=[],
+            predictions=[ReasonedPrediction(prediction_value=0.65, reasoning=original_reasoning)],
+        )
+
+        explanation = bot._create_unified_explanation(q, [collection], 0.65, 0.01, 1.0)
+        assert len(explanation) <= COMMENT_CHAR_LIMIT
+        assert EXPLANATION_DETAIL_UNKNOWN_MARKER in explanation
+        assert "missing model attribution and reasoning are unknown" in explanation
+        assert parse_explanation_detail_status(explanation) == "unknown"
+        assert parse_per_model_reasoning_text(explanation) == {}
+        assert "*Final Prediction*: 65.0%" in explanation
+        assert collection.predictions[0].reasoning == original_reasoning
+        assert collection.research_report == "Complete research evidence remains in the collection."
+        report = BinaryReport(question=q, explanation=explanation, prediction=0.65)
+        assert report.prediction == 0.65
+
+    def test_numeric_report_fallback_keeps_multiline_public_forecast(self) -> None:
+        bot = _make_bot(AggregationStrategy.MEAN, n_forecasters=1)
+        q = NumericQuestion(
+            question_text="What will the value be?",
+            background_info="background",
+            resolution_criteria="criteria",
+            fine_print="",
+            lower_bound=0,
+            upper_bound=100,
+            open_lower_bound=False,
+            open_upper_bound=False,
+            cdf_size=3,
+        )
+        prediction = NumericDistribution.from_question(
+            [
+                Percentile(percentile=0.1, value=10),
+                Percentile(percentile=0.5, value=50),
+                Percentile(percentile=0.9, value=90),
+            ],
+            q,
+            standardize_cdf=False,
+        )
+        original_reasoning = (
+            "Model: openrouter/provider/oversized-numeric-json\n\n"
+            + '```json\n{"evidence": "'
+            + ("x" * COMMENT_CHAR_LIMIT)
+            + '"}\n```'
+        )
+        collection = ResearchWithPredictions(
+            research_report="Numeric evidence remains in the research report.",
+            summary_report="Numeric evidence summary.",
+            errors=[],
+            predictions=[ReasonedPrediction(prediction_value=prediction, reasoning=original_reasoning)],
+        )
+
+        explanation = bot._create_unified_explanation(q, [collection], prediction, 0.01, 1.0)
+        readable_prediction = DataOrganizer.get_readable_prediction(prediction)
+        report = NumericReport(question=q, explanation=explanation, prediction=prediction)
+
+        assert len(explanation) <= COMMENT_CHAR_LIMIT
+        assert EXPLANATION_DETAIL_UNKNOWN_MARKER in explanation
+        assert parse_explanation_detail_status(explanation) == "unknown"
+        assert "missing model attribution and reasoning are unknown" in explanation
+        assert parse_per_model_reasoning_text(explanation) == {}
+        assert readable_prediction in explanation
+        assert "10.00% chance of value below 10.0" in explanation
+        assert "50.00% chance of value below 50.0" in explanation
+        assert "90.00% chance of value below 90.0" in explanation
+        assert report.prediction == prediction
+        assert len(report.prediction.declared_percentiles) == 3
+        assert report.prediction.declared_percentiles == prediction.declared_percentiles
+        assert "<!-- FORECASTERS_USED=1/1 -->" in explanation
+
+    def test_multiple_choice_fallback_keeps_long_multiline_labels_when_they_fit(self) -> None:
+        bot = _make_bot(AggregationStrategy.MEAN, n_forecasters=1)
+        option_names = ["A detailed outcome label " * 8, "An alternative outcome label " * 8]
+        q = MultipleChoiceQuestion(
+            question_text="Which outcome?",
+            background_info="background",
+            resolution_criteria="criteria",
+            fine_print="",
+            options=option_names,
+        )
+        prediction = PredictedOptionList(
+            predicted_options=[
+                PredictedOption(option_name=option_names[0], probability=0.6),
+                PredictedOption(option_name=option_names[1], probability=0.4),
+            ]
+        )
+        original_reasoning = (
+            "Model: openrouter/provider/oversized-mc-json\n\n"
+            + '```json\n{"evidence": "'
+            + ("x" * COMMENT_CHAR_LIMIT)
+            + '"}\n```'
+        )
+        collection = ResearchWithPredictions(
+            research_report="Multiple-choice evidence remains in the research report.",
+            summary_report="Multiple-choice evidence summary.",
+            errors=[],
+            predictions=[ReasonedPrediction(prediction_value=prediction, reasoning=original_reasoning)],
+        )
+
+        explanation = bot._create_unified_explanation(q, [collection], prediction, 0.01, 1.0)
+        readable_prediction = DataOrganizer.get_readable_prediction(prediction)
+        report = MultipleChoiceReport(question=q, explanation=explanation, prediction=prediction)
+
+        assert len(explanation) <= COMMENT_CHAR_LIMIT
+        assert EXPLANATION_DETAIL_UNKNOWN_MARKER in explanation
+        assert parse_explanation_detail_status(explanation) == "unknown"
+        assert parse_per_model_reasoning_text(explanation) == {}
+        assert readable_prediction.strip() in explanation
+        assert f"- {option_names[0]}: 60.0%" in explanation
+        assert f"- {option_names[1]}: 40.0%" in explanation
+        assert "<!-- FORECASTERS_USED=1/1 -->" in explanation
+        assert [option.option_name for option in report.prediction.predicted_options] == option_names
+        assert [option.probability for option in report.prediction.predicted_options] == [0.6, 0.4]
+
+    def test_supported_large_multiple_choice_report_uses_bounded_forecast_reference(self) -> None:
+        bot = _make_bot(AggregationStrategy.MEAN, n_forecasters=1)
+        option_names = [
+            f"Option {index:04d}: " + ("x" * (200 - len(f"Option {index:04d}: "))) for index in range(1_000)
+        ]
+        q = MultipleChoiceQuestion(
+            question_text="Which outcome?",
+            background_info="background",
+            resolution_criteria="criteria",
+            fine_print="",
+            options=option_names,
+        )
+        prediction = PredictedOptionList(
+            predicted_options=[
+                PredictedOption(option_name=option_name, probability=0.001) for option_name in option_names
+            ]
+        )
+        collection = ResearchWithPredictions(
+            research_report="Multiple-choice evidence remains in the research report.",
+            summary_report="Multiple-choice evidence summary.",
+            errors=[],
+            predictions=[
+                ReasonedPrediction(
+                    prediction_value=prediction,
+                    reasoning='Model: openrouter/provider/large-mc-json\n\n```json\n{"options": 1000}\n```',
+                )
+            ],
+        )
+
+        explanation = bot._create_unified_explanation(q, [collection], prediction, 0.01, 1.0)
+        report = MultipleChoiceReport(question=q, explanation=explanation, prediction=prediction)
+
+        assert len(explanation) <= COMMENT_CHAR_LIMIT
+        assert "*Final Prediction*: the full forecast remains in the published report." in explanation
+        assert EXPLANATION_DETAIL_UNKNOWN_MARKER in explanation
+        assert parse_explanation_detail_status(explanation) == "unknown"
+        assert parse_per_model_reasoning_text(explanation) == {}
+        assert "<!-- FORECASTERS_USED=1/1 -->" in explanation
+        assert all(
+            option.option_name == expected
+            for option, expected in zip(report.prediction.predicted_options, option_names, strict=True)
+        )
+        assert all(option.probability == pytest.approx(0.001) for option in report.prediction.predicted_options)
+        assert collection.research_report == "Multiple-choice evidence remains in the research report."
+
+    def test_incomplete_fallback_keeps_disclosures_and_prediction(self) -> None:
+        bot = _make_bot(AggregationStrategy.MEAN, n_forecasters=1)
+        q = BinaryQuestion(
+            question_text="Will it happen?", background_info="bg", resolution_criteria="rc", fine_print=""
+        )
+        correction_claim = "The briefing was materially wrong: " + ("x" * COMMENT_CHAR_LIMIT)
+        unresolved_source_check = "Confirm the current source still reports the same value."
+        correction = render_findings(
+            [
+                Finding(
+                    claim=correction_claim,
+                    source_url="https://example.invalid/report",
+                    quote="The primary source reports a different value.",
+                    date="2026-10-01",
+                    retrieved_how="read_document",
+                    topic="labor",
+                    discrepancy=True,
+                    verification_tier="snippet",
+                )
+            ],
+            [unresolved_source_check],
+        )
+        diagnostics = format_provider_diagnostics_block(
+            [
+                ProviderResult(
+                    name="asknews",
+                    status="fallback",
+                    chars=1_000,
+                    latency_ms=250,
+                    fallback_provider="openrouter",
+                    details={"sources": {"articles": "ok(2)", "summarizer": "error(timeout)"}},
+                )
+            ]
+        )
+        research = "\n\n".join([SUMMARIZER_SOFT_FAIL_BANNER, correction, diagnostics])
+        original_reasoning = (
+            "Model: openrouter/provider/oversized-json\n\n"
+            + '```json\n{"evidence": "'
+            + ("x" * COMMENT_CHAR_LIMIT)
+            + '"}\n```'
+        )
+        collection = ResearchWithPredictions(
+            research_report=research,
+            summary_report="Full research remains in the research section.",
+            errors=[],
+            predictions=[ReasonedPrediction(prediction_value=0.65, reasoning=original_reasoning)],
+        )
+
+        explanation = bot._create_unified_explanation(q, [collection], 0.65, 0.01, 1.0)
+        report = BinaryReport(question=q, explanation=explanation, prediction=0.65)
+
+        assert len(explanation) <= COMMENT_CHAR_LIMIT
+        assert report.prediction == 0.65
+        assert "*Final Prediction*: 65.0%" in explanation
+        assert EXPLANATION_DETAIL_UNKNOWN_MARKER in explanation
+        assert parse_explanation_detail_status(explanation) == "unknown"
+        assert "missing model attribution and reasoning are unknown" in explanation
+        assert parse_per_model_reasoning_text(explanation) == {}
+        assert SUMMARIZER_SOFT_FAIL_BANNER in explanation
+        assert "Driver-reported corrections (limited evidence)" in explanation
+        assert (
+            "These claims rely partly on snippets or generated answers; recheck the underlying sources." in explanation
+        )
+        assert "[Correction details omitted for length.]" in explanation
+        assert "Pending leads:" in explanation
+        assert f"- {unresolved_source_check}" in explanation
+        assert "## Provider Diagnostics" in explanation
+        assert "lost=summarizer:error(timeout)" in explanation
+        assert "FORECASTERS_USED=1/1" in explanation
+        assert correction_claim not in explanation
+        assert collection.research_report == research
+
+    def test_incomplete_fallback_marks_pending_lead_details_omitted_when_too_long(self) -> None:
+        bot = _make_bot(AggregationStrategy.MEAN, n_forecasters=1)
+        q = BinaryQuestion(
+            question_text="Will it happen?", background_info="bg", resolution_criteria="rc", fine_print=""
+        )
+        unresolved_source_check = "Confirm the current source still reports the same value: " + (
+            "x" * COMMENT_CHAR_LIMIT
+        )
+        research = render_findings([], [unresolved_source_check])
+        collection = ResearchWithPredictions(
+            research_report=research,
+            summary_report="Current research summary.",
+            errors=[],
+            predictions=[
+                ReasonedPrediction(
+                    prediction_value=0.65,
+                    reasoning='Model: openrouter/provider/model-1\n\n```json\n{"probability": 0.65}\n```',
+                )
+            ],
+        )
+
+        explanation = bot._create_unified_explanation(q, [collection], 0.65, 0.01, 1.0)
+        report = BinaryReport(question=q, explanation=explanation, prediction=0.65)
+
+        assert len(explanation) <= COMMENT_CHAR_LIMIT
+        assert report.prediction == 0.65
+        assert "*Final Prediction*: 65.0%" in explanation
+        assert "Pending leads:" in explanation
+        assert "[Pending lead details omitted for length.]" in explanation
+        assert unresolved_source_check not in explanation
+        assert EXPLANATION_DETAIL_UNKNOWN_MARKER in explanation
+        assert parse_explanation_detail_status(explanation) == "unknown"
+        assert collection.research_report == research
+
+    def test_overflow_preserves_corrections_soft_fail_and_provider_diagnostics(self) -> None:
+        bot = _make_bot(AggregationStrategy.MEAN, n_forecasters=1)
+        q = BinaryQuestion(
+            question_text="Will it happen?", background_info="bg", resolution_criteria="rc", fine_print=""
+        )
+        correction_claim = "The briefing says 7%; the cited source reports 5.2%."
+        unresolved_source_check = "Confirm the current source still reports the same value."
+        corrections = render_findings(
+            [
+                Finding(
+                    claim=correction_claim,
+                    source_url="https://example.invalid/report",
+                    quote="The unemployment rate was 5.2%.",
+                    date="2026-10-01",
+                    retrieved_how="read_document",
+                    topic="labor",
+                    discrepancy=True,
+                    verification_tier="snippet",
+                )
+            ],
+            [unresolved_source_check],
+        )
+        diagnostics = format_provider_diagnostics_block(
+            [
+                ProviderResult(
+                    name="asknews",
+                    status="fallback",
+                    chars=1_000,
+                    latency_ms=250,
+                    fallback_provider="openrouter",
+                    details={"sources": {"articles": "ok(2)", "summarizer": "error(timeout)"}},
+                )
+            ]
+        )
+        research = "\n\n".join(
+            [
+                "## News Articles (AskNews)",
+                SUMMARIZER_SOFT_FAIL_BANNER,
+                "Two article summaries remain available.",
+                corrections,
+                diagnostics,
+            ]
+        )
+        collection = ResearchWithPredictions(
+            research_report=research,
+            summary_report="Full research remains in the research section.",
+            errors=[],
+            predictions=[
+                ReasonedPrediction(
+                    prediction_value=0.65,
+                    reasoning=(
+                        "Model: openrouter/provider/model-1\n\n"
+                        + ("Long rationale detail. " * 15_000)
+                        + '\n\n```json\n{"probability": 0.65}\n```'
+                    ),
+                )
+            ],
+        )
+
+        explanation = bot._create_unified_explanation(q, [collection], 0.65, 0.01, 1.0)
+
+        assert len(explanation) <= COMMENT_CHAR_LIMIT
+        assert SUMMARIZER_SOFT_FAIL_BANNER in explanation
+        assert correction_claim in explanation
+        assert (
+            "These claims rely partly on snippets or generated answers; recheck the underlying sources." in explanation
+        )
+        assert "Pending leads:" in explanation
+        assert f"- {unresolved_source_check}" in explanation
+        assert "lost=summarizer:error(timeout)" in explanation
+        assert "Model: openrouter/provider/model-1" in explanation
+        assert '{"probability": 0.65}' in explanation
+        assert collection.research_report == research
+
+    @pytest.mark.asyncio
+    async def test_forecast_questions_aggregates_and_constructs_overflow_report(self) -> None:
+        bot = _make_bot(AggregationStrategy.MEAN, n_forecasters=2)
+        q = BinaryQuestion(
+            question_text="Will it happen?", background_info="bg", resolution_criteria="rc", fine_print=""
+        )
+        q.id_of_question = 780
+        research = "## Complete research\n" + ("research evidence " * 3_000)
+        reasoned_predictions = [
+            ReasonedPrediction(
+                prediction_value=value,
+                reasoning=(
+                    f"Model: openrouter/provider/model-{index}\n\n"
+                    + (f"rationale_{index} " * 8_000)
+                    + f'\n\n```json\n{{"probability": {value}}}\n```'
+                ),
+            )
+            for index, value in enumerate((0.4, 0.8), start=1)
+        ]
+        delivered_research: list[str] = []
+        prediction_index = 0
+
+        async def return_prediction(question, research_text, llm, *, qid, chart_b64=None):
+            nonlocal prediction_index
+            delivered_research.append(research_text)
+            prediction = reasoned_predictions[prediction_index]
+            prediction_index += 1
+            return prediction
+
+        with (
+            patch.object(bot, "run_research", new=AsyncMock(return_value=research)),
+            patch.object(bot, "_forecaster_with_soft_deadline", new=AsyncMock(side_effect=return_prediction)),
+        ):
+            reports = await bot.forecast_questions([q])
+
+        assert len(reports) == 1
+        report = reports[0]
+        assert isinstance(report, BinaryReport)
+        assert report.prediction == pytest.approx(0.6)
+        assert len(report.explanation) <= COMMENT_CHAR_LIMIT
+        assert len(delivered_research) == 2
+        assert all(delivered == research for delivered in delivered_research)
+        assert "Model: openrouter/provider/model-1" in report.explanation
+        assert "Model: openrouter/provider/model-2" in report.explanation
+        assert report.explanation.count("```json") == 2
+        assert "<!-- FORECASTERS_USED=2/2 -->" in report.explanation

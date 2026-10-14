@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -51,6 +52,7 @@ from metaculus_bot.research import gemini_search, prediction_market
 from metaculus_bot.research import providers as research_providers
 from metaculus_bot.research.agentic import llm as agentic_llm
 from metaculus_bot.research.fetch_ladder import guard
+from metaculus_bot.research.persistence import ResearchPersistenceWriter
 
 _NOW = datetime.now(UTC)
 _OPEN = _NOW - timedelta(days=30)
@@ -230,8 +232,8 @@ def _install_llm_router(monkeypatch: pytest.MonkeyPatch) -> None:
     ``mock_response`` (and, for the tools path, ``mock_tool_calls``) added, so all real litellm
     import/transform/tools-gated code executes while the network is short-circuited.
 
-    The agentic driver needs a tool-call-shaped response, and the scripted turns
-    (set_research_plan, then conclude) run its loop end to end without any external tool call
+    The agentic driver needs a tool-call-shaped response. The scripted turns
+    plan, fetch a stubbed source page, cite delivered evidence, and conclude,
     while still driving the real ``tools=`` path on every step. ``drop_params`` must be True for
     the agentic wrapper's OpenRouter reasoning_effort handling: in prod a GeneralLlm invoke sets it
     globally, so setting it here keeps the agentic path deterministic even if it runs first.
@@ -241,7 +243,7 @@ def _install_llm_router(monkeypatch: pytest.MonkeyPatch) -> None:
     async def general_llm_router(**kwargs: Any) -> Any:
         return await real_acompletion(**kwargs, mock_response=_route_general_llm(kwargs))
 
-    # The scripted driver turns: set_research_plan first, then conclude.
+    # The scripted driver cites a numbered passage from the stubbed fetched page.
     agentic_state = {"step": 0}
 
     async def agentic_router(**kwargs: Any) -> Any:
@@ -257,6 +259,36 @@ def _install_llm_router(monkeypatch: pytest.MonkeyPatch) -> None:
                             "name": "set_research_plan",
                             "arguments": json.dumps(
                                 {"gaps": [{"id": "g1", "question": "Latest authoritative measurement?"}]}
+                            ),
+                        },
+                    }
+                ]
+            elif step == 1:
+                mock_tool_calls = [
+                    {
+                        "id": "fetch0",
+                        "type": "function",
+                        "function": {"name": "fetch", "arguments": json.dumps({"url": _RESOLUTION_URL})},
+                    }
+                ]
+            elif step == 2:
+                mock_tool_calls = [
+                    {
+                        "id": "finding0",
+                        "type": "function",
+                        "function": {
+                            "name": "record_findings",
+                            "arguments": json.dumps(
+                                {
+                                    "findings": [
+                                        {
+                                            "claim": "The source reported the April unemployment rate at 4.1 percent.",
+                                            "evidence_refs": ["ev_1"],
+                                            "date": "2026-04-14",
+                                            "topic": "labor",
+                                        }
+                                    ]
+                                }
                             ),
                         },
                     }
@@ -400,7 +432,10 @@ _RESOLUTION_HTML = (
     b"rate at 4.1 percent for April 2026, unchanged from the prior month. Nonfarm "
     b"payroll employment rose by 175,000. The labor force participation rate held at "
     b"62.7 percent. Analysts had expected a reading near 4.2 percent, so the print was "
-    b"modestly stronger than consensus. Wage growth cooled slightly year over year.</p>"
+    b"modestly stronger than consensus. Wage growth cooled slightly year over year. "
+    b"The agency reported that household employment and the number of unemployed people "
+    b"changed little over the month, while the participation rate and employment to population "
+    b"ratio were also little changed. The figures describe the April survey reference period.</p>"
     b"</article></body></html>"
 )
 
@@ -638,7 +673,7 @@ def _install_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "dummy-openrouter")
 
 
-def _make_bot() -> TemplateForecaster:
+def _make_bot(research_sink: Any | None = None) -> TemplateForecaster:
     """Build the REAL production ensemble (llm_configs singletons), stacking-strategy
     CONDITIONAL_STACKING (the code default), min_forecasters=1, is_benchmarking=False.
 
@@ -662,6 +697,7 @@ def _make_bot() -> TemplateForecaster:
         llms=llms,
         is_benchmarking=False,
         min_forecasters_to_publish=1,
+        research_sink=research_sink,
     )
 
 
@@ -734,8 +770,11 @@ class TestOfflineE2EForecast:
 
     @pytest.mark.asyncio
     @pytest.mark.e2e
-    async def test_binary_full_pipeline_offline(self, offline_pipeline: None, caplog: pytest.LogCaptureFixture) -> None:
-        bot = _make_bot()
+    async def test_binary_full_pipeline_offline(
+        self, offline_pipeline: None, caplog: pytest.LogCaptureFixture, tmp_path: Path
+    ) -> None:
+        writer = ResearchPersistenceWriter("offline", "metaculus", "test", "offline")
+        bot = _make_bot(research_sink=writer.record)
         with caplog.at_level("INFO"):
             reports = await bot.forecast_questions([_binary_question()])
 
@@ -746,6 +785,23 @@ class TestOfflineE2EForecast:
         assert isinstance(prediction, float)
         # Binary clamp is [0.02, 0.98]; median-of-3 identical 0.22 blocks = 0.22.
         assert 0.02 <= prediction <= 0.98
+
+        saved = writer.flush(output_dir=str(tmp_path))
+        assert saved is not None
+        archived = json.loads(saved.read_text().splitlines()[0])
+        assert archived["gap_fill_v2"]["telemetry"]["findings_count"] == 1
+        delivered = archived["gap_fill_v2"]["delivered_evidence"][0]
+        assert "4.1 percent for April 2026" in delivered["text"]
+        assert delivered["source_url"] == _RESOLUTION_URL
+        assert delivered["content_origin"] == "source_text"
+        assert delivered["tool_call_id"] == "fetch0"
+        assert any(
+            "Will the US unemployment rate exceed 5%" in str(message.get("content"))
+            for message in archived["gap_fill_v2"]["transcript"]
+            if message.get("role") == "user"
+        )
+        assert "Evidence (source text;" in archived["research_text"]
+        assert "The source reported the April unemployment rate" in report.explanation
 
         _assert_pipeline_ran(caplog, bot, expect_qtype="binary")
 

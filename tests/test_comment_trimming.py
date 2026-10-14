@@ -15,7 +15,7 @@ from typing import ClassVar
 import pytest
 from forecasting_tools import ReasonedPrediction
 
-from metaculus_bot.comment.markers import STACKED_BASE_REASONING_HEADER
+from metaculus_bot.comment.markers import EXPLANATION_DETAIL_UNKNOWN_MARKER, STACKED_BASE_REASONING_HEADER
 from metaculus_bot.comment.trimming import (
     TRIM_NOTICE,
     TrimConfig,
@@ -30,6 +30,7 @@ from metaculus_bot.constants import (
     SUMMARY_SECTION_CHAR_LIMIT,
 )
 from metaculus_bot.prompts import SUMMARIZER_SOFT_FAIL_BANNER
+from metaculus_bot.research.provider_diagnostics import PROVIDER_DIAGNOSTICS_HEADER
 from metaculus_bot.stacking import combine_stacker_and_base_reasoning
 
 # ---------------------------------------------------------------------------
@@ -61,6 +62,86 @@ def test_trim_section_noop_when_within_limit() -> None:
     original = "## Report 1 Summary\nshort body"
     trimmed = trim_section(original, "unit-test-noop")
     assert trimmed == original
+
+
+def test_overflow_preserves_optional_research_before_single_newline_diagnostics_boundary() -> None:
+    large_paragraph = "x" * 330
+    recent_evidence = "Recent primary-source update remains available."
+    comment = _build_sectioned_comment(
+        summary_body="*Forecaster 1*: 65%",
+        research_body=(
+            f"{large_paragraph}\n\n{recent_evidence}\n{PROVIDER_DIAGNOSTICS_HEADER}\nlost=summarizer:error(timeout)"
+        ),
+        forecasts_body=(
+            "## R1: Forecaster 1 Reasoning\n"
+            "Model: openrouter/provider/model-1\n\n"
+            + ("A concise rationale. " * 8)
+            + '\n\n```json\n{"probability": 0.65}\n```'
+        ),
+    )
+    assert len(comment) > 800
+
+    trimmed = trim_comment(comment, config=TrimConfig(comment_limit=800))
+
+    assert len(trimmed) <= 800
+    assert recent_evidence in trimmed
+    assert "lost=summarizer:error(timeout)" in trimmed
+
+
+def test_incomplete_fallback_stays_within_limit_when_disclosures_alone_overflow() -> None:
+    # Each diagnostics block runs to the end of its collection, so enough collections make the
+    # disclosures alone exceed the budget even after every other part has been compacted.
+    limit = 2_000
+    diagnostics = f"{PROVIDER_DIAGNOSTICS_HEADER}\n" + "\n".join(
+        f"- provider_{index}: fallback | lost=source_{index}:error(timeout)" for index in range(40)
+    )
+    research_body = f"evidence 1\n\n{diagnostics}" + "".join(
+        f"\n## Report {report} Research\nevidence {report}\n\n{diagnostics}" for report in range(2, 6)
+    )
+    comment = _build_sectioned_comment(
+        summary_body="*Forecaster 1*: 65%",
+        research_body=research_body,
+        forecasts_body=(
+            "## R1: Forecaster 1 Reasoning\n"
+            "Model: openrouter/provider/model-1\n\n"
+            '```json\n{"evidence": "' + ("x" * limit) + '"}\n```'
+        ),
+    )
+
+    trimmed = trim_comment(comment, config=TrimConfig(comment_limit=limit))
+
+    assert len(trimmed) <= limit
+    assert trimmed.startswith("# SUMMARY")
+    assert EXPLANATION_DETAIL_UNKNOWN_MARKER in trimmed
+    assert "<!-- STACKED=true -->" in trimmed
+    assert "<!-- TOOLS_USED=false -->" in trimmed
+
+
+def test_report_heading_inside_research_content_does_not_split_collections() -> None:
+    # The framework renders collection content at heading level 3 or deeper, so only a level-2
+    # "## Report N Research" line opens a collection. A deeper look-alike stays inside report 1,
+    # and report 1's diagnostics block (which runs to the end of its collection) is kept whole.
+    diagnostics = f"{PROVIDER_DIAGNOSTICS_HEADER}\n- asknews: fallback | lost=summarizer:error(timeout)"
+    research_body = (
+        ("optional evidence " * 500)
+        + f"\n\n{diagnostics}\n\n### Report 2 Research\nLook-alike heading kept with the diagnostics. "
+        + ("diagnostic detail " * 500)
+    )
+    comment = _build_sectioned_comment(
+        summary_body="*Forecaster 1*: 65%",
+        research_body=research_body,
+        forecasts_body=(
+            "## R1: Forecaster 1 Reasoning\n"
+            "Model: openrouter/provider/model-1\n\n"
+            'A concise rationale.\n\n```json\n{"probability": 0.65}\n```'
+        ),
+    )
+
+    trimmed = trim_comment(comment, config=TrimConfig(comment_limit=len(comment) - 3_000))
+
+    assert "lost=summarizer:error(timeout)" in trimmed
+    assert "Look-alike heading kept with the diagnostics." in trimmed
+    assert "Model: openrouter/provider/model-1" in trimmed
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +378,65 @@ def _build_sectioned_comment(
         f"{forecasts_body}\n"
         f"{trailing_markers}\n"
     )
+
+
+def _build_sectioned_comment_with_length(length: int) -> str:
+    forecasts_body = (
+        "## R1: Forecaster 1 Reasoning\n"
+        "Model: openrouter/provider/model-1\n\n"
+        "A concise rationale.\n\n"
+        '```json\n{"probability": 0.65}\n```'
+    )
+    base = _build_sectioned_comment(
+        summary_body="*Forecaster 1*: 65%",
+        research_body="",
+        forecasts_body=forecasts_body,
+    )
+    research_characters = length - len(base)
+    assert research_characters >= 0
+    if research_characters:
+        paragraph_count = math.ceil((research_characters + 2) / 502)
+        content_characters = research_characters - 2 * (paragraph_count - 1)
+        paragraph_size, extra_characters = divmod(content_characters, paragraph_count)
+        research_body = "\n\n".join(
+            "R" * (paragraph_size + (index < extra_characters)) for index in range(paragraph_count)
+        )
+    else:
+        research_body = ""
+    comment = _build_sectioned_comment(
+        summary_body="*Forecaster 1*: 65%",
+        research_body=research_body,
+        forecasts_body=forecasts_body,
+    )
+    assert len(comment) == length
+    return comment
+
+
+@pytest.mark.parametrize(
+    ("source_length", "should_trim"),
+    [
+        (COMMENT_CHAR_LIMIT - 1, False),
+        (COMMENT_CHAR_LIMIT, False),
+        (COMMENT_CHAR_LIMIT + 1, True),
+        (150_000, True),
+        (150_001, True),
+    ],
+)
+def test_complete_comment_budget_boundary_preserves_rationale(source_length: int, should_trim: bool) -> None:
+    comment = _build_sectioned_comment_with_length(source_length)
+
+    trimmed = trim_comment(comment)
+
+    assert len(trimmed) <= COMMENT_CHAR_LIMIT
+    if not should_trim:
+        assert trimmed == comment
+    else:
+        assert trimmed != comment
+        assert TRIM_NOTICE in trimmed
+    assert "*Forecaster 1*: 65%" in trimmed
+    assert "Model: openrouter/provider/model-1" in trimmed
+    assert '{"probability": 0.65}' in trimmed
+    assert "<!-- STACKED=true -->" in trimmed
 
 
 class TestSummarizerDisclosuresSurviveTrimming:

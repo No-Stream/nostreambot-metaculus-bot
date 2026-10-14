@@ -362,7 +362,8 @@ MARKER_SPECS: list[MarkerSpec] = [
             r"(?:\s+reason=(?P<reason>\S+))?(?:\s+route=(?P<route>\S+))?"
             r"(?:\s+failure_class=(?P<failure_class>\S+))?(?:\s+exc=(?P<exc>\S+))?(?:\s+server=(?P<server>\S+))?"
             r"(?:\s+passages_returned=(?P<passages_returned>\S+))?(?:\s+passages_grounded=(?P<passages_grounded>\S+))?"
-            r"(?:\s+fallback_used=(?P<fallback_used>\S+))?"
+            r"(?:\s+fallback_used=(?P<fallback_used>\S+))?(?:\s+digest_outcome=(?P<digest_outcome>\S+))?"
+            r"(?:\s+digest_scope=(?P<digest_scope>\S+))?"
             r"(?:\s+caller=(?P<caller>\S+))?"
         ),
         qid_kind=QID_KIND_QUESTION_ID,  # resolution_source.py emits question.id_of_question
@@ -826,6 +827,11 @@ MARKER_SPECS: list[MarkerSpec] = [
         "forecasters_used",
         # Why: in the comment, not stdout; here for completeness. Receipt: docs/telemetry_markers.md "FORECASTERS_USED".
         re.compile(r"<!--\s*FORECASTERS_USED=(?P<used>\d+)/(?P<configured>\d+)\s*-->", re.IGNORECASE),
+    ),
+    MarkerSpec(
+        "explanation_detail",
+        # Why: in the comment, not stdout; here for completeness. Receipt: docs/telemetry_markers.md "EXPLANATION_DETAIL".
+        re.compile(r"<!--\s*EXPLANATION_DETAIL=(?P<value>unknown)\s*-->", re.IGNORECASE),
     ),
 ]
 

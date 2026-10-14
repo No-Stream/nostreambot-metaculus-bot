@@ -25,12 +25,14 @@ from metaculus_bot.constants import (
     ASKNEWS_MAX_TRIES,
     ASKNEWS_SECRET_ENV,
     EXA_API_KEY_ENV,
+    GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS,
     GAP_FILL_V2_READER_HTTP_ATTEMPTS,
     GAP_FILL_V2_READER_MODEL,
     GAP_FILL_V2_READER_THINKING_LEVEL,
     GOOGLE_API_KEY_ENV,
 )
 from metaculus_bot.research import providers as research_providers
+from metaculus_bot.research.agentic.types import EvidencePassage
 from metaculus_bot.research.gemini_client_config import gemini_retry_sleep_allowance_s
 from metaculus_bot.research.url_context_reader import run_url_context_read
 
@@ -118,6 +120,26 @@ def _format_asknews_results(articles: list[Any]) -> str:
     return "\n".join(lines)
 
 
+def _asknews_evidence_passages(articles: list[Any]) -> list[EvidencePassage]:
+    """Expose each provider summary only with the article URL carried by that result."""
+    passages: list[EvidencePassage] = []
+    for article in articles:
+        source_url = _stringify(_mapping_or_attrs_get(article, "article_url"))
+        summary = _stringify(_mapping_or_attrs_get(article, "summary"))
+        if source_url and summary:
+            passages.extend(
+                EvidencePassage(
+                    source_url=source_url,
+                    text=paragraph,
+                    retrieval_method="news",
+                    content_origin="provider_summary",
+                )
+                for paragraph in summary.split("\n\n")
+                if paragraph.strip() and len(paragraph) <= GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS
+            )
+    return passages
+
+
 def _format_exa_results(results: list[Any]) -> str:
     if not results:
         return "No Exa results found."
@@ -144,6 +166,32 @@ def _format_exa_results(results: list[Any]) -> str:
         lines.append("")
     lines.pop()
     return "\n".join(lines)
+
+
+def _exa_evidence_passages(results: list[Any]) -> list[EvidencePassage]:
+    """Expose Exa highlights as provider summaries with their own structured result URL."""
+    passages: list[EvidencePassage] = []
+    for result in results:
+        source_url = _stringify(_mapping_or_attrs_get(result, "url"))
+        highlights_raw = _mapping_or_attrs_get(result, "highlights")
+        if isinstance(highlights_raw, str):
+            highlights = [highlights_raw]
+        elif isinstance(highlights_raw, list):
+            highlights = [_stringify(item) for item in highlights_raw if _stringify(item)]
+        else:
+            highlights = []
+        if source_url:
+            passages.extend(
+                EvidencePassage(
+                    source_url=source_url,
+                    text=highlight,
+                    retrieval_method="search",
+                    content_origin="provider_summary",
+                )
+                for highlight in highlights
+                if len(highlight) <= GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS
+            )
+    return passages
 
 
 def _is_rate_limited_error(exc: BaseException) -> bool:

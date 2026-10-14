@@ -10,8 +10,6 @@ from forecasting_tools import BinaryQuestion, MultipleChoiceQuestion, NumericQue
 from metaculus_bot.aggregation_strategies import AggregationStrategy
 from metaculus_bot.comment.formatting import (
     build_unified_explanation,
-    format_forecaster_rationales_section,
-    format_main_research_section,
     format_research_summary_with_models,
 )
 from metaculus_bot.comment.markers import (
@@ -30,8 +28,6 @@ from metaculus_bot.comment.markers import (
 )
 from metaculus_bot.constants import (
     COMMENT_CHAR_LIMIT,
-    FORECASTS_SECTION_CHAR_LIMIT,
-    RESEARCH_SECTION_CHAR_LIMIT,
     SUMMARY_SECTION_CHAR_LIMIT,
 )
 
@@ -50,7 +46,7 @@ class TestFormatResearchSummaryWithModels:
             MagicMock(reasoning="Model: openrouter/openai/gpt-5.5\n\nanalysis"),
             MagicMock(reasoning="Model: openrouter/anthropic/claude-opus-4.7\n\nanalysis"),
         ]
-        result = format_research_summary_with_models(base_text, predictions, report_number=1)
+        result = format_research_summary_with_models(base_text, predictions)
         assert "*Forecaster 1 (gpt-5.5)*: 72.0%" in result
         assert "*Forecaster 2 (claude-opus-4.7)*: 68.0%" in result
 
@@ -58,44 +54,16 @@ class TestFormatResearchSummaryWithModels:
 
         base_text = "## Report 1 Summary\n### Forecasts\n*Forecaster 1*: 72.0%\n### Research Summary\nSome research.\n"
         predictions = [MagicMock(reasoning="just analysis, no model prefix")]
-        result = format_research_summary_with_models(base_text, predictions, report_number=1)
+        result = format_research_summary_with_models(base_text, predictions)
         assert "*Forecaster 1*: 72.0%" in result
         assert "(" not in result.split("### Forecasts")[1].split("### Research Summary")[0]
 
-    def test_trims_oversized_text(self):
+    def test_preserves_oversized_text_for_complete_comment_allocation(self):
 
         huge_text = "## Report 1 Summary\n" + ("X" * (SUMMARY_SECTION_CHAR_LIMIT + 5000))
         predictions: list = []
-        result = format_research_summary_with_models(huge_text, predictions, report_number=1)
-        assert len(result) <= SUMMARY_SECTION_CHAR_LIMIT
-
-
-class TestFormatMainResearchSection:
-    def test_trims_oversized_text(self):
-
-        huge_text = "## Research\n" + ("Y" * (RESEARCH_SECTION_CHAR_LIMIT + 3000))
-        result = format_main_research_section(huge_text, report_number=1)
-        assert len(result) <= RESEARCH_SECTION_CHAR_LIMIT
-
-    def test_short_text_passes_through(self):
-
-        short_text = "## Research\nSome content."
-        result = format_main_research_section(short_text, report_number=1)
-        assert result == short_text
-
-
-class TestFormatForecasterRationalesSection:
-    def test_trims_oversized_text(self):
-
-        huge_text = "## Rationale\n" + ("Z" * (FORECASTS_SECTION_CHAR_LIMIT + 2000))
-        result = format_forecaster_rationales_section(huge_text, report_number=1)
-        assert len(result) <= FORECASTS_SECTION_CHAR_LIMIT
-
-    def test_short_text_passes_through(self):
-
-        short_text = "## Rationale\nSome reasoning."
-        result = format_forecaster_rationales_section(short_text, report_number=1)
-        assert result == short_text
+        result = format_research_summary_with_models(huge_text, predictions)
+        assert result == huge_text
 
 
 class TestBuildUnifiedExplanation:

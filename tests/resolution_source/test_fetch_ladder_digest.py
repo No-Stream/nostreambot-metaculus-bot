@@ -25,6 +25,7 @@ from metaculus_bot.research.fetch_ladder.policy import (
 from metaculus_bot.research.fetch_ladder.verdict import PageExtraction
 from metaculus_bot.research.fetch_markers import fetch_marker_line
 from metaculus_bot.research.resolution_fetch_result import FetchResult
+from metaculus_bot.research.source_evidence import SourceExcerpt
 from metaculus_bot.research.wayback import WaybackSnapshot
 from tests.resolution_source_fakes import FakeResponse, FakeSession
 
@@ -70,9 +71,9 @@ async def test_long_html_digest_receives_full_text_and_reapplies_leads_and_cap_o
         ctx=LadderContext(query="weekly admissions", session=session, host_sems={}),
     )
 
-    assert len(calls) == 2
+    assert len(calls) == 1
     assert all(text == full_text for text, _query, _budget in calls)
-    assert [query for _text, query, _budget in calls] == ["weekly admissions", "weekly admissions"]
+    assert [query for _text, query, _budget in calls] == ["weekly admissions"]
     assert all(0.0 < budget <= policy.total_wall_s for _text, _query, budget in calls)
     for result in (fresh, cached):
         assert result.status == "success"
@@ -186,9 +187,8 @@ async def test_short_html_does_not_invoke_digest_and_has_no_digest_marker_fields
 
 
 @pytest.mark.asyncio
-async def test_empty_html_digest_selection_keeps_the_capped_page() -> None:
-    """An empty digest selection must not replace a readable page with no-match prose."""
-    cap = 300
+async def test_empty_html_digest_selection_propagates_no_match_without_the_ordinary_page() -> None:
+    """An empty digest selection is a no-answer, not permission to publish the page opening."""
 
     async def digest(text: str, query: str, *, budget_seconds: float) -> LadderDigest:
         del text, query, budget_seconds
@@ -212,7 +212,7 @@ async def test_empty_html_digest_selection_keeps_the_capped_page() -> None:
         routing_body=b"<html>",
     )
     result = await artifact.present_html(
-        replace(RESOLUTION_SOURCE_POLICY, digest=digest, per_url_max_chars=cap),
+        replace(RESOLUTION_SOURCE_POLICY, digest=digest),
         query="",
         route="direct",
         now=datetime.now(UTC),
@@ -220,13 +220,12 @@ async def test_empty_html_digest_selection_keeps_the_capped_page() -> None:
     )
 
     assert result is not None
-    assert result.status == "success"
-    assert "The tracker reports 917 admissions this week." in result.text
-    assert "No passage in this document matched the query." not in result.text
-    assert len(result.text) <= cap
-    assert result.passages_returned is None
-    assert result.passages_grounded is None
-    assert result.fallback_used is None
+    assert result.status == "no_resolving_content"
+    assert result.status_reason == "no_matching_passage"
+    assert result.text == ""
+    assert result.passages_returned == 0
+    assert result.passages_grounded == 0
+    assert result.fallback_used is False
 
 
 @pytest.mark.asyncio
@@ -343,6 +342,7 @@ async def test_held_flat_html_uses_digest_seat_with_remaining_read_document_budg
             passages_grounded=2,
             fallback_used=False,
             method="llm_extractive",
+            evidence_passages=(SourceExcerpt("", "The tracker reports 917 admissions this week.", "llm_extractive"),),
         )
 
     monkeypatch.setattr(
@@ -380,6 +380,7 @@ async def test_subfloor_flat_no_match_still_falls_through_to_paid_reader_when_op
             passages_grounded=0,
             fallback_used=True,
             method="digest_local",
+            outcome="ungrounded",
         )
     )
     monkeypatch.setattr(agentic_tools, "GAP_FILL_DOCUMENT_POLICY", replace(GAP_FILL_DOCUMENT_POLICY, digest=digest))
@@ -396,7 +397,7 @@ async def test_subfloor_flat_no_match_still_falls_through_to_paid_reader_when_op
 
     assert outcome.method == "document"
     assert outcome.content_markdown == "Paid reader answer."
-    digest.assert_not_awaited()
+    digest.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -411,6 +412,7 @@ async def test_subfloor_flat_matching_passage_stays_local_even_when_digest_groun
             passages_grounded=0,
             fallback_used=True,
             method="digest_local",
+            evidence_passages=(SourceExcerpt("", "The tracker reports 917 admissions this week.", "bm25_candidate"),),
         )
     )
     monkeypatch.setattr(agentic_tools, "GAP_FILL_DOCUMENT_POLICY", replace(GAP_FILL_DOCUMENT_POLICY, digest=digest))
@@ -463,10 +465,13 @@ def test_digest_marker_fields_precede_the_caller_tail() -> None:
             passages_returned=4,
             passages_grounded=3,
             fallback_used=False,
+            digest_outcome="answered",
+            digest_scope="full_page",
         ),
         qid=123,
         caller="resolution_source",
     )
 
     assert "passages_returned=4 passages_grounded=3 fallback_used=False" in line
+    assert "digest_outcome=answered digest_scope=full_page" in line
     assert line.endswith("caller=resolution_source")

@@ -165,13 +165,15 @@ class TestGrounding:
         assert any("Civilian unemployment rate | 4.2 | 4.3" in p for p in digest.passages[1:])
         assert len(digest.passages) <= 1 + DOCUMENT_DIGEST_TOP_K
 
-    async def test_an_empty_answer_list_falls_back(self, monkeypatch, builder_calls) -> None:
+    async def test_an_empty_answer_list_is_a_valid_no_match(self, monkeypatch, builder_calls) -> None:
         llm = ScriptedLlm(_passages_json())
         _install(monkeypatch, llm, builder_calls)
 
         digest = await digest_page(PAGE, QUERY, budget_seconds=RESOLUTION_SOURCE_WALL_TIMEOUT)
 
-        assert digest.fallback_used is True
+        assert digest.fallback_used is False
+        assert digest.outcome == "valid_empty"
+        assert digest.passages == []
         assert digest.passages_returned == 0
         assert digest.passages_grounded == 0
 
@@ -220,7 +222,7 @@ class TestGrounding:
 
         assert digest.passages_grounded == 1
         assert digest.fallback_used is False
-        assert digest.passages[1] == retyped
+        assert digest.passages[1] == quoted
 
     async def test_a_passage_spliced_across_a_real_cut_is_not_grounded(self, monkeypatch, builder_calls) -> None:
         """The one fabrication shape the pre-filter itself creates: text joined across a `[...]` cut."""
@@ -238,6 +240,20 @@ class TestGrounding:
         assert digest.passages_returned == 1
         assert digest.passages_grounded == 0
         assert digest.fallback_used is True
+        assert digest.outcome == "ungrounded"
+
+    async def test_an_unmatched_page_keeps_the_opening_on_a_transient_digest_failure(
+        self, monkeypatch, builder_calls
+    ) -> None:
+        llm = ScriptedLlm(TimeoutError("provider timeout"))
+        _install(monkeypatch, llm, builder_calls)
+
+        digest = await digest_page(PAGE, "zymurgy quokka", budget_seconds=RESOLUTION_SOURCE_WALL_TIMEOUT)
+
+        assert digest.outcome == "timeout"
+        assert digest.fallback_used is True
+        assert digest.passages == [page_digest_module._opening_passage(PAGE)]
+        assert digest.evidence_passages == ()
 
 
 class TestPrefilter:
@@ -395,7 +411,8 @@ class TestWallBudget:
 
         assert llm.prompts == []
         assert digest.passages == []
-        assert digest.fallback_used is True
+        assert digest.fallback_used is False
+        assert digest.outcome == "empty_page"
 
 
 class TestExpectedFailures:

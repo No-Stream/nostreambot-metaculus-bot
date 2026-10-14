@@ -46,7 +46,8 @@ def _internal_tool_schemas() -> list[dict[str, Any]]:
                     "properties": {
                         "claim": {"type": "string"},
                         "source_url": {"type": "string"},
-                        "quote": {"type": "string"},
+                        "evidence_refs": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                        "replaces_finding_id": {"type": "string"},
                         "evidence_kind": {"type": "string", "enum": ["text", "image"], "default": "text"},
                         "image_id": {
                             "type": "string",
@@ -61,28 +62,27 @@ def _internal_tool_schemas() -> list[dict[str, Any]]:
                             ),
                         },
                         "date": {"type": "string"},
-                        "retrieved_how": {"type": "string"},
                         "topic": {"type": "string"},
                         "discrepancy": {"type": "boolean"},
                         "derivation": {
                             "type": "string",
                             "description": (
-                                "OPTIONAL arithmetic-only synthesis over THIS finding's quoted numbers "
-                                "(a derived table, bound, or rate). Every input number must appear as a "
-                                "quoted value with URL in this finding's quote/source. Arithmetic and its "
+                                "OPTIONAL arithmetic-only synthesis over THIS finding's cited numbers "
+                                "(a derived table, bound, or rate). Every input number must appear in a "
+                                "cited evidence passage. Arithmetic and its "
                                 "result only — no likelihood language, no new facts."
                             ),
                         },
                     },
-                    "required": ["claim", "source_url"],
+                    "required": ["claim"],
                     "allOf": [
                         {
                             "if": {"properties": {"evidence_kind": {"const": "image"}}, "required": ["evidence_kind"]},
-                            "then": {"required": ["image_id", "visual_observation"]},
-                            "else": {"required": ["quote"]},
+                            "then": {"required": ["source_url", "image_id", "visual_observation"]},
+                            "else": {"required": ["evidence_refs"]},
                         }
                     ],
-                    "additionalProperties": True,
+                    "additionalProperties": False,
                 },
             }
         },
@@ -174,7 +174,7 @@ def _internal_tool_schemas() -> list[dict[str, Any]]:
         ),
         _tool_schema(
             "record_findings",
-            "Bank detached findings. Text evidence requires a quote; visual evidence requires a delivered image_id "
+            "Bank detached findings. Text evidence requires delivered evidence_refs; visual evidence requires a delivered image_id "
             "and visual_observation tied to that image's exact source URL. Claims must stay citation-only and avoid "
             "likelihood or verdict language. Optional derivation carries arithmetic over quoted text evidence.",
             finding_schema,

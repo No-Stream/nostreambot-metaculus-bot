@@ -566,13 +566,41 @@ the trim anchor and the parser markers survive.
 #### Comment trimming
 
 `metaculus_bot/comment/trimming.py` enforces the platform's character limits: `trim_section` for
-one section, `trim_comment` for the assembled whole. The budgets come from `constants.py`
-(`SUMMARY_SECTION_CHAR_LIMIT`, `RESEARCH_SECTION_CHAR_LIMIT`, `FORECASTS_SECTION_CHAR_LIMIT`,
-`COMMENT_CHAR_LIMIT`), and `_section_budget` maps a section name to its own budget so the
-parser-critical FORECASTS section is not starved by a uniform cap. The module-private
-`_COMMENT_HEAD_BUDGET` (10,000 chars) is sized to seat the summary with a safety margin while
-leaving most of the budget to the tail, which is where the `STACKED=<bool>` marker and as many R1
-rationales as fit live.
+one section and `trim_comment` for the assembled whole. The publication path preserves every
+section through composition, then applies `COMMENT_CHAR_LIMIT` once to the complete comment after
+metadata and disclosure markers have been added. `trim_section` retains the configured
+`SUMMARY_SECTION_CHAR_LIMIT`, `RESEARCH_SECTION_CHAR_LIMIT`, and `FORECASTS_SECTION_CHAR_LIMIT` for
+explicit standalone callers; they do not pre-trim published comments. Comments that fit the
+149,999-character repository limit remain byte-identical. On overflow, the allocator trims whole
+research paragraphs first, summary prose after the parser boundary next, and rationale bodies only
+after that, preserving model attribution and each structured forecast block where they fit.
+It keeps summarizer failure banners, complete driver-reported correction blocks, provider diagnostics,
+and the complete `render_findings` pending-leads block. The pending-leads renderer adds paired hidden
+HTML boundary comments so the allocator can preserve the heading and every unresolved-source entry
+without inferring the block from its prose.
+
+`TemplateForecaster._create_comment` owns the framework's report composition. This override is
+required because `ForecastBot._create_comment` replaces comments above 150,000 characters with the
+first 2,000 characters before the repository's final allocator can run. The override reuses the
+framework's section renderers and leaves the complete assembled text intact until
+`_create_unified_explanation` appends the publication markers and calls `trim_comment`.
+If the required model and JSON forecast blocks themselves cannot fit, the bounded fallback keeps
+the readable final prediction when it fits beside publication disclosures; otherwise it names the
+published report as the location of the full forecast. It omits rationale detail and adds
+`EXPLANATION_DETAIL=unknown`. The parser records that explicit state and does not infer attribution
+for the missing rationale. Provider diagnostics run to the end of their research collection (a level-2
+`## Report N Research` heading, which collection content can never produce), so when the disclosures
+themselves exceed the budget the last rendering drops them, logs a warning, and keeps only the
+prediction pointer and markers. The typed prediction stays on the ordinary report path, independent of
+comment length. A large multiple-choice distribution can exceed the comment budget even when each
+option label is within the backend's ordinary label limit, so the fallback points to the published
+report rather than presenting an incomplete distribution. Tests exercise `forecast_questions`
+through aggregation and report creation as well as direct comments just below and above both the
+repository and framework thresholds, including a large supported-shape multiple-choice report.
+
+The module-private `_COMMENT_HEAD_BUDGET` (10,000 chars) applies only to the historical
+summary-and-tail fallback for unstructured comments. Structured published comments use the full
+budget and preserve their summary and parser markers before trimming research and rationale.
 
 Everything the trim protects is something `performance_analysis` later parses back out of the
 published comment: each rationale's `Model: openrouter/<provider>/<name>` line (keyed on by
@@ -1018,6 +1046,11 @@ card) and blocks the navigation-tree chrome, at the cost of one extra pass on th
 the metric. What it gives up: prose-shaped boilerplate (a cookie-consent wall, a glossary) passes
 any line-shape metric, and kasa.go.kr's news ticker is withheld with its menu. An extraction under
 the chrome floor skips the metric, because precision only ever shortens.
+
+Before extraction, `_strip_consent_widgets` removes subtrees whose DOM identifiers name a known
+consent manager or an explicit consent/banner/preferences container. It does not remove text because
+it mentions cookies, so authored articles about cookie use stay available. Consent controls with
+unrecognized identifiers may still need an explicit identifier added after a captured-page replay.
 
 The precision pass is the one skippable part, and it declines under
 `RESOLUTION_SOURCE_PRECISION_RETRY_MIN_BUDGET_S` of remaining wall. Nothing else budgets this work:

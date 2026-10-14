@@ -14,7 +14,6 @@ from forecasting_tools.forecast_bots.forecast_bot import ForecastBot
 from forecasting_tools.helpers.metaculus_client import MetaculusClient
 
 from main import TemplateForecaster
-from metaculus_bot.comment.trimming import TRIM_NOTICE
 from metaculus_bot.constants import (
     FORECASTS_SECTION_CHAR_LIMIT,
     PER_QUESTION_WALL_CLOCK_DEADLINE,
@@ -417,7 +416,7 @@ async def test_run_forecast_on_numeric_uses_provided_llm(mock_metaculus_question
         assert "mock reasoning" in result.reasoning
 
 
-def test_format_methods_trim_long_outputs():
+def test_format_methods_preserve_long_outputs_for_complete_comment_allocation():
     llms_config = {
         "default": GeneralLlm(model="test_default"),
         "summarizer": "mock_summarizer_model",
@@ -436,13 +435,13 @@ def test_format_methods_trim_long_outputs():
 
     formatted_research = bot._format_main_research(1, research_with_predictions)
     assert formatted_research.startswith("## Report 1 Research")
-    assert TRIM_NOTICE in formatted_research
-    assert len(formatted_research) <= RESEARCH_SECTION_CHAR_LIMIT
+    assert len(formatted_research) > RESEARCH_SECTION_CHAR_LIMIT
+    assert "A" * 500 in formatted_research
 
     formatted_rationales = bot._format_forecaster_rationales(1, research_with_predictions)
     assert formatted_rationales.startswith("## R1: Forecaster 1 Reasoning")
-    assert TRIM_NOTICE in formatted_rationales
-    assert len(formatted_rationales) <= FORECASTS_SECTION_CHAR_LIMIT
+    assert len(formatted_rationales) > FORECASTS_SECTION_CHAR_LIMIT
+    assert "B" * 800 in formatted_rationales
 
 
 # ---------------------------------------------------------------------------

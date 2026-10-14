@@ -108,8 +108,12 @@ to the message list, so the brief acts as a stable prompt-cache prefix.
 ## Search and document tools
 
 Built by `tools.py` `build_gap_fill_tools`. Each returns a `ToolOutcome`
-(content markdown, links, a `method` tag, a status, a truncation flag). Each
-also carries its own per-call timeout, set as `timeout_s` on its `ToolSpec` in
+(content markdown, links, a `method` tag, a status, a truncation flag, and,
+where applicable, structured evidence passages). A passage binds visible text to
+its source URL, retrieval method, content origin, and clipping state. The loop
+assigns an `evidence_ref` only after the tool-result body budget is applied, so
+the reference points to text the driver actually received. Each tool also
+carries its own per-call timeout, set as `timeout_s` on its `ToolSpec` in
 `build_gap_fill_tools` and scaled to how heavy the tool is; the loop enforces it
 and turns a breach into an error `ToolOutcome` rather than a crash.
 
@@ -170,6 +174,23 @@ then clips the line to the room available.
   a bounded PNG. The loop sends those pixels to the same driver on its next
   ordinary request, which incurs image input tokens but makes no separate
   image-reader call. Crop and provenance rules are detailed below.
+
+Research tool outcomes can carry structured `EvidencePassage` records. The
+tool adapter owns the association between each passage and its
+source before Markdown formatting; the loop does not infer a source from nearby
+links or prose. The reply labels the passage's retrieval method and content
+origin (`source_text`, `structured_data`, `provider_summary`, or
+`generated_answer`). `source_text` covers text retrieved from a source, including
+text extracted from PDFs or normalized by a parser; it does not promise a
+byte-for-byte copy of raw human page text. Adapter-formatted rows from
+structured APIs use `structured_data`. A row preserves only the fields the
+adapter renders, and some providers omit units, so the row alone may not
+establish the measurement scale. Provider summaries and generated answers
+retain their separate labels and do not become source text.
+Only the visible passage is citable. Producers mark passages clipped from a
+larger source excerpt; if a passage does not fit the result budget, it is omitted
+instead of being shortened into a citation. Tool metadata and other explanatory
+text do not become evidence passages.
 
 ### The three known-API tools (built and wired)
 
@@ -435,10 +456,10 @@ inside a research phase whose wall discards work that already succeeded.
 
 The digest is refused (and the paid reader runs instead) for exactly one shape: held text
 under `GAP_FILL_V2_MIN_CONTENT_CHARS`, with no PDF parse behind it, whose digest selected
-NO passage. That is a JavaScript shell whose browser rescue already failed, and digesting
-its navigation chrome stamped an unread page `fetched` (the one tier that supersedes the
-briefing) while the tool description tells the driver a zero-passage digest means the
-document does not discuss the ask. All three conditions are load-bearing: a thin-but-real
+NO passage. That is a JavaScript shell whose browser rescue already failed. In the incident
+that motivated this rule, digesting its navigation chrome stamped an unread page `fetched`
+under the old URL-level tier rule, while the tool description said a zero-passage digest
+meant the document did not discuss the ask. All three conditions are load-bearing: a thin-but-real
 short page that matches the ask is still served free, a held parse is a real local read of
 something a browser cannot help with, and a matching passage is the evidence that the text
 is the page rather than its frame.
@@ -475,8 +496,8 @@ group all come back "not disallowed").
 
 A disallow returns `status="robots_disallowed"` and earns no verification tier, because
 nothing was read: only a `method` with an entry in `provenance._METHOD_TO_TIER` can be
-stamped, which is also why a `throttled` fetch can never claim `fetched` and supersede the
-briefing. It logs one `AGENTIC_URLCONTEXT_ROBOTS_SKIP` line (fields under Telemetry).
+stamped. A `throttled` fetch likewise supplies no citable fetched source text. It logs one
+`AGENTIC_URLCONTEXT_ROBOTS_SKIP` line (fields under Telemetry).
 
 ## The output artifact
 
@@ -487,16 +508,19 @@ are no findings and no pending leads.
 Structure:
 
 - `## Agentic Research Findings` header.
-- `### ⚠ Corrections to the briefing` first, if any finding is flagged
-  `discrepancy=true`. This block carries language telling the panel these
-  findings contradict and supersede the corresponding briefing content. Putting
-  it first is deliberate: a flagged briefing error is the single most valuable
-  thing v2 can produce.
+- A driver-reported corrections block appears first for findings flagged
+  `discrepancy=true`. The heading reflects the cited evidence: findings supported
+  by source text are separated from those relying on snippets or generated
+  answers. Both ask the panel to compare the claim with the briefing and cited
+  evidence. A fetched excerpt establishes which text the driver saw; it does not
+  verify the driver's interpretation.
 - The remaining findings grouped by topic, sorted.
-- A text finding renders as Claim, Source, a blockquoted Quote, Date, and
-  Retrieved how. An image finding renders its image ID and driver-reported
-  visual observation in place of the quote, along with the same source, date,
-  and retrieval fields.
+- A new text finding renders its claim and each cited passage separately, with
+  the passage's source, origin, retrieval method, reference, and clipping state.
+  Historical findings without structured support keep their archived quote and
+  source rendering. An image finding renders its image ID and driver-reported
+  visual observation in place of text evidence, along with its source, date, and
+  retrieval fields.
 - A `Pending leads:` list at the end for things the driver couldn't verify (dead
   links, paywalls, no coverage) but wanted to flag rather than guess at.
 
@@ -541,39 +565,45 @@ may cite them. The system prompt is a fixed template that embeds no question
 URLs, so nothing is seeded from it. A discrepancy finding may not lean on a
 briefing URL at all: see `gates._check_url_provenance`.
 
-Each finding has one source URL. The driver is instructed to record evidence from
-different sources as separate findings, keeping each source's evidence in its own
-`claim` and `quote` or `visual_observation`, so every excerpt retains its own link.
+Every new text finding proposes a `claim` and one or more `evidence_refs` from
+earlier tool replies. Code rejects unknown or undelivered references and support
+that exceeds the evidence-size limit, then materializes each exact visible
+passage, its own source URL, retrieval method, content origin, and clipping
+state. Separate sources stay separate in the rendered finding. The live proposal
+does not accept driver-authored quote, support, retrieval, or tier fields. The
+older archived `Finding` shape remains renderable without inventing references
+or rechecking its quotation.
 
-The quote spot-check in `_validate_findings_payload` applies only to text
-findings and is warn-only. A quote that is not found verbatim in the run's tool
-contents is logged and counted in `quote_mismatch_warnings`, but the finding is
-still banked, because `read_document` paraphrases and joins passages with
-ellipses. The check splits a quote at ellipses, quote-glyph joiners and bare
-newlines and requires each substantive piece verbatim, and normalization rejoins
-words and numeric ranges that PDF extraction broke at a line wrap and spells out
-Latin ligatures such as `ﬁ` (but applies no NFKC, which would fold `10²` into `102`). The warning is deduped per run on `(source_url, quote)`, so a finding
-re-listed in `conclude`'s `final_findings` counts once rather than once per
-submission. Image findings have no quote: the finding validator instead
-requires an image ID already delivered on a preceding driver turn and checks
-that its `source_url` is the image's registered source or final URL. The visual
-observation is scanned by detachment lint, but the code cannot verify that it
+References are assigned after the result body budget is applied, and their
+labels count inside that budget. A hidden passage tail, budget notice, linked
+lead, or metadata line cannot be cited. Adjacent delivered excerpts may be cited
+together when their combined context supplies a unit, denominator, date, or
+qualification; each still retains its own source association. Image findings
+remain on their existing path: the validator requires an image ID delivered on
+a preceding driver turn and checks that its source URL belongs to that image.
+Detachment lint scans the visual observation, but code cannot verify that it
 matches the pixels.
 
-Two `Finding` fields carry their own rules. `derivation` (W3) is arithmetic-only
-synthesis over the finding's own quoted numbers: a derived table, bound or rate
-whose every input appears as a quoted value with a URL in that finding's quote and
-source fields. It is exempt from the detachment lint (arithmetic plus its result,
-no likelihood language, no new facts; `artifact.detachment_lint`) and rendered
-under a "Derived analysis" label so the panel weights it as our synthesis rather
-than a source claim. `verification_tier` (W4) is stamped by the loop at banking
-time from the URL-to-best-method-seen map, never driver-claimed (the free-text
-(A) to (D) tags in `claim` stay advisory): `fetched` when the URL was seen through
-a fetch or read (document, rendered, plain or cache), `snippet` when only through
-a search or news result, None until stamped (a briefing-only URL is never seen
-through a tool). A discrepancy finding must be `fetched` to keep the supersede
-banner; a snippet-tier discrepancy is demoted to "possible corrections", the
-131.3 failure mode (`gates._stamp_verification_tier`, `artifact.render_findings`).
+Semantic deduplication ignores run-local finding IDs, evidence reference IDs,
+and tool-delivery IDs, while retaining meaningful claim and support content,
+including source, date, derivation, origin, and clipping. An exact repeat is
+idempotent. A revision must name the banked finding with
+`replaces_finding_id`; it replaces the rendered version while the earlier
+proposal remains in the transcript. A later fetch does not silently upgrade a
+finding that cited only an earlier search observation.
+
+`derivation` is driver-reported arithmetic and is rendered under a "Derived
+analysis" label so the panel can distinguish it from a source statement. The
+loop does not prove that the arithmetic inputs or interpretation follow from the
+evidence. `verification_tier` is stamped from the cited observations, never
+driver-claimed: a finding is `fetched` only when every support is source-derived
+text or `structured_data` retrieved by a fetched method. The tier describes the
+cited observations' retrieval and origin; it does not establish that a row has
+all needed context, including units, or that the claim follows from it. Provider
+summaries and generated reader answers remain at the lower `snippet` tier, even
+if another call later fetches the same URL. Discrepancy findings remain
+prominent, but the panel is asked to compare them with the briefing and attached
+evidence rather than accept them as unconditional corrections.
 
 `GapAccountingEntry.status` (W2) is a plan gap's terminal disposition at conclude
 time: `resolved` (the fact was found), `unresolved_parked` (attempted,
@@ -840,9 +870,11 @@ AGENTIC_FETCH_LOCAL_DOC: url=... method=pdf_local|digest_local chars=... pages=.
 as an INFO from `local_document.py`, harvested as `agentic_fetch_local_doc` and likewise
 without a `question=`. `pdf_local` is a `fetch` serving a PDF's own extracted text, which
 paginates like a long page and therefore selects nothing (`passages=n/a`); `digest_local` is a
-`read_document` answering the ask from BM25-selected passages of text we hold, where
-`passages=0` is the reading that matters: the document does not discuss what was asked, which
-in the block itself reads exactly like a successful read. `chars` is the text we HELD, not the
+`read_document` using a digest of text we hold. For PDFs, `passages` is the deterministic
+digest's selected-passage count; for held HTML text, it is the grounded extractive-passage count.
+`passages=0` means no passage was selected or grounded for that route, not that the full document
+has no relevant content. The HTML digest can still return BM25 fallback candidates when the
+grounded count is zero. `chars` is the text we HELD, not the
 window handed to the driver, so it is comparable across both routes and against
 `URL_CONTEXT_SIZE_GATE_TOKENS` (chars / 4).
 
@@ -868,9 +900,12 @@ counts fetches served by the headless-Chromium rung, a per-method count
 `per_tool_counts` cannot see. `dup_tool_calls` counts exact-duplicate (tool,
 normalized arguments) repeats, the stuck-detection nudge described under "The
 bounds". `provenance_rejections` counts findings dropped because their cited
-`source_url` never appeared in a tool result this run (the hard W3 gate), while
-`quote_mismatch_warnings` counts findings ACCEPTED despite a quote not found
-verbatim in the tool contents (warn-only, see "The findings gates").
+evidence references are unknown or undelivered, their support exceeds the size
+limit or disagrees with the referenced source, or their replacement identity is
+invalid. `quote_mismatch_warnings` remains in the marker for historical log
+compatibility; code-materialized quotations on the new reference path contribute
+zero. A zero count does not establish that a claim's interpretation follows from
+its cited passage.
 `plan_gaps` is the number of ranked gaps the driver registered in
 `set_research_plan`; `plan_skipped` is true when it never planned and the
 plan-nudge cap was hit, so the loop soft-continued unplanned (W1, a degraded run

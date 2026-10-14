@@ -892,6 +892,8 @@ class TestResolutionSourceFetchMarker:
             "passages_returned": None,
             "passages_grounded": None,
             "fallback_used": None,
+            "digest_outcome": None,
+            "digest_scope": None,
             "caller": "resolution_source",
         }
 

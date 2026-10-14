@@ -56,6 +56,8 @@ from pathlib import Path
 # into accepting records the reader rejects.
 from metaculus_bot.performance_analysis.id_mapping import PAGE_URL_ID_PATTERN
 from metaculus_bot.research.image_persistence import ingest_record_images
+from metaculus_bot.research.source_capture_persistence import ingest_source_capture_records
+from scripts.download_raw_research import RAW_LOG_FILENAME_RE
 
 # Enumeration + persistence run through the shared core.
 from scripts.gha_artifacts import (
@@ -185,6 +187,9 @@ def download_research_artifacts(
         selection, repo, store_dir=store_dir, from_store=from_store, progress_noun="research artifacts"
     ):
         jsonl_files = research_jsonl_files(run_dir)
+        for raw_log in sorted(run_dir.glob("**/raw_research_*.jsonl")):
+            if RAW_LOG_FILENAME_RE.match(raw_log.name) is not None:
+                ingest_source_capture_records(load_jsonl_records(raw_log), raw_log.parent, Path(output_dir) / "raw")
         if jsonl_files:
             downloaded += 1
             for jsonl_file in jsonl_files:

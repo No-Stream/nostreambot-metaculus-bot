@@ -22,7 +22,7 @@ from metaculus_bot.comment.markers import (
     format_forecasters_used_marker,
     format_stacker_skip_reason_marker,
 )
-from metaculus_bot.comment.trimming import trim_comment, trim_section
+from metaculus_bot.comment.trimming import trim_comment
 from metaculus_bot.performance_analysis.parsing import (
     annotate_forecaster_bullets_with_models,
     extract_model_display_name_from_reasoning,
@@ -36,26 +36,14 @@ logger = logging.getLogger(__name__)
 def format_research_summary_with_models(
     base_text: str,
     predictions: Sequence[ReasonedPrediction],
-    report_number: int,
 ) -> str:
-    """Inject model display names into summary bullets, then trim to section limit."""
+    """Annotate each ``*Forecaster N*`` summary bullet with its model's display name."""
     model_names_by_index: dict[int, str] = {}
     for forecaster_number, forecast in enumerate(predictions, start=1):
         model_name = extract_model_display_name_from_reasoning(forecast.reasoning)
         if model_name is not None:
             model_names_by_index[forecaster_number] = model_name
-    text = annotate_forecaster_bullets_with_models(base_text, model_names_by_index)
-    return trim_section(text, f"report_{report_number}_summary")
-
-
-def format_main_research_section(base_text: str, report_number: int) -> str:
-    """Trim the main research section to the configured section limit."""
-    return trim_section(base_text, f"report_{report_number}_research")
-
-
-def format_forecaster_rationales_section(base_text: str, report_number: int) -> str:
-    """Trim the forecaster rationales section to the configured section limit."""
-    return trim_section(base_text, f"report_{report_number}_rationales")
+    return annotate_forecaster_bullets_with_models(base_text, model_names_by_index)
 
 
 def _forecasters_used_suffix(n_used: int | None, n_configured: int | None) -> str:
@@ -141,7 +129,5 @@ def build_unified_explanation(
 
 __all__ = [
     "build_unified_explanation",
-    "format_forecaster_rationales_section",
-    "format_main_research_section",
     "format_research_summary_with_models",
 ]

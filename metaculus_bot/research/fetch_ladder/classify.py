@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,7 +19,10 @@ from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
+import pypdf
 import trafilatura
+from lxml import html as lxml_html
+from lxml.etree import ParserError as LxmlParserError
 
 from metaculus_bot.constants import (
     DOCUMENT_TEXT_MAX_PAGES,
@@ -54,6 +58,7 @@ from metaculus_bot.research.http_fetch import (
     unreadable_data_embed_providers,
 )
 from metaculus_bot.research.image_leads import extract_image_leads
+from metaculus_bot.research.raw_log import record_source_capture
 from metaculus_bot.research.resolution_body_text import strip_html_tags
 from metaculus_bot.research.resolution_chart_data import render_inline_chart_data
 from metaculus_bot.research.resolution_fetch_result import (
@@ -68,8 +73,23 @@ from metaculus_bot.research.resolution_fetch_result import (
     vacuous_body_status,
 )
 from metaculus_bot.research.source_documents import ParsedSource, SourceReadError, parse_source
+from metaculus_bot.research.source_presentation import source_text
 
 logger = logging.getLogger(__name__)
+
+_HTML_PARSER_VERSION = f"trafilatura {trafilatura.__version__}; repository classify._classify_html_body"
+_SOURCE_PARSER_VERSION = "repository parse_source"
+
+_CONSENT_VENDOR_RE = re.compile(
+    r"(?:cookieyes|cookiebot|onetrust|ot-sdk|trustarc|quantcast|qc-cmp|didomi|iubenda|termly|(?:^|[\s_-])cky(?:[-_\s]|$))",
+    re.IGNORECASE,
+)
+_CONSENT_CONTAINER_RE = re.compile(
+    r"(?:cookie[-_\s]?(?:consent|preferences|banner|notice|dialog|modal|popup)|"
+    r"consent[-_\s]?(?:banner|notice|dialog|modal|popup|preferences)|"
+    r"privacy[-_\s]?(?:choices|consent|preferences)|cmp[-_\s]?(?:container|wrapper|banner))",
+    re.IGNORECASE,
+)
 
 
 def _extract_main_text(body: bytes | str, url: str, *, favor_precision: bool = False) -> str | None:
@@ -96,6 +116,48 @@ def _extract_main_text(body: bytes | str, url: str, *, favor_precision: bool = F
     if not out or not out.strip():
         return None
     return out
+
+
+def _strip_consent_widgets(html_text: str) -> str | None:
+    """Remove named consent-manager subtrees, leaving authored page content intact.
+
+    ``None`` means no identified consent DOM was present, allowing the caller to retain its
+    original bytes and charset detection. Broad cookie language is never a removal signal:
+    real pages about cookies commonly discuss the same terms.
+    """
+    if not html_text.strip():
+        return None
+    try:
+        document = lxml_html.fromstring(html_text)
+    except (ValueError, LxmlParserError) as e:
+        # Stripping is optional: an XML-declared XHTML string (ValueError) or a body with no
+        # elements (ParserError) keeps its original bytes for trafilatura.
+        logger.info(f"consent DOM parse skipped for this body: {e}")
+        return None
+    matches = []
+    for element in document.iter():
+        if element.tag in {"article", "main", "body", "html"}:
+            continue
+        if element.xpath("ancestor::article or ancestor::main or .//article or .//main"):
+            continue
+        identifiers = " ".join(
+            element.get(attribute) or ""
+            for attribute in ("id", "class", "data-cky-tag", "data-testid", "role", "aria-label")
+        )
+        if _CONSENT_VENDOR_RE.search(identifiers) or _CONSENT_CONTAINER_RE.search(identifiers):
+            matches.append(element)
+    if not matches:
+        return None
+
+    matched_nodes = set(matches)
+    roots = [
+        element for element in matches if not any(ancestor in matched_nodes for ancestor in element.iterancestors())
+    ]
+    for element in roots:
+        element.drop_tree()
+    serialized_document = lxml_html.tostring(document, encoding="unicode")
+    assert isinstance(serialized_document, str)
+    return serialized_document
 
 
 async def _resolution_redirect_outcome(resp: Any, current_url: str, content_type: str) -> FetchResult | str:
@@ -169,8 +231,10 @@ def _extract_page_text(
     decoded with no replacement character at all: docs/architecture.md "The HTML extractor policy, and the one classification path".
     """
     started = time.monotonic()
-    rewritten = rewrite_aria_tables(html_text) if undecodable_ratio == 0.0 else None
-    source = body if rewritten is None else rewritten
+    consent_stripped = _strip_consent_widgets(html_text)
+    extraction_html = html_text if consent_stripped is None else consent_stripped
+    rewritten = rewrite_aria_tables(extraction_html) if undecodable_ratio == 0.0 else None
+    source = (body if consent_stripped is None else extraction_html) if rewritten is None else rewritten
     default = _extract_main_text(source, url)
     if (
         default is None
@@ -335,6 +399,44 @@ async def _classify_html_body(
         html_text=html_text,
         artifact=artifact,
     )
+
+
+def record_html_capture(
+    classified: _HtmlClassification, *, retrieval_method: str, content_type: str, raw_body: bytes
+) -> None:
+    """Persist one classified HTML read while its full response and extracted text are still held."""
+    extracted_text = classified.artifact.extraction.text
+    record_source_capture(
+        qid=None,
+        source_url=classified.artifact.url,
+        retrieval_method=retrieval_method,
+        content_type=content_type,
+        parser_version=_HTML_PARSER_VERSION,
+        raw_body=raw_body,
+        parsed_text=extracted_text,
+        refusal_reason="" if extracted_text else "html_parser_returned_no_text",
+    )
+
+
+def _record_source_read(
+    pending: _PendingSource, ctx: context.LadderContext, *, parsed_text: str | None = None, refusal_reason: str = ""
+) -> None:
+    """Persist one local source read, parsed or refused, while its full response is still held."""
+    record_source_capture(
+        qid=None,
+        source_url=pending.url,
+        retrieval_method=_retrieval_method(ctx),
+        content_type=pending.content_type,
+        parser_version=_SOURCE_PARSER_VERSION,
+        raw_body=pending.body,
+        parsed_text=parsed_text,
+        refusal_reason=refusal_reason,
+    )
+
+
+def _retrieval_method(ctx: context.LadderContext) -> str:
+    fired = [attempt.rung for attempt in ctx.rungs if not attempt.skipped_reason]
+    return fired[-1] if fired else "direct_http"
 
 
 @dataclass(frozen=True, slots=True)
@@ -521,6 +623,19 @@ async def _finish_document(pending: _PendingDocument, ctx: context.LadderContext
         attempt.wall_s = max(0.0, time.monotonic() - attempt.started_at)
     finally:
         gate.release()
+    record_source_capture(
+        qid=None,
+        source_url=pending.url,
+        retrieval_method=_retrieval_method(ctx),
+        content_type=pending.content_type,
+        raw_body=pending.body,
+        parsed_text="\n\n".join(pdf.pages),
+        parser_version=f"pypdf {pypdf.__version__}; repository extract_pdf_text",
+        truncated_by=pdf.truncated_by,
+        refusal_reason=pdf.unreadable_reason or ("pdf_has_no_text_layer" if not any(pdf.pages) else ""),
+        page_count=pdf.page_count,
+        pages_read=pdf.pages_read,
+    )
     if read.status == "unreadable_document":
         logger.warning(
             f"resolution_source {netloc}: PDF carried no readable text ({read.status_reason}, "
@@ -567,14 +682,17 @@ async def _finish_source(pending: _PendingSource, ctx: context.LadderContext) ->
     gate = pdf_parse_semaphore()
     budget_s = ctx.rung_budget_s()
     if budget_s <= 0.0:
+        _record_source_read(pending, ctx, refusal_reason="source_parse_budget_exhausted")
         return _local_refusal(pending)
     try:
         await asyncio.wait_for(gate.acquire(), timeout=budget_s)
     except TimeoutError:
+        _record_source_read(pending, ctx, refusal_reason="source_parse_contention")
         return _local_refusal(pending)
     parse_budget_s = ctx.rung_budget_s()
     if parse_budget_s <= 0.0:
         gate.release()
+        _record_source_read(pending, ctx, refusal_reason="source_parse_budget_exhausted")
         return _local_refusal(pending)
     worker = asyncio.create_task(asyncio.to_thread(_parse_and_present_source, pending, ctx))
     release_gate_here = True
@@ -583,16 +701,19 @@ async def _finish_source(pending: _PendingSource, ctx: context.LadderContext) ->
             artifact, result = await asyncio.wait_for(asyncio.shield(worker), timeout=parse_budget_s)
         except SourceReadError as exc:
             logger.info("local source read refused for %s: %s", pending.url, exc.reason)
+            _record_source_read(pending, ctx, refusal_reason=exc.reason)
             return _local_refusal(pending)
         except TimeoutError:
             release_gate_here = False
             worker.add_done_callback(lambda task: _release_parser_gate(task, gate, pending.url))
+            _record_source_read(pending, ctx, refusal_reason="source_parse_timeout")
             return _local_refusal(pending)
         except asyncio.CancelledError:
             # `to_thread` keeps running after cancellation. Keep the parser slot occupied until
             # the worker really ends, while allowing the caller's wall timeout to return now.
             release_gate_here = False
             worker.add_done_callback(lambda task: _release_parser_gate(task, gate, pending.url))
+            _record_source_read(pending, ctx, refusal_reason="source_parse_cancelled")
             raise
     finally:
         if release_gate_here:
@@ -600,6 +721,10 @@ async def _finish_source(pending: _PendingSource, ctx: context.LadderContext) ->
 
     # The complete parse is policy neutral even when this caller's query matched nothing.
     ctx.capture_read(result, artifact)
+    parsed_text = "\n\n".join(
+        part for part in (source_text(artifact.source.sections), "\n".join(artifact.source.notices)) if part
+    )
+    _record_source_read(pending, ctx, parsed_text=parsed_text)
     return result
 
 
@@ -715,6 +840,9 @@ async def _classify_body(
             remaining_wall_s=ctx.rung_budget_s(),
             pol=ctx.policy,
         )
+        record_html_capture(
+            classified, retrieval_method=_retrieval_method(ctx), content_type=content_type, raw_body=body
+        )
         capture_html_read(ctx, classified)
         return classified.result
     if route == "text":
@@ -798,6 +926,7 @@ async def _classify_body_or_hop(
         remaining_wall_s=ctx.rung_budget_s(),
         pol=ctx.policy,
     )
+    record_html_capture(classified, retrieval_method=_retrieval_method(ctx), content_type=content_type, raw_body=body)
     capture_html_read(ctx, classified)
     if classified.result.status in ("success", "throttled"):
         return classified.result

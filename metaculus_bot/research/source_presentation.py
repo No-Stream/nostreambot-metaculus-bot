@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from metaculus_bot.constants import DOCUMENT_DIGEST_TOP_K
 from metaculus_bot.research.document_text import DocumentDigest, render_flat_passages, select_passages
 from metaculus_bot.research.source_documents import ParsedSource, SourceSection
+from metaculus_bot.research.source_evidence import SourceExcerpt
 
 
 def select_source_sections(
@@ -102,4 +103,20 @@ def digest_source(
         source_url=source_url,
         source_chars=len(joined),
     )
-    return DocumentDigest(block=block, passages=len(passages))
+    return DocumentDigest(
+        block=block,
+        passages=len(passages),
+        outcome="answered" if passages else ("partial_no_match" if unread_members else "no_match"),
+        scope=(
+            "selected_sections"
+            if member is not None or sheet is not None
+            else "partial_sections"
+            if unread_members
+            else "complete_sections"
+        ),
+        evidence_passages=tuple(
+            SourceExcerpt(source_url=source_url, text=passage.text, retrieval_method="bm25")
+            for passage in passages
+            if passage.text in block
+        ),
+    )

@@ -37,6 +37,7 @@ from metaculus_bot.performance_analysis.parsing import (
     annotate_forecaster_bullets_with_models,
     detect_historical_stacker_signature,
     extract_model_display_name_from_reasoning,
+    parse_explanation_detail_status,
     parse_forecaster_model_map,
     parse_forecasters_used_marker,
     parse_inferred_stacker_outcome,
@@ -153,6 +154,15 @@ class TestParseForecastersUsedMarker:
 
     def test_whitespace_tolerant(self):
         assert parse_forecasters_used_marker("<!--   FORECASTERS_USED=2/3   -->") == (2, 3)
+
+
+class TestParseExplanationDetailStatus:
+    def test_explicit_incomplete_detail_is_unknown(self):
+        assert parse_explanation_detail_status("# SUMMARY\n<!-- EXPLANATION_DETAIL=unknown -->") == "unknown"
+
+    def test_unmarked_historical_comment_stays_unclassified(self):
+        assert parse_explanation_detail_status("# SUMMARY\nOld comment") is None
+        assert parse_explanation_detail_status(None) is None
 
 
 # ---------------------------------------------------------------------------
