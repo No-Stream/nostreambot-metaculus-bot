@@ -169,7 +169,7 @@ current membership is one filter over the registry:
 
 ## HTML-comment markers
 
-`STACKER_OUTCOME`, `STACKER_SKIP_REASON`, and `TOOLS_USED` (with `FORECASTERS_USED`) are
+`STACKER_OUTCOME`, `STACKER_SKIP_REASON`, and `TOOLS_USED` (with `FORECASTERS_USED` and `EXPLANATION_DETAIL`) are
 `<!-- ... -->` markers injected into the published Metaculus comment, not logged to
 stdout/stderr; the framework logs only `Posted comment on post N`, never the comment body. They
 are therefore almost never present in run logs. Their durable source is the comment itself, which
@@ -1571,7 +1571,8 @@ counts. See "HTML-comment markers" above.
 rationale detail. Missing model attribution and reasoning must remain unknown; the report's
 prediction and the full research evidence stay on their existing paths. The performance-analysis
 collector stores `explanation_detail_status=unknown` for this marker and leaves unmarked historical
-comments unclassified.
+comments unclassified. The registry spec (`explanation_detail`, field `value`) keeps the run-log
+parser complete if a comment body is ever logged.
 
 ### PERCENTILE_ROUNDTRIP
 

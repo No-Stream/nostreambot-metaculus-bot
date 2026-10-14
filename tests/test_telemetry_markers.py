@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from metaculus_bot.comment.markers import STACKER_SKIP_REASONS
+from metaculus_bot.comment.markers import EXPLANATION_DETAIL_UNKNOWN_MARKER, STACKER_SKIP_REASONS
 from scripts.telemetry.markers import (
     MARKER_SPECS,
     coerce_value,
@@ -2065,6 +2065,11 @@ class TestHtmlCommentMarkers:
         rec = _parse_one("<!-- TOOLS_USED=false -->")
         assert rec["marker"] == "tools_used"
         assert rec["value"] is False
+
+    def test_explanation_detail(self):
+        rec = _parse_one(EXPLANATION_DETAIL_UNKNOWN_MARKER)
+        assert rec["marker"] == "explanation_detail"
+        assert rec["value"] == "unknown"
 
 
 class TestQidKindAcrossMarkers:

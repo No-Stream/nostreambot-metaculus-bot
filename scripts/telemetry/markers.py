@@ -828,6 +828,11 @@ MARKER_SPECS: list[MarkerSpec] = [
         # Why: in the comment, not stdout; here for completeness. Receipt: docs/telemetry_markers.md "FORECASTERS_USED".
         re.compile(r"<!--\s*FORECASTERS_USED=(?P<used>\d+)/(?P<configured>\d+)\s*-->", re.IGNORECASE),
     ),
+    MarkerSpec(
+        "explanation_detail",
+        # Why: in the comment, not stdout; here for completeness. Receipt: docs/telemetry_markers.md "EXPLANATION_DETAIL".
+        re.compile(r"<!--\s*EXPLANATION_DETAIL=(?P<value>unknown)\s*-->", re.IGNORECASE),
+    ),
 ]
 
 

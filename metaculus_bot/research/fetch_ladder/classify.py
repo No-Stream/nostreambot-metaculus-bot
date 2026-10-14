@@ -22,6 +22,7 @@ import aiohttp
 import pypdf
 import trafilatura
 from lxml import html as lxml_html
+from lxml.etree import ParserError as LxmlParserError
 
 from metaculus_bot.constants import (
     DOCUMENT_TEXT_MAX_PAGES,
@@ -126,7 +127,13 @@ def _strip_consent_widgets(html_text: str) -> str | None:
     """
     if not html_text.strip():
         return None
-    document = lxml_html.fromstring(html_text)
+    try:
+        document = lxml_html.fromstring(html_text)
+    except (ValueError, LxmlParserError) as e:
+        # Stripping is optional: an XML-declared XHTML string (ValueError) or a body with no
+        # elements (ParserError) keeps its original bytes for trafilatura.
+        logger.info(f"consent DOM parse skipped for this body: {e}")
+        return None
     matches = []
     for element in document.iter():
         if element.tag in {"article", "main", "body", "html"}:

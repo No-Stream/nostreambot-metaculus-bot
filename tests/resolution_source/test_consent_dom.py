@@ -39,3 +39,26 @@ def test_consent_only_page_has_no_extracted_text() -> None:
     extraction = _extract_page_text(html, html.encode(), "https://example.test/consent", 0.0)
 
     assert extraction.text is None
+
+
+def test_xhtml_with_xml_declaration_falls_back_to_original_body() -> None:
+    article = " ".join(f"The agency reported {index + 10} filings in district {index}." for index in range(20))
+    xhtml = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+        f"<article><h1>Filing report</h1><p>{article}</p></article>"
+        "</body></html>"
+    )
+
+    extraction = _extract_page_text(xhtml, xhtml.encode(), "https://example.test/report.xhtml", 0.0)
+
+    assert extraction.text is not None
+    assert "The agency reported 10 filings" in extraction.text
+
+
+def test_comment_only_body_does_not_raise() -> None:
+    body = "<!-- nothing here -->"
+
+    extraction = _extract_page_text(body, body.encode(), "https://example.test/empty", 0.0)
+
+    assert extraction.text is None
