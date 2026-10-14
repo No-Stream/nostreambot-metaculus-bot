@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from metaculus_bot.research.agentic.types import (
+    DeliveredEvidence,
     Finding,
     LoopConfig,
     LoopTelemetry,
@@ -85,6 +86,9 @@ class _LoopState:
     image_sources_by_id: dict[str, set[str]] = field(default_factory=dict)
     image_observations_by_id: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     delivered_image_ids: set[str] = field(default_factory=set)
+    delivered_evidence: dict[str, DeliveredEvidence] = field(default_factory=dict)
+    next_evidence_number: int = 1
+    next_finding_number: int = 1
 
 
 @dataclass(slots=True)
@@ -114,6 +118,7 @@ class _ToolExecutionResult:
     # wins) post-gather. Empty when the outcome granted no retrieval authority.
     provenance_tiers: dict[str, str] = field(default_factory=dict)
     image_views: list[ImageView] = field(default_factory=list)
+    outcome: Any = None
 
 
 def _get_field(value: Any, field: str) -> Any:

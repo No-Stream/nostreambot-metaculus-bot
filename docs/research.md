@@ -1926,9 +1926,10 @@ digest, as agreed") was a cheap model reading the page, a literal grounding chec
 hallucination guard, and BM25 demoted to pre-filter and fallback.
 
 **What one call does.** `digest_page(text, query, budget_seconds=...)` returns a `PageDigest`
-(`passages`, `passages_returned`, `passages_grounded`, `fallback_used`, `method`). The page's
-opening window (`DOCUMENT_DIGEST_WINDOW_CHARS`, cut on a word boundary) always leads the passages,
-so a reader still sees what the page is. The BM25 ranking of the page (`document_text.select_passages`)
+(`passages`, `passages_returned`, `passages_grounded`, `fallback_used`, `method`, `outcome`,
+`scope`, `evidence_passages`). When selected passages exist, the page's opening window
+(`DOCUMENT_DIGEST_WINDOW_CHARS`, cut on a word boundary) leads them, so a reader still sees what
+the page is. A valid empty answer has no opening and no BM25 candidates. The BM25 ranking of the page (`document_text.select_passages`)
 and the page's normalisation run first, in one `asyncio.to_thread` hop like the two existing callers
 of that ranker, and the hop's elapsed time is charged against the caller's budget. A page over
 `PAGE_DIGEST_PREFILTER_MAX_CHARS` reaches the model as its best BM25 windows for the query in page
@@ -1947,9 +1948,9 @@ driver's ask.
 the page text after whitespace and quote-glyph normalisation (every run of whitespace collapsed to
 one space and every straight, curly or backtick quote deleted, on both sides; the glyph rule is the
 one `agentic/provenance.py` learned when a curly quote retyped straight hid a verbatim copy). The
-passage a reader sees is the model's own text, so a copied table keeps its rows. A passage that fails
-is dropped and counted; a repeat of an accepted passage, or one already inside the opening window,
-is dropped but still counts as grounded. `passages_returned` minus `passages_grounded` is therefore
+passage a reader sees is the exact source slice, so citations point to text that appears verbatim in
+the read. A passage that fails is dropped and counted; a repeat of an accepted passage, or one
+already inside the opening window, is dropped but still counts as grounded. `passages_returned` minus `passages_grounded` is therefore
 the model's fabrication count for that page. At most `DOCUMENT_DIGEST_TOP_K` accepted passages are
 served after the opening, the same bound as the BM25 path, so the two mechanisms hand a caller the
 same order of text.
@@ -1959,10 +1960,15 @@ already computed are served with `fallback_used=True` and `method="bm25"` when t
 of the expected failures (the `asyncio.wait_for` timeout; any `openai.APIError`, which is the root
 of every litellm provider and API error; a pydantic `ValidationError` on an off-schema answer; or
 the bare `RuntimeError` forecasting-tools raises for an empty completion, recognised by
-`llm_retry.is_zero_output_failure` and the repo's most-seen zero-output failure), when nothing the
-model returned survives grounding, when the page is empty, or when the remaining wall is too short
-to try. Each of those paths logs one `PAGE_DIGEST` line naming its reason, which is the only place a
-skipped call is told from a failed one (the marker's three counters read the same). An answer whose
+`llm_retry.is_zero_output_failure` and the repo's most-seen zero-output failure), when the model
+returns passages but none survive grounding, or when the remaining wall is too short to try. Each
+of those paths logs one `PAGE_DIGEST` line naming its reason. A valid empty extractor list is an
+explicit no-match and does not trigger the fallback; an empty page returns `empty_page` without
+candidate text. `outcome` records `answered`, `valid_empty`, `ungrounded`, `malformed`, `api_error`,
+`timeout`, `empty_completion`, `insufficient_budget`, or `empty_page`. `scope` is `full_page` when
+the model read the page and `prefiltered_windows` when a longer page was represented by BM25-selected
+windows. These values travel with the counters on the `RESOLUTION_SOURCE_FETCH` marker, so a caller
+can distinguish a supported no-answer from a failed or partial read. An answer whose
 grounded passages all lie inside the opening window is a success, not a fallback: the opening alone
 is served with `fallback_used=False`. Any other exception propagates. The call is bounded by
 `min(PAGE_DIGEST_EXTRACTOR_TIMEOUT_S, budget_seconds - elapsed - PAGE_DIGEST_WALL_MARGIN_S)`,
@@ -1971,13 +1977,20 @@ where `elapsed` is the BM25 hop's own time, and is not attempted below
 never lets a fetch overrun it. There is no retry: the fallback is the retry, and a second paid
 attempt cannot fit inside the wall. Receipts for every constant: docs/constants.md "Page digest".
 
+`run_cache.memoized_digest` shares an in-flight or completed outcome by source URL, source-text
+digest, exact query, and digest function, so the resolution reader and `read_document` do not spend
+twice on the same read. It keeps valid empty answers and other completed outcomes, but leaves API
+errors, timeouts, empty completions, and insufficient-budget skips retryable; cancelling the last
+waiter also cancels the shared call.
+
 **Billing and telemetry.** Every call is tagged `role=page_digest_extractor`, so it lands on the
 `CREDIT_ROLE_SPEND` ledger beside the other support roles: on a Metaculus run the donated key with
 the personal fallback, on a Mantic run the personal key only, by the same rule as every
 `openrouter/openai/` slug (docs/operations.md "API keys"). The module emits no marker. The
-`PageDigest` carries the three counters (`passages_returned`, `passages_grounded`,
-`fallback_used`) for the callers to append to their `RESOLUTION_SOURCE_FETCH` line as optional tail
-fields (docs/telemetry_markers.md "RESOLUTION_SOURCE_FETCH").
+`PageDigest` carries the counters and outcome/scope fields for the callers to append to their
+`RESOLUTION_SOURCE_FETCH` line as optional tail fields (docs/telemetry_markers.md
+"RESOLUTION_SOURCE_FETCH"). Its `evidence_passages` keep exact source spans, URL and retrieval method
+together for the agentic evidence adapter.
 
 **One known seam.** forecasting-tools trips a bare `assert isinstance(answer, str)` when a
 completion's content is `None` (the shape a reasoning model produces when it spends its whole

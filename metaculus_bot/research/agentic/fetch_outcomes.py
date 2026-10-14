@@ -16,6 +16,7 @@ from metaculus_bot.constants import MANTIC_HOST, METACULUS_HOST
 from metaculus_bot.research.image_leads import ImageLead
 from metaculus_bot.research.resolution_fetch_result import LocalKind
 from metaculus_bot.research.resolution_url_scan import is_metaculus_self_ref
+from metaculus_bot.research.source_evidence import SourceExcerpt
 
 _FETCH_LINK_CAP = 25
 
@@ -40,6 +41,8 @@ class PlainFetchResult:
     navigation_only: bool = False
     local_read_refused: bool = False
     image_leads: tuple[ImageLead, ...] = ()
+    evidence_passages: list[SourceExcerpt] | None = None
+    source_text: str | None = None
 
 
 class _LinkCollector(HTMLParser):

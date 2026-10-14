@@ -145,7 +145,7 @@ def run_sync(
             telemetry_runs.append(harvested)
 
         # (c) Raw research-provider payload logs.
-        for harvested_run_id, records in harvest_raw_logs_from_dir(run_dir).items():
+        for harvested_run_id, records in harvest_raw_logs_from_dir(run_dir, source_archive_dir=raw_dir).items():
             raw_harvested.setdefault(harvested_run_id, []).extend(records)
 
     research_questions, research_count = _build_research_archive(research_records, backfill_dir, research_dir)

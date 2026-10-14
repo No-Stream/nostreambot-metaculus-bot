@@ -62,20 +62,20 @@ class TestFormatResearchSummaryWithModels:
         assert "*Forecaster 1*: 72.0%" in result
         assert "(" not in result.split("### Forecasts")[1].split("### Research Summary")[0]
 
-    def test_trims_oversized_text(self):
+    def test_preserves_oversized_text_for_complete_comment_allocation(self):
 
         huge_text = "## Report 1 Summary\n" + ("X" * (SUMMARY_SECTION_CHAR_LIMIT + 5000))
         predictions: list = []
         result = format_research_summary_with_models(huge_text, predictions, report_number=1)
-        assert len(result) <= SUMMARY_SECTION_CHAR_LIMIT
+        assert result == huge_text
 
 
 class TestFormatMainResearchSection:
-    def test_trims_oversized_text(self):
+    def test_preserves_oversized_text_for_complete_comment_allocation(self):
 
         huge_text = "## Research\n" + ("Y" * (RESEARCH_SECTION_CHAR_LIMIT + 3000))
         result = format_main_research_section(huge_text, report_number=1)
-        assert len(result) <= RESEARCH_SECTION_CHAR_LIMIT
+        assert result == huge_text
 
     def test_short_text_passes_through(self):
 
@@ -85,11 +85,11 @@ class TestFormatMainResearchSection:
 
 
 class TestFormatForecasterRationalesSection:
-    def test_trims_oversized_text(self):
+    def test_preserves_oversized_text_for_complete_comment_allocation(self):
 
         huge_text = "## Rationale\n" + ("Z" * (FORECASTS_SECTION_CHAR_LIMIT + 2000))
         result = format_forecaster_rationales_section(huge_text, report_number=1)
-        assert len(result) <= FORECASTS_SECTION_CHAR_LIMIT
+        assert result == huge_text
 
     def test_short_text_passes_through(self):
 

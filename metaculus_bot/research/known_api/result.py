@@ -16,6 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+from metaculus_bot.research.source_evidence import SourceExcerpt
+
 KnownApiStatus = Literal["ok", "empty", "not_found", "error"]
 KNOWN_API_STATUSES: frozenset[str] = frozenset({"ok", "empty", "not_found", "error"})
 
@@ -34,6 +36,7 @@ class KnownApiResult:
     content_markdown: str
     source_url: str
     links: list[str] = field(default_factory=list)
+    evidence_passages: list[SourceExcerpt] = field(default_factory=list)
 
     @property
     def is_content(self) -> bool:

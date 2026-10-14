@@ -23,6 +23,30 @@ if TYPE_CHECKING:
     from metaculus_bot.research.agentic.llm import LlmCall
 
 
+class EvidencePassage(BaseModel):
+    source_url: str
+    text: str
+    retrieval_method: str
+    content_origin: Literal["source_text", "structured_data", "provider_summary", "generated_answer"]
+    clipped: bool = False
+    model_config = {"frozen": True}
+
+
+class DeliveredEvidence(EvidencePassage):
+    ref: str
+    tool_call_id: str
+
+
+class FindingSupport(BaseModel):
+    source_url: str
+    quote: str
+    retrieved_how: str
+    content_origin: Literal["source_text", "structured_data", "provider_summary", "generated_answer"]
+    evidence_ref: str
+    clipped: bool = False
+    model_config = {"frozen": True}
+
+
 class ToolOutcome(BaseModel):
     content_markdown: str
     links: list[str] = Field(default_factory=list)
@@ -30,6 +54,7 @@ class ToolOutcome(BaseModel):
     status: str = "ok"
     truncated: bool = False
     image_views: list[ImageView] = Field(default_factory=list)
+    evidence_passages: list[EvidencePassage] = Field(default_factory=list)
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -55,15 +80,19 @@ class Finding(BaseModel):
     discrepancy: bool = False
     # Arithmetic over the finding's own quoted numbers only, so it is exempt from the detachment lint (W3).
     derivation: str | None = None
-    # Code-stamped at banking time from the URL's best method seen, never driver-claimed (W4).
+    # Code-stamped from the cited observations for new findings, never driver-claimed.
     verification_tier: Literal["fetched", "snippet"] | None = None
     evidence_kind: Literal["text", "image"] = "text"
     image_id: str | None = None
     visual_observation: str | None = None
+    finding_id: str | None = None
+    replaces_finding_id: str | None = None
+    evidence_refs: list[str] = Field(default_factory=list)
+    supports: list[FindingSupport] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_evidence(self) -> Finding:
-        if self.evidence_kind == "text" and not self.quote:
+        if self.evidence_kind == "text" and not self.quote and not self.evidence_refs:
             raise ValueError("text evidence requires quote")
         if self.evidence_kind == "image":
             if not self.image_id:
@@ -203,3 +232,4 @@ class LoopResult:
     image_sources: dict[str, list[str]] = field(default_factory=dict)
     # Every distinct byte-free source/crop observation, even when multiple inputs normalize to one PNG.
     image_observations: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    delivered_evidence: list[DeliveredEvidence] = field(default_factory=list)

@@ -108,7 +108,7 @@ class TestFredSeriesKeyed:
         newest = dates[-1].strftime("%Y-%m-%d")
         oldest_kept = dates[-MAX_OBSERVATIONS].strftime("%Y-%m-%d")
         first_row = result.content_markdown.split("\n  - ")[1]
-        assert first_row.startswith(newest)
+        assert newest in first_row
         assert oldest_kept in result.content_markdown
 
     async def test_empty_series_with_a_window_is_empty_not_a_crash(self, monkeypatch: pytest.MonkeyPatch):

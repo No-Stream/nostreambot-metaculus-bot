@@ -782,7 +782,7 @@ class TestDigestBlockRendering:
         """
         digest = digest_pdf(self._pdf(), query="   ", top_k=3, max_chars=4000, source_url=self.URL)
 
-        assert "No passage in this document matched the query." in digest.block
+        assert "No passage in the text read matched the query." in digest.block
         assert "the query:" not in digest.block
         assert digest.passages == 0
 
@@ -803,7 +803,7 @@ class TestDigestBlockRendering:
             self._pdf(), query="hydroelectric turbine commissioning", top_k=3, max_chars=4000, source_url=self.URL
         ).block
 
-        assert "No passage in this document matched the query" in digest
+        assert "No passage in the text read matched the query" in digest
 
     def test_end_to_end_from_pdf_bytes(self) -> None:
         """The path both callers take: bytes -> extract -> digest, with real pypdf in the middle."""
@@ -861,7 +861,7 @@ class TestDigestCounts:
         digest = digest_pdf(self._pdf(), query="hydroelectric turbine", top_k=3, max_chars=4000, source_url=self.URL)
 
         assert digest.passages == 0
-        assert "No passage in this document matched the query" in digest.block
+        assert "No passage in the text read matched the query" in digest.block
 
     def test_an_unreadable_document_counts_zero(self) -> None:
         digest = digest_pdf(
@@ -909,7 +909,7 @@ class TestFlatTextDigest:
         digest = digest_text(self.TEXT, query="hydroelectric turbine", top_k=3, max_chars=4000, source_url=self.URL)
 
         assert digest.passages == 0
-        assert "No passage in this document matched the query" in digest.block
+        assert "No passage in the text read matched the query" in digest.block
         assert "Methodology notes" not in digest.block
 
     def test_it_truncates_with_the_same_disclosed_marker(self) -> None:

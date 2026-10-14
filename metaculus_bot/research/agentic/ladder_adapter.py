@@ -31,6 +31,7 @@ from metaculus_bot.research.agentic.fetch_outcomes import (
 from metaculus_bot.research.agentic.local_document import OVERSIZE_DOCUMENT_METHOD, PDF_LOCAL_METHOD, oversize_message
 from metaculus_bot.research.http_fetch import REDIRECT_STATUSES
 from metaculus_bot.research.resolution_fetch_result import FetchResult, FetchRoute, FetchStatus
+from metaculus_bot.research.source_evidence import SourceExcerpt
 
 # Total by construction, so a status the ladder gains is a type error rather than a silent `ok`.
 _LOOP_STATUS: dict[FetchStatus, str] = {
@@ -75,7 +76,13 @@ LOCAL_SOURCE_METHOD = "local"
 LOCAL_NAVIGATION_METHOD = "local_navigation"
 
 
-def as_plain_result(result: FetchResult, *, requested_url: str) -> PlainFetchResult:
+def as_plain_result(
+    result: FetchResult,
+    *,
+    requested_url: str,
+    evidence_passages: list[SourceExcerpt] | None = None,
+    source_text: str | None = None,
+) -> PlainFetchResult:
     """``result`` as the loop's own outcome, with the message the driver reads for it.
 
     ``requested_url`` is the URL the tool was called with, which is how the two non-public
@@ -89,6 +96,8 @@ def as_plain_result(result: FetchResult, *, requested_url: str) -> PlainFetchRes
             method = LOCAL_SOURCE_METHOD
         else:
             method = "cache" if result.cache_hit else _LOOP_METHOD[result.route]
+        if evidence_passages is None and (result.evidence_passages or result.route in ("known_api", "rendered")):
+            evidence_passages = list(result.evidence_passages)
         return PlainFetchResult(
             status="ok",
             method=method,
@@ -102,6 +111,8 @@ def as_plain_result(result: FetchResult, *, requested_url: str) -> PlainFetchRes
             navigation_only=result.navigation_only,
             local_read_refused=result.local_read_refused,
             image_leads=result.image_leads,
+            evidence_passages=evidence_passages,
+            source_text=source_text,
         )
     if result.status == "throttled":
         return PlainFetchResult(

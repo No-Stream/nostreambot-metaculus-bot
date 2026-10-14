@@ -23,6 +23,7 @@ from metaculus_bot.research.fetch_ladder.ladder import fetch_url
 from metaculus_bot.research.fetch_ladder.policy import RESOLUTION_SOURCE_POLICY
 from metaculus_bot.research.http_fetch import host_semaphores
 from metaculus_bot.research.resolution_fetch_result import FetchResult
+from metaculus_bot.research.source_evidence import SourceExcerpt
 from tests.resolution_source_fakes import FakeResponse, FakeSession
 
 _URL = "https://tracker.example.com/senate"
@@ -217,11 +218,23 @@ class TestTheDigestSeat:
             passages_grounded: int
             fallback_used: bool
             method: str
+            outcome: str
+            scope: str
+            evidence_passages: tuple[SourceExcerpt, ...]
 
         async def _digest_page(text: str, query: str, *, budget_seconds: float) -> _PageDigest:
             del budget_seconds
             await asyncio.sleep(0)
-            return _PageDigest([text[:12]], 1, 1, False, f"llm_extractive:{query}")
+            return _PageDigest(
+                [text[:12]],
+                1,
+                1,
+                False,
+                f"llm_extractive:{query}",
+                "answered",
+                "full_page",
+                (),
+            )
 
         seat: DigestFn = _digest_page
         armed = replace(RESOLUTION_SOURCE_POLICY, digest=seat)

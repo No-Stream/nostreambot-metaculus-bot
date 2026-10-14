@@ -30,6 +30,7 @@ from metaculus_bot.constants import (
     SUMMARY_SECTION_CHAR_LIMIT,
 )
 from metaculus_bot.prompts import SUMMARIZER_SOFT_FAIL_BANNER
+from metaculus_bot.research.provider_diagnostics import PROVIDER_DIAGNOSTICS_HEADER
 from metaculus_bot.stacking import combine_stacker_and_base_reasoning
 
 # ---------------------------------------------------------------------------
@@ -61,6 +62,30 @@ def test_trim_section_noop_when_within_limit() -> None:
     original = "## Report 1 Summary\nshort body"
     trimmed = trim_section(original, "unit-test-noop")
     assert trimmed == original
+
+
+def test_overflow_preserves_optional_research_before_single_newline_diagnostics_boundary() -> None:
+    large_paragraph = "x" * 330
+    recent_evidence = "Recent primary-source update remains available."
+    comment = _build_sectioned_comment(
+        summary_body="*Forecaster 1*: 65%",
+        research_body=(
+            f"{large_paragraph}\n\n{recent_evidence}\n{PROVIDER_DIAGNOSTICS_HEADER}\nlost=summarizer:error(timeout)"
+        ),
+        forecasts_body=(
+            "## R1: Forecaster 1 Reasoning\n"
+            "Model: openrouter/provider/model-1\n\n"
+            + ("A concise rationale. " * 8)
+            + '\n\n```json\n{"probability": 0.65}\n```'
+        ),
+    )
+    assert len(comment) > 800
+
+    trimmed = trim_comment(comment, config=TrimConfig(comment_limit=800))
+
+    assert len(trimmed) <= 800
+    assert recent_evidence in trimmed
+    assert "lost=summarizer:error(timeout)" in trimmed
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +322,65 @@ def _build_sectioned_comment(
         f"{forecasts_body}\n"
         f"{trailing_markers}\n"
     )
+
+
+def _build_sectioned_comment_with_length(length: int) -> str:
+    forecasts_body = (
+        "## R1: Forecaster 1 Reasoning\n"
+        "Model: openrouter/provider/model-1\n\n"
+        "A concise rationale.\n\n"
+        '```json\n{"probability": 0.65}\n```'
+    )
+    base = _build_sectioned_comment(
+        summary_body="*Forecaster 1*: 65%",
+        research_body="",
+        forecasts_body=forecasts_body,
+    )
+    research_characters = length - len(base)
+    assert research_characters >= 0
+    if research_characters:
+        paragraph_count = math.ceil((research_characters + 2) / 502)
+        content_characters = research_characters - 2 * (paragraph_count - 1)
+        paragraph_size, extra_characters = divmod(content_characters, paragraph_count)
+        research_body = "\n\n".join(
+            "R" * (paragraph_size + (index < extra_characters)) for index in range(paragraph_count)
+        )
+    else:
+        research_body = ""
+    comment = _build_sectioned_comment(
+        summary_body="*Forecaster 1*: 65%",
+        research_body=research_body,
+        forecasts_body=forecasts_body,
+    )
+    assert len(comment) == length
+    return comment
+
+
+@pytest.mark.parametrize(
+    ("source_length", "should_trim"),
+    [
+        (COMMENT_CHAR_LIMIT - 1, False),
+        (COMMENT_CHAR_LIMIT, False),
+        (COMMENT_CHAR_LIMIT + 1, True),
+        (150_000, True),
+        (150_001, True),
+    ],
+)
+def test_complete_comment_budget_boundary_preserves_rationale(source_length: int, should_trim: bool) -> None:
+    comment = _build_sectioned_comment_with_length(source_length)
+
+    trimmed = trim_comment(comment)
+
+    assert len(trimmed) <= COMMENT_CHAR_LIMIT
+    if not should_trim:
+        assert trimmed == comment
+    else:
+        assert trimmed != comment
+        assert TRIM_NOTICE in trimmed
+    assert "*Forecaster 1*: 65%" in trimmed
+    assert "Model: openrouter/provider/model-1" in trimmed
+    assert '{"probability": 0.65}' in trimmed
+    assert "<!-- STACKED=true -->" in trimmed
 
 
 class TestSummarizerDisclosuresSurviveTrimming:

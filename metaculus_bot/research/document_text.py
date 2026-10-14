@@ -41,6 +41,8 @@ from pypdf import filters as pypdf_filters
 from pypdf.errors import DependencyError, PyPdfError
 from pypdf.generic import Destination
 
+from metaculus_bot.research.source_evidence import SourceExcerpt
+
 # Everything the reader and page-text paths raise on a mangled PDF, enumerated rather than
 # blanket-caught. pypdf's own tree hangs off PyPdfError (PdfReadError, PdfStreamError,
 # EmptyFileError, FileNotDecryptedError, LimitReachedError, ParseError), but DependencyError
@@ -160,7 +162,7 @@ DIGEST_MAX_OUTLINE_ENTRIES = 25
 
 # One wording for "we read this document and it does not discuss the ask", used with the
 # query appended and, on a blank query, alone.
-_NO_MATCH_SENTENCE = "No passage in this document matched the query"
+_NO_MATCH_SENTENCE = "No passage in the text read matched the query"
 
 UnreadableReason = Literal["", "encrypted", "malformed"]
 TruncationCause = Literal["", "pages", "seconds"]
@@ -218,6 +220,9 @@ class DocumentDigest:
 
     block: str
     passages: int
+    outcome: Literal["answered", "no_match", "partial_no_match", "unreadable", "empty_text"] = "answered"
+    scope: str = "complete_document"
+    evidence_passages: tuple[SourceExcerpt, ...] = ()
 
 
 def is_pdf_body(body: bytes) -> bool:
@@ -402,17 +407,38 @@ def digest_pdf(pdf: PdfText, *, query: str, top_k: int, max_chars: int | None, s
     sections = [_digest_header(pdf, source_url=source_url)]
     if pdf.unreadable_reason:
         sections.append(f"The document could not be parsed ({pdf.unreadable_reason}); no text was extracted.")
-        return DocumentDigest(block=_truncate_digest("\n\n".join(sections), max_chars), passages=0)
+        return DocumentDigest(
+            block=_truncate_digest("\n\n".join(sections), max_chars),
+            passages=0,
+            outcome="unreadable",
+            scope="unreadable",
+        )
 
     sections.extend(_digest_outline(pdf.outline))
     text, page_breaks = joined_page_text(pdf)
     if not text.strip():
         sections.append("No extractable text layer: the pages carry images rather than text.")
-        return DocumentDigest(block=_truncate_digest("\n\n".join(sections), max_chars), passages=0)
+        return DocumentDigest(
+            block=_truncate_digest("\n\n".join(sections), max_chars),
+            passages=0,
+            outcome="empty_text",
+            scope="partial_document" if pdf.truncated_by else "complete_document",
+        )
 
     passages = select_passages(text, query, top_k=top_k, page_breaks=page_breaks)
     sections.append(_digest_passages(passages, query=query))
-    return DocumentDigest(block=_truncate_digest("\n\n".join(sections), max_chars), passages=len(passages))
+    block = _truncate_digest("\n\n".join(sections), max_chars)
+    return DocumentDigest(
+        block=block,
+        passages=len(passages),
+        outcome="answered" if passages else ("partial_no_match" if pdf.truncated_by else "no_match"),
+        scope="partial_document" if pdf.truncated_by else "complete_document",
+        evidence_passages=tuple(
+            SourceExcerpt(source_url=source_url, text=passage.text, retrieval_method="bm25")
+            for passage in passages
+            if passage.text in block
+        ),
+    )
 
 
 def digest_text(text: str, *, query: str, top_k: int, max_chars: int | None, source_url: str) -> DocumentDigest:
@@ -432,7 +458,17 @@ def digest_text(text: str, *, query: str, top_k: int, max_chars: int | None, sou
         source_url=source_url,
         source_chars=len(text),
     )
-    return DocumentDigest(block=block, passages=len(passages))
+    return DocumentDigest(
+        block=block,
+        passages=len(passages),
+        outcome="answered" if passages else ("no_match" if text.strip() else "empty_text"),
+        scope="complete_text",
+        evidence_passages=tuple(
+            SourceExcerpt(source_url=source_url, text=passage.text, retrieval_method="bm25")
+            for passage in passages
+            if passage.text in block
+        ),
+    )
 
 
 def render_flat_passages(

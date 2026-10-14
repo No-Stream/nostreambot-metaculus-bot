@@ -594,6 +594,15 @@ async def _rendered_rung(
         remaining_wall_s=ctx.rung_budget_s(),
         pol=ctx.policy,
     )
+    classify._record_source_capture(
+        source_url=page.document_url,
+        retrieval_method="rendered",
+        content_type=page.content_type or "text/html",
+        raw_body=page.html.encode("utf-8", errors="replace"),
+        parsed_text=classified.artifact.extraction.text,
+        parser_version=f"trafilatura {classify.trafilatura.__version__}; repository classify._classify_html_body",
+        refusal_reason="html_parser_returned_no_text" if not classified.artifact.extraction.text else "",
+    )
     classify.capture_html_read(ctx, classified)
     if classified.result.chrome_metric_withheld:
         # The metric withheld the rendered DOM's extraction. `chrome_metric_withholds` counts a

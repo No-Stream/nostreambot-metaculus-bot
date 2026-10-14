@@ -17,6 +17,7 @@ import requests
 
 from metaculus_bot.config import load_environment
 from metaculus_bot.performance_analysis.parsing import (
+    parse_explanation_detail_status,
     parse_forecasters_used_marker,
     parse_inferred_stacker_outcome,
     parse_per_base_model_forecasts,
@@ -429,6 +430,8 @@ def _process_single_question(
         "open_upper_bound": open_upper,
         "options": options,
         "comment_text": comment_text,
+        # Explicitly unknown when the public comment's bounded fallback omitted rationale detail.
+        "explanation_detail_status": parse_explanation_detail_status(comment_text),
         "comment_id": comment_id,
         # SUBMIT date, so a cohort cut need not key on the coarser actual_resolve_time.
         "bot_comment_created_at": comment_created_at,

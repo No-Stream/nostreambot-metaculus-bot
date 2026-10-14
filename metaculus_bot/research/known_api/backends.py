@@ -37,6 +37,7 @@ from metaculus_bot.constants import (
     DOCUMENT_TEXT_MAX_PAGES,
     DOCUMENT_TEXT_MAX_SECONDS,
     FRED_API_KEY_ENV,
+    GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS,
     SEC_EDGAR_CONTACT_EMAIL_ENV,
 )
 from metaculus_bot.research import document_text, fred_rendering, sec_edgar, ts_fetch
@@ -46,6 +47,7 @@ from metaculus_bot.research.market_retrieval import generation, queries, renderi
 from metaculus_bot.research.market_retrieval.http import PLATFORM_HTTP_TIMEOUT, read_json_capped
 from metaculus_bot.research.market_retrieval.types import MarketMatch, MarketSnapshot
 from metaculus_bot.research.number_format import format_decimal_change, format_decimal_value
+from metaculus_bot.research.source_evidence import SourceExcerpt
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +137,7 @@ def _summary_lines(series: pd.Series) -> list[str]:
     return lines
 
 
-def _observation_lines(series: pd.Series, *, total: int) -> list[str]:
+def _observation_lines(series: pd.Series, *, total: int, series_label: str, units: str) -> list[str]:
     """Newest-first observation rows, with a caption when the window was capped."""
     newest_first = series.iloc[::-1]
     caption = f"- Observations (newest first, {len(series)} of {total}"
@@ -144,15 +146,45 @@ def _observation_lines(series: pd.Series, *, total: int) -> list[str]:
         f"; capped at {MAX_OBSERVATIONS})" if len(series) == MAX_OBSERVATIONS and total > MAX_OBSERVATIONS else ")"
     )
     rows = [
-        f"  - {cast(pd.Timestamp, ts).strftime('%Y-%m-%d')}: {format_decimal_value(float(value))}"
+        f"  - {series_label}; units: {units}; {cast(pd.Timestamp, ts).strftime('%Y-%m-%d')}: "
+        f"{format_decimal_value(float(value))}"
         for ts, value in newest_first.items()
     ]
     return [caption + "\n" + "\n".join(rows)]
 
 
-def _render_series_block(*, header: str, source_url: str, series: pd.Series, total: int) -> str:
-    parts = [header, f"Source: {source_url}", *_summary_lines(series), *_observation_lines(series, total=total)]
+def _render_series_block(
+    *, header: str, source_url: str, series: pd.Series, total: int, series_label: str, units: str
+) -> str:
+    parts = [
+        header,
+        f"Source: {source_url}",
+        *_summary_lines(series),
+        *_observation_lines(series, total=total, series_label=series_label, units=units),
+    ]
     return "\n".join(parts)
+
+
+def _series_evidence_passages(
+    series: pd.Series, source_url: str, *, series_label: str, units: str
+) -> list[SourceExcerpt]:
+    """Expose each delivered API observation with the series context needed to read its value."""
+    passages: list[SourceExcerpt] = []
+    for timestamp, value in series.iloc[::-1].items():
+        row = (
+            f"  - {series_label}; units: {units}; {cast(pd.Timestamp, timestamp).strftime('%Y-%m-%d')}: "
+            f"{format_decimal_value(float(value))}"
+        )
+        if len(row) <= GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS:
+            passages.append(
+                SourceExcerpt(
+                    source_url=source_url,
+                    text=row,
+                    retrieval_method="known_api",
+                    content_origin="structured_data",
+                )
+            )
+    return passages
 
 
 async def _bounded(sync_call: Callable[[], KnownApiResult], *, label: str) -> KnownApiResult:
@@ -179,12 +211,34 @@ def _fred_search_sync(text: str, api_key: str) -> KnownApiResult:
         return KnownApiResult(
             status="empty", content_markdown=f"FRED search for {text!r} matched no series.", source_url=""
         )
-    zipped = zip(
-        list(hits.index), _column(hits, "title"), _column(hits, "frequency"), _column(hits, "units"), strict=True
+    records = list(
+        zip(
+            list(hits.index),
+            _column(hits, "title"),
+            _column(hits, "frequency"),
+            _column(hits, "units"),
+            strict=True,
+        )
     )
     rows = [f"FRED series matching {text!r}:"]
-    rows += [f"- {series_id}: {title} ({frequency}; {units})" for series_id, title, frequency, units in zipped]
-    return KnownApiResult(status="ok", content_markdown="\n".join(rows), source_url="https://fred.stlouisfed.org/")
+    rendered_rows = [f"- {series_id}: {title} ({frequency}; {units})" for series_id, title, frequency, units in records]
+    rows += rendered_rows
+    passages = [
+        SourceExcerpt(
+            source_url=f"https://fred.stlouisfed.org/series/{series_id}",
+            text=row,
+            retrieval_method="known_api",
+            content_origin="structured_data",
+        )
+        for (series_id, _title, _frequency, _units), row in zip(records, rendered_rows, strict=True)
+        if len(row) <= GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS
+    ]
+    return KnownApiResult(
+        status="ok",
+        content_markdown="\n".join(rows),
+        source_url="https://fred.stlouisfed.org/",
+        evidence_passages=passages,
+    )
 
 
 def _fred_series_keyed_sync(
@@ -223,26 +277,47 @@ def _render_fred(
             content_markdown=f"FRED series {series_id!r} has no observations in the window.",
             source_url=source_url,
         )
-    title = _fred_title(fred, series_id)
+    title, units = _fred_series_metadata(fred, series_id)
     # The rendered observations are the current vintage; label the first-release table only if it renders.
     note = _fred_first_release_note(fred, series_id, windowed) if (first_release and fred is not None) else ""
     header = f"### {series_id} ({title})" + (" [with first-release comparison]" if note else "")
-    block = _render_series_block(header=header, source_url=source_url, series=windowed, total=total) + note
-    return KnownApiResult(status="ok", content_markdown=block, source_url=source_url, links=[source_url])
+    series_label = f"{series_id} ({title})"
+    block = (
+        _render_series_block(
+            header=header,
+            source_url=source_url,
+            series=windowed,
+            total=total,
+            series_label=series_label,
+            units=units,
+        )
+        + note
+    )
+    return KnownApiResult(
+        status="ok",
+        content_markdown=block,
+        source_url=source_url,
+        links=[source_url],
+        evidence_passages=_series_evidence_passages(windowed, source_url, series_label=series_label, units=units),
+    )
 
 
-def _fred_title(fred: Any, series_id: str) -> str:
+def _fred_series_metadata(fred: Any, series_id: str) -> tuple[str, str]:
     if fred is None:
-        return series_id
+        return series_id, "not supplied by the keyless CSV response"
     try:
         info = fred.get_series_info(series_id)
     except (ValueError, OSError, ParseError):  # title is cosmetic enrichment; fall back to the id
-        return series_id
-    if isinstance(info, pd.DataFrame) and "title" in info.columns:
-        return str(info["title"].iloc[0])
-    if isinstance(info, pd.Series) and "title" in info.index:
-        return str(info["title"])
-    return series_id
+        return series_id, "not returned by FRED metadata"
+    if isinstance(info, pd.DataFrame):
+        title = str(info["title"].iloc[0]) if "title" in info.columns else series_id
+        units = str(info["units"].iloc[0]) if "units" in info.columns else "not returned by FRED metadata"
+        return title, units
+    if isinstance(info, pd.Series):
+        title = str(info["title"]) if "title" in info.index else series_id
+        units = str(info["units"]) if "units" in info.index else "not returned by FRED metadata"
+        return title, units
+    return series_id, "not returned by FRED metadata"
 
 
 def _fred_first_release_note(fred: Any, series_id: str, windowed: pd.Series) -> str:
@@ -332,8 +407,23 @@ def _yahoo_history_sync(ticker: str, *, start: date | None, end: date | None, co
             source_url=source_url,
         )
     header = f"### {ticker} (Yahoo Finance {column})"
-    block = _render_series_block(header=header, source_url=source_url, series=windowed, total=total)
-    return KnownApiResult(status="ok", content_markdown=block, source_url=source_url, links=[source_url])
+    series_label = f"{ticker} (Yahoo Finance {column})"
+    units = "not supplied by the yfinance history response"
+    block = _render_series_block(
+        header=header,
+        source_url=source_url,
+        series=windowed,
+        total=total,
+        series_label=series_label,
+        units=units,
+    )
+    return KnownApiResult(
+        status="ok",
+        content_markdown=block,
+        source_url=source_url,
+        links=[source_url],
+        evidence_passages=_series_evidence_passages(windowed, source_url, series_label=series_label, units=units),
+    )
 
 
 async def yahoo_history(
@@ -450,11 +540,41 @@ def _render_matches(matches: list[MarketMatch], venue: str) -> KnownApiResult:
         return KnownApiResult(status="not_found", content_markdown=f"No {venue} market matched.", source_url="")
     snapshot = MarketSnapshot(matches=rows, pool_size=len(rows), forecast_time=datetime.now(tz=UTC))
     links = [row.market_url for row in rows if row.market_url]
+    evidence_passages: list[SourceExcerpt] = []
+    child_allowances = rendering._child_allowances(rows)
+    for match, allowance in zip(rows, child_allowances, strict=True):
+        if not match.market_url:
+            continue
+        parent_row = rendering._table_row(rendering._row_cells(match, snapshot.forecast_time))
+        if len(parent_row) <= GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS:
+            evidence_passages.append(
+                SourceExcerpt(
+                    source_url=match.market_url,
+                    text=parent_row,
+                    retrieval_method="known_api",
+                    content_origin="structured_data",
+                )
+            )
+        child_positions = rendering._full_row_order(match.children)[:allowance]
+        for position in child_positions:
+            child_row = rendering._table_row(
+                rendering._child_cells(match.platform, match.children[position], snapshot.forecast_time)
+            )
+            if len(child_row) <= GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS:
+                evidence_passages.append(
+                    SourceExcerpt(
+                        source_url=match.market_url,
+                        text=child_row,
+                        retrieval_method="known_api",
+                        content_origin="structured_data",
+                    )
+                )
     return KnownApiResult(
         status="ok",
         content_markdown=rendering.render_snapshot(snapshot),
         source_url=links[0] if links else "",
         links=links,
+        evidence_passages=evidence_passages,
     )
 
 
@@ -514,17 +634,35 @@ def _extract_filing_text(doc: sec_edgar.FilingDocument) -> str:
 
 async def _edgar_submissions(session: Any, cik: str) -> KnownApiResult:
     subs = await sec_edgar.company_submissions(session, cik)
-    source_url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={subs.cik}"
+    source_url = f"{sec_edgar.DATA_BASE_URL}/submissions/CIK{sec_edgar.pad_cik(subs.cik)}.json"
     lines = [
         f"### {subs.name} (CIK {subs.cik})",
         f"Source: {source_url}",
         "Recent filings (form, filed, period, document):",
     ]
-    lines += [
+    filings = subs.filings[:EDGAR_FILINGS_ROWS]
+    rendered_rows = [
         f"- {filing.form} filed {filing.filing_date} (period {filing.report_date}): {filing.primary_document_url}"
-        for filing in subs.filings[:EDGAR_FILINGS_ROWS]
+        for filing in filings
     ]
-    return KnownApiResult(status="ok", content_markdown="\n".join(lines), source_url=source_url, links=[source_url])
+    lines += rendered_rows
+    evidence_passages = [
+        SourceExcerpt(
+            source_url=source_url,
+            text=row,
+            retrieval_method="known_api",
+            content_origin="structured_data",
+        )
+        for filing, row in zip(filings, rendered_rows, strict=True)
+        if filing.primary_document_url and len(row) <= GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS
+    ]
+    return KnownApiResult(
+        status="ok",
+        content_markdown="\n".join(lines),
+        source_url=source_url,
+        links=[source_url],
+        evidence_passages=evidence_passages,
+    )
 
 
 async def _edgar_document(session: Any, url: str) -> KnownApiResult:
@@ -534,7 +672,23 @@ async def _edgar_document(session: Any, url: str) -> KnownApiResult:
         return KnownApiResult(
             status="empty", content_markdown=f"SEC EDGAR filing {url} carried no extractable text.", source_url=doc.url
         )
-    return KnownApiResult(status="ok", content_markdown=text, source_url=doc.url, links=[doc.url])
+    evidence_passages = [
+        SourceExcerpt(
+            source_url=doc.url,
+            text=paragraph,
+            retrieval_method="known_api",
+            content_origin="source_text",
+        )
+        for paragraph in text.split("\n\n")
+        if paragraph.strip() and len(paragraph) <= GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS
+    ]
+    return KnownApiResult(
+        status="ok",
+        content_markdown=text,
+        source_url=doc.url,
+        links=[doc.url],
+        evidence_passages=evidence_passages,
+    )
 
 
 async def edgar(call: KnownApiCall) -> KnownApiResult | None:

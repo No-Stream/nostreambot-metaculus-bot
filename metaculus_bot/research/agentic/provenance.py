@@ -1,17 +1,9 @@
-"""Provenance and retrieval-quality primitives for the gap-fill v2 driver loop.
+"""Legacy URL/quote matching and retrieval metadata for agentic research.
 
-Everything here answers one of two questions about a URL a driver-supplied
-finding cites: did the driver actually SEE it through a tool this run (the hard
-provenance gate), and HOW WELL did it see it — a page we fetched, or a search
-snippet (the W4 verification tier that decides whether a discrepancy may
-supersede the briefing). The URL/quote normalizers live beside the per-call
-harvesters that feed the loop's accumulators because the gate and the tier must
-agree on one URL set: splitting them is how a URL ends up provenance-seen with
-no tier, or tiered without having been seen (F7).
-
-Pure functions over one tool call's arguments and outcome — no loop state, no
-logging. ``loop.py`` folds each call's harvest into ``_LoopState``, and
-``gates.py`` reads the accumulators back when it validates a finding.
+Live text findings cite code-delivered evidence references; they cannot supply
+their own URL or quote. The normalizer and matcher remain for historical record
+compatibility and regression tests. The per-call harvesters retain URL and
+retrieval metadata used by the loop and older records.
 """
 
 from __future__ import annotations
@@ -24,20 +16,13 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from metaculus_bot.research.agentic.tool_schemas import _INTERNAL_TOOL_NAMES
 from metaculus_bot.research.agentic.types import ToolOutcome
 
-# Provenance gate (source_url grounding + quote spot-check). A finding is
-# rendered under a "supersedes-the-briefing" banner and shown to every base
-# forecaster, so a hallucinated/mistyped citation from the low-effort driver
-# would silently override correct research. The URL check is a HARD gate; the
-# quote check is WARN-ONLY (read_document paraphrases and ellipsis-joined
-# quotes make a hard quote gate too false-positive-prone). The banner says
-# "sourced" (not "verified") because only the URL is gated — see artifact.py.
+# Legacy URL normalization and quote matching are retained for compatibility.
+# Current findings are bound to delivered evidence references in gates.py.
 _URL_IN_TEXT_RE = re.compile(r"https?://[^\s<>\"'\)\]]+")
 _URL_TRAILING_PUNCT = ".,;:)]}>\"'"
 _TRACKER_PARAM_PREFIXES = ("utm_",)
 _TRACKER_PARAM_NAMES = frozenset({"gclid", "fbclid", "mc_cid", "mc_eid", "ref", "ref_src", "igshid", "spm"})
-# All straight/curly quote glyphs and backticks are DELETED during normalization
-# so a driver quote wrapped in glyphs still matches unwrapped source text — both
-# sides run through _normalize_quote_text, so deletion is symmetric.
+# Historical matcher normalization deletes quote glyphs on both sides.
 _QUOTE_GLYPHS_RE = re.compile(r"[\"'‘’“”`]")  # noqa: RUF001  # the curly glyphs ARE the pattern; ASCII-ifying would stop matching them
 _WHITESPACE_RE = re.compile(r"\s+")
 # PDF extraction keeps a word or numeric range broken at a line wrap ("ex-\nponential",
@@ -50,18 +35,9 @@ _WRAPPED_RANGE_DASH_RE = re.compile(r"(?<=\d[-\u2013\u2014]) (?=\d)")
 # the Latin ligature block is spelled out: full NFKC would also fold "10²" into "102".
 _LATIN_LIGATURES = str.maketrans({"ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl", "ﬅ": "st", "ﬆ": "st"})
 
-# Retrieval-quality tiers (W4). ToolOutcome.method records HOW a URL's content
-# reached the driver; we collapse those method values into two tiers so a
-# finding stamped from the URL->best-method map carries honest authority. A
-# "fetched" URL is one whose actual page/document we pulled (document/rendered/
-# plain/cache/pdf_local/digest_local); a "snippet" URL was only seen in a
-# search/news result. A discrepancy resting on a snippet must NOT supersede the
-# briefing (the 131.3 failure mode: a crowd-median "correction" from a search
-# snippet after the direct fetch 403'd, which every forecaster then adopted).
-# Methods absent here (internal bookkeeping, error/blocked/throttled/oversize
-# outcomes, the intermediate document_needed state) contribute no tier — the URL
-# still counts for the provenance gate, but the finding stays untiered and a
-# discrepancy on it is demoted, conservatively. See artifact.render_findings.
+# Historical retrieval tiers distinguish fetched source text from search
+# snippets. Current findings derive their tier from each cited passage's origin
+# and retrieval method; the URL map is retained for older records and helpers.
 #
 # The two local-document methods sit in the "fetched" class deliberately: we
 # decoded the bytes the host served us (pypdf text, then a deterministic BM25
@@ -82,6 +58,8 @@ _METHOD_TO_TIER: dict[str, str] = {
     "cache": "fetched",
     "pdf_local": "fetched",
     "digest_local": "fetched",
+    "bm25_candidate": "fetched",
+    "llm_extractive": "fetched",
     "known_api": "fetched",
     "image_local": "fetched",
     "local": "fetched",
@@ -145,7 +123,7 @@ def _iter_normalized_urls(text: str) -> Iterator[str]:
 def _normalize_quote_text(text: str) -> str:
     """Lowercase, collapse whitespace, and DELETE quote glyphs for substring matching.
 
-    Deletion (not substitution) keeps the normalizer symmetric. The driver wraps
+    Deletion (not substitution) keeps the normalizer symmetric. The old driver wrapped
     its ``quote`` field in glyphs by convention while source text usually is not
     wrapped, so substituting a placeholder apostrophe left the quote with leading/
     trailing apostrophes the source lacked and the substring test missed genuinely
@@ -157,7 +135,7 @@ def _normalize_quote_text(text: str) -> str:
     return rejoined.strip().lower()
 
 
-# Span boundaries in a driver quote — the ways it stitches non-contiguous
+# Historical span boundaries in a driver quote — the ways it stitched non-contiguous
 # source text, none of which any single contiguous substring test could satisfy:
 #   1. An ellipsis: the literal "..." (three-or-more dots) or the Unicode "…".
 #      The driver elides mid-quote ("<span A> ... <span B>").
@@ -248,10 +226,10 @@ _DIGIT_RE = re.compile(r"\d")
 
 
 def _quote_is_grounded(quote: str, tool_content_normalized: str) -> bool:
-    """True when the finding's quote is grounded in the tool contents.
+    """Check a historical raw quote against normalized tool content.
 
-    An empty quote is treated as grounded — there is nothing to verify. The driver
-    stitches non-contiguous source text two ways — eliding with an ellipsis, and
+    An empty quote is treated as grounded — there is nothing to verify. Historical
+    driver output stitched non-contiguous source text by eliding with an ellipsis, and
     joining separately-quoted sentences with a space — so the quote is split on
     ``_SPAN_BOUNDARY_RE`` and every span that carries evidentiary weight must
     appear in the tool contents independently (a plain unstitched quote is one

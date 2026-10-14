@@ -20,7 +20,7 @@ from forecasting_tools import GeneralLlm
 from metaculus_bot.prompts import MARKET_SNAPSHOT_SECTION_HEADER, binary_prompt
 from metaculus_bot.research.agentic import run_agentic_loop as _real_run_agentic_loop
 from metaculus_bot.research.agentic.driver_prompt import _template_skeleton, build_system_prompt
-from metaculus_bot.research.agentic.types import LoopTelemetry, ToolOutcome, ToolSpec
+from metaculus_bot.research.agentic.types import EvidencePassage, LoopTelemetry, ToolOutcome, ToolSpec
 from metaculus_bot.research.agentic_gap_fill import run_gap_fill_v2
 from metaculus_bot.research.orchestrator import ResearchOrchestrator
 from metaculus_bot.research.persistence import ResearchPersistenceWriter
@@ -38,12 +38,12 @@ from tests.pipeline_test_helpers import (
 BUNDLE = "## News Articles (AskNews)\nSome first-pass research prose about unemployment."
 
 
+_SOURCE_URL = "https://www.bls.gov/news.release/empsit.nr0.htm"
+
 _FINDING = {
     "claim": "BLS reported the unemployment rate at 4.1% for June 2026.",
-    "source_url": "https://www.bls.gov/news.release/empsit.nr0.htm",
-    "quote": "The unemployment rate was 4.1 percent in June.",
+    "evidence_refs": ["ev_1"],
     "date": "2026-07-03",
-    "retrieved_how": "fetch of BLS release",
     "topic": "labor-market",
 }
 
@@ -53,7 +53,7 @@ _GHOST_BLOCK = '```json\n{"question_type": "binary", "posterior_prob": 0.12}\n``
 def _happy_path_llm() -> FakeLlm:
     """Plan (W1 gate opener), one fetch step, then conclude with a finding, then the ghost turn.
 
-    The fetch is a real fetched-tier retrieval of the finding's source URL, so the
+    The fetch delivers citable source text for the finding, so the
     conclude satisfies both the finding's provenance and the W2 fetch floor: the
     top-gap ``gap_accounting`` cites a fetch in ``actions_taken`` AND >=1 successful
     fetched-tier retrieval landed (prose alone no longer clears the floor).
@@ -61,7 +61,7 @@ def _happy_path_llm() -> FakeLlm:
     return FakeLlm(
         [
             _response(tool_calls=[_plan_call(gaps=[{"id": "g1", "question": "What is the June 2026 rate?"}])]),
-            _response(tool_calls=[_tool_call("c1", "fetch", {"url": _FINDING["source_url"]})]),
+            _response(tool_calls=[_tool_call("c1", "fetch", {"url": _SOURCE_URL})]),
             _response(
                 tool_calls=[
                     _tool_call(
@@ -87,19 +87,27 @@ def _happy_path_llm() -> FakeLlm:
 
 def _fake_tools() -> list[ToolSpec]:
     async def _search(**_: Any) -> ToolOutcome:
-        """Surfaces the finding's source URL like a real search result, so the provenance gate accepts _FINDING."""
+        """Surfaces the finding's source URL like a real search result."""
         return ToolOutcome(
             content_markdown="result: BLS release found",
-            links=[_FINDING["source_url"]],
+            links=[_SOURCE_URL],
             status="ok",
         )
 
     async def _fetch(**_: Any) -> ToolOutcome:
-        """A rendered fetch of the source page: tiers the URL "fetched", clearing the provenance and fetch-floor gates."""
+        """A rendered fetch delivers the exact source passage cited by the finding."""
         return ToolOutcome(
             content_markdown="BLS release: The unemployment rate was 4.1 percent in June.",
             method="rendered",
             status="ok",
+            evidence_passages=[
+                EvidencePassage(
+                    source_url=_SOURCE_URL,
+                    text="The unemployment rate was 4.1 percent in June.",
+                    retrieval_method="rendered",
+                    content_origin="source_text",
+                )
+            ],
         )
 
     return [
@@ -174,6 +182,9 @@ class TestRunGapFillV2Seam:
 
         assert "## Agentic Research Findings" in result
         assert _FINDING["claim"] in result
+        assert f"Source: {_SOURCE_URL}" in result
+        assert "Evidence (source text; rendered; ev_1):" in result
+        assert "> The unemployment rate was 4.1 percent in June." in result
         messages = [record.getMessage() for record in caplog.records]
         assert any("GAP_FILL_V2:" in m for m in messages)
         assert any("GHOST_FORECAST:" in m for m in messages)
@@ -252,7 +263,9 @@ class TestRunGapFillV2Seam:
         assert errors == []
 
     @pytest.mark.asyncio
-    async def test_archive_sink_receives_transcript_and_telemetry(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_archive_sink_receives_transcript_telemetry_and_delivered_evidence(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("GAP_FILL_V2_ENABLED", "true")
         captured: list[dict] = []
         fake_llm = _happy_path_llm()
@@ -268,6 +281,17 @@ class TestRunGapFillV2Seam:
         payload = captured[0]
         assert payload["telemetry"]["findings_count"] == 1
         assert payload["telemetry"]["tool_calls"] == 3  # set_research_plan + fetch + conclude
+        assert payload["delivered_evidence"] == [
+            {
+                "source_url": _SOURCE_URL,
+                "text": "The unemployment rate was 4.1 percent in June.",
+                "retrieval_method": "rendered",
+                "content_origin": "source_text",
+                "ref": "ev_1",
+                "tool_call_id": "c1",
+                "clipped": False,
+            }
+        ]
         roles = [message["role"] for message in payload["transcript"]]
         assert roles[0] == "system"
         assert "tool" in roles
@@ -481,17 +505,19 @@ class TestDriverSystemPromptMotivation:
         assert "pull the primary source and read the operative language yourself" in collapsed
 
 
-class TestDriverSystemPromptSnippetDemotion:
-    """W4: the discrepancy rule warns the driver that a snippet-only discrepancy
-    is demoted (won't supersede the briefing) and to fetch the primary source
-    before contradicting it — synergy with W2's fetch floor. The demotion is
-    code-enforced (loop-stamped tier); the prompt just tells the driver why."""
+class TestDriverSystemPromptCorrectionComparison:
+    """Discrepancies are presented as driver-reported claims for forecasters to
+    compare with the briefing and cited excerpts, because source attribution does
+    not establish that the interpretation is correct."""
 
-    def test_discrepancy_rule_warns_snippet_only_is_demoted(self) -> None:
+    def test_discrepancy_rule_requires_comparison_and_primary_source_support(self) -> None:
         collapsed = " ".join(build_system_prompt("2026-07-21").split())
-        assert 'A discrepancy sourced only from search snippets will be demoted to "possible corrections"' in collapsed
-        assert "will NOT supersede the briefing" in collapsed
-        assert "if you intend to contradict the briefing, fetch the primary source first" in collapsed
+        assert "The claim must state BOTH sides plainly" in collapsed
+        assert "for comparison with the briefing" in collapsed
+        assert "Search snippets and generated reader answers carry their own origin labels" in collapsed
+        assert "fetch the primary source when a correction depends on what the source itself says" in collapsed
+        assert 'will be demoted to "possible corrections"' not in collapsed
+        assert "will NOT supersede the briefing" not in collapsed
 
 
 class TestDriverTemplateSkeletonCarriesTheMarketClause:

@@ -1,12 +1,14 @@
 """Production digest policies with real extraction, grounding and cache presentation."""
 
 import html
+import socket
 import time
 
 import pytest
 
 from metaculus_bot.research import page_digest
 from metaculus_bot.research.agentic import tools
+from metaculus_bot.research.fetch_ladder import guard
 from metaculus_bot.research.fetch_ladder.context import LadderContext
 from metaculus_bot.research.fetch_ladder.ladder import fetch_url
 from metaculus_bot.research.fetch_ladder.policy import (
@@ -19,7 +21,18 @@ from tests.resolution_source_fakes import FakeResponse, FakeSession
 from tests.test_document_text import build_text_pdf
 from tests.test_page_digest import PAGE, QUERY, TAIL_TABLE, ScriptedLlm
 
-URL = "https://report.example.gov/employment"
+URL = "https://report.example.com/employment"
+
+
+@pytest.fixture(autouse=True)
+def _stub_page_wiring_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep these fake-fetch integration tests deterministic under mixed-path pytest runs."""
+
+    def resolve_public_example_host(host: str, port: int | None, *args: object, **kwargs: object) -> list[tuple]:
+        del host, port, args, kwargs
+        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 0))]
+
+    monkeypatch.setattr(guard.socket, "getaddrinfo", resolve_public_example_host)
 
 
 def _page_session() -> FakeSession:
@@ -59,7 +72,7 @@ async def test_fresh_cached_and_document_reads_ground_the_real_digest(monkeypatc
     assert "Civilian unemployment rate | 4.2 | 4.3" in document.content_markdown
     assert fabrication not in document.content_markdown
     assert session.requested == [URL]
-    assert len(llm.prompts) == 3
+    assert len(llm.prompts) == 1
     assert all(" ".join(TAIL_TABLE.split()) in " ".join(prompt.split()) for prompt in llm.prompts)
 
 
@@ -88,7 +101,7 @@ async def test_cached_page_uses_real_bm25_fallback_below_call_budget(monkeypatch
 async def test_pdf_keeps_page_labels_without_the_flat_extractor(monkeypatch: pytest.MonkeyPatch) -> None:
     llm = ScriptedLlm(AssertionError("PDFs must retain their page-aware digest"))
     monkeypatch.setattr(page_digest, "build_llm_with_openrouter_fallback", lambda **kwargs: llm)
-    url = "https://report.example.gov/report.pdf"
+    url = "https://report.example.com/report.pdf"
     session = FakeSession(
         {
             url: FakeResponse(

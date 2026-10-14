@@ -231,17 +231,15 @@ limits.
 
 ### FORECASTS_SECTION_CHAR_LIMIT, RESEARCH_SECTION_CHAR_LIMIT, SUMMARY_SECTION_CHAR_LIMIT, COMMENT_CHAR_LIMIT
 
-Metaculus comment safety limits. The published comment has three top-level sections
-(`# SUMMARY`, `# RESEARCH`, `# FORECASTS`), each trimmed to its own budget before assembly, in
-`comment.trimming.trim_section`.
+The three section constants constrain explicit standalone calls to
+`comment.trimming.trim_section`. Published comments preserve the complete rendered sections until
+the framework has assembled metadata and the bot has appended disclosure markers. The final
+`COMMENT_CHAR_LIMIT` is 149,999 characters and is applied once to that complete comment.
 
-FORECASTS, which holds the per-model rationales and the fenced JSON forecast blocks, gets the
-largest share because it carries the per-model attribution the residual pipeline parses. RESEARCH is
-a lossy fallback-archive re-print. SUMMARY holds the parser-critical bullets and is sized well above
-any realistic bullet block so it never clips them.
-
-The three caps sum below `COMMENT_CHAR_LIMIT`, and `trim_comment` shrinks RESEARCH first, never
-bullets or rationales, if the assembled comment plus framework overhead still overflows.
+On overflow, the allocator trims whole research paragraphs first, summary prose after the parser
+boundary next, and rationale bodies only when required. It preserves model attribution and fenced
+JSON forecast blocks while they fit. If those blocks cannot fit, the bounded incomplete-comment
+fallback keeps the final prediction and disclosures and marks missing rationale detail as unknown.
 
 ### RESEARCH_PROVIDER_ENV
 

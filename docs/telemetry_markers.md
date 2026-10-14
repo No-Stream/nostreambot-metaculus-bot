@@ -95,7 +95,7 @@ incidents behind the design.
 | `PROMPT_SIZE_ALERT` | `credit_telemetry.py:_alert_on_oversized_prompt` | Per-call WARN: one LLM call's prompt exceeded `PROMPT_TOKENS_ALERT_THRESHOLD`. |
 | `DONATED_KEY_STATE` | `credit_telemetry.py:classify_donated_key_state` | Per-run, at most once: the `/auth/key` probe's verdict on the donated key. |
 | `LITELLM_CALLBACK_DRAIN_TIMEOUT` | `credit_telemetry.py:drain_litellm_callbacks` | Per-run completeness flag on that run's `CREDIT_ROLE_SPEND` rows. |
-| `STACKER_OUTCOME` / `STACKER_SKIP_REASON` / `TOOLS_USED` / `FORECASTERS_USED` | `comment/markers.py` | HTML-comment markers injected into the published Metaculus comment; see "HTML-comment markers" below. |
+| `STACKER_OUTCOME` / `STACKER_SKIP_REASON` / `TOOLS_USED` / `FORECASTERS_USED` / `EXPLANATION_DETAIL` | `comment/markers.py` | HTML-comment markers injected into the published Metaculus comment; see "HTML-comment markers" below. |
 
 ## Numeric repair tiers, deliberately unharvested
 
@@ -216,7 +216,11 @@ would drop every one of those records on the next replace-by-run sync. Missing g
 None. `error` (added 2026-07-23) is nested one level deeper: it is always emitted alongside the
 2026-07-21 counters, so it can only appear after `conclude_gate_rejections`, and it captures
 greedily to end-of-line because it holds `repr(exc)`, which contains spaces (`error=None` on
-healthy runs). `qid_kind` is `post_id` because `agentic_gap_fill.py` emits `question.page_url`.
+healthy runs). `quote_mismatch_warnings` remains for archived-line compatibility and counted
+accepted, driver-typed quotes that failed the old text check; new text findings materialize their
+quotes from delivered evidence references, so this counter is zero for them. It does not measure
+whether the claim follows from the cited passage. `qid_kind` is `post_id` because
+`agentic_gap_fill.py` emits `question.page_url`.
 
 ### GHOST_PRE
 
@@ -305,9 +309,11 @@ and `GAP_FILL_V2` keeps its existing line shape.
 `chars` is the local text held, not the window or digest block handed to the driver, so one
 figure is comparable across both routes and against `URL_CONTEXT_SIZE_GATE_TOKENS` (`chars / 4`).
 `pages` is n/a for a page with no page structure; `passages` is n/a on a `pdf_local` line and, on a
-`digest_local` line, is the field that says whether the digest actually answered: 0 means the
-document does not discuss what was asked, which reads in the block itself as an ordinary
-successful read. No `question=`: the tool handlers run below the loop's `log_prefix` and have no
+`digest_local` line, depends on the input route. For a PDF it is the deterministic digest's
+selected-passage count; for held HTML text it is the count of grounded extractive passages. A
+value of 0 means no passage was selected or grounded for that route. It does not establish that
+the full document lacks relevant content, and the HTML digest may still return BM25 fallback
+candidates. No `question=`: the tool handlers run below the loop's `log_prefix` and have no
 question id, exactly like the throttle marker above, so a join goes through the run id.
 
 ### AGENTIC_URLCONTEXT_ROBOTS_SKIP
@@ -639,15 +645,17 @@ digest's counters (`research/page_digest.py`; docs/research.md "Page digest"): h
 after whitespace and quote-glyph normalisation, and whether the passages served after the page's
 opening came from the BM25 fallback instead (`True` / `False`, harvested as a bool). The difference of
 the two counts is the model's fabrication count for that page. Both counts are `0` with
-`fallback_used=True` on every fallback that has no answer to count: no call was made (the remaining
-wall was below the floor, or the page was empty), a call was made and failed before answering (the
-timeout, a provider error, an off-schema or empty completion), or the model answered with an empty
-list. The three fields therefore cannot separate a skipped call from a failed one; the run log's
-`PAGE_DIGEST` lines, one per fallback naming its reason, carry that distinction. Keyed and
-tail-positioned after `server` in that fixed order, appended by the callers only on a fetch that ran
-the digest, so a page under the digest threshold and every archived line still parse with the three
-harvested as None. The spec was added ahead of its emitter: the fetch-ladder unification's callers
-append the three values off the `PageDigest` the digest returns.
+`fallback_used=True` when no call was made because the remaining wall was below the floor, or when a
+call failed before answering (timeout, provider error, off-schema or empty completion). An empty
+page and a valid empty answer have `fallback_used=False`; a valid empty answer's empty passage list
+is a no-match, not a reason to publish BM25 candidates. `digest_outcome` records `answered`, `valid_empty`,
+`ungrounded`, `malformed`, `api_error`, `timeout`, `empty_completion`, `insufficient_budget`, or
+`empty_page`. `digest_scope` is `full_page` when the model input covered the page and
+`prefiltered_windows` when BM25 selected windows from a longer page. The outcome and scope distinguish
+a supported no-answer from a read that failed or covered only part of the page. These five fields are
+keyed and tail-positioned after `server` in that fixed order, appended only when a fetch ran the
+digest, so a page under the digest threshold and every archived line still parse with them as None.
+The run log's `PAGE_DIGEST` lines, one per fallback, retain the specific fallback reason.
 
 `caller` (optional, 2026-09-10) names which of the two callers of the shared fetch ladder emitted
 the line: `resolution_source` for the resolution-source fetcher, `gap_fill_v2` for the gap-fill v2
@@ -1305,11 +1313,12 @@ field that WAS emitted. `qid_kind` is `question_id`.
 ### AGENTIC_DOCUMENT_UNGROUNDED_SUPPRESSED
 
 The `read_document` twin of `GEMINI_UNGROUNDED_SUPPRESSED` (`research/agentic/tools.py:read_document`):
-Gemini's `url_context` tool retrieved nothing, so the answer would be unsourced recall and the
-"fetched" verification tier is withheld. Worth measuring separately because a "fetched" document
-discrepancy is the only kind that enters the artifact's SUPERSEDE block, i.e. the one that tells
-every forecaster to override the briefing. Carries no question id (`read_document` is a per-URL
-tool with no question in scope), so the URL was for a long time its only field.
+Gemini's `url_context` tool retrieved nothing, so the answer would be unsourced recall and no
+fetched-source evidence is recorded. This marker remains useful for separating a failed remote
+read from a source-text passage that the driver actually cited. A cited fetched passage still
+supports only a driver-reported comparison; it does not instruct forecasters to override the
+briefing. Carries no question id (`read_document` is a per-URL tool with no question in scope), so
+the URL was for a long time its only field.
 
 `statuses` (optional) is the comma-joined list of `url_context` retrieval statuses the SDK
 reported for that call, or the `none` sentinel when it reported none at all (which harvests as
@@ -1555,6 +1564,14 @@ this lives in the published comment, not stdout; its durable consumer is
 `performance_analysis.parsing`, and the spec is here so the run-log parser stays complete if a
 comment body is ever logged. `used` / `configured` are the contributed / configured forecaster
 counts. See "HTML-comment markers" above.
+
+### EXPLANATION_DETAIL
+
+`EXPLANATION_DETAIL=unknown` is emitted only when the bounded comment fallback cannot retain all
+rationale detail. Missing model attribution and reasoning must remain unknown; the report's
+prediction and the full research evidence stay on their existing paths. The performance-analysis
+collector stores `explanation_detail_status=unknown` for this marker and leaves unmarked historical
+comments unclassified.
 
 ### PERCENTILE_ROUNDTRIP
 

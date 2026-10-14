@@ -19,6 +19,7 @@ would silently re-key that marker.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable
 from typing import Any, NamedTuple
@@ -26,7 +27,7 @@ from typing import Any, NamedTuple
 from pydantic import ValidationError
 
 from metaculus_bot.research.agentic.loop_state import _LoopState, _must_conclude
-from metaculus_bot.research.agentic.provenance import _normalize_url, _outranks
+from metaculus_bot.research.agentic.provenance import _method_to_tier, _normalize_url
 from metaculus_bot.research.agentic.tool_schemas import _INTERNAL_TOOL_NAMES
 from metaculus_bot.research.agentic.types import (
     Finding,
@@ -114,51 +115,68 @@ def _coerce_pending_leads(raw_pending_leads: Any) -> tuple[list[str], list[str]]
 
 
 def _stamp_verification_tier(finding: Finding, state: _LoopState) -> Finding:
-    """Return a copy of ``finding`` with ``verification_tier`` set from the
-    URL->best-tier map (W4) — CODE-derived, so any driver-supplied tier is
-    overwritten. A source_url the driver never retrieved through a tool (e.g. a
-    briefing-only URL) is absent from the map and stays untiered (None)."""
-    normalized = _normalize_url(finding.source_url)
-    tier = state.url_best_tier.get(normalized) if normalized is not None else None
+    """Stamp new findings from their cited observations; retain the archival URL rule for old findings."""
+    if finding.supports:
+        tiers = [
+            _method_to_tier(support.retrieved_how)
+            if support.content_origin in {"source_text", "structured_data"}
+            else "snippet"
+            for support in finding.supports
+        ]
+        tier = "fetched" if tiers and all(item == "fetched" for item in tiers) else "snippet"
+    else:
+        normalized = _normalize_url(finding.source_url)
+        tier = state.url_best_tier.get(normalized) if normalized is not None else None
     return finding.model_copy(update={"verification_tier": tier})
 
 
+def _finding_content_key(finding: Finding) -> str:
+    key = finding.model_dump_json(
+        exclude={"verification_tier", "finding_id", "replaces_finding_id", "evidence_refs", "supports"}
+    )
+    if finding.supports:
+        semantic_support = [
+            (item.source_url, item.quote, item.retrieved_how, item.content_origin, item.clipped)
+            for item in finding.supports
+        ]
+        key += json.dumps(semantic_support, sort_keys=True)
+    return key
+
+
 def _bank_findings(state: _LoopState, accepted: list[Finding]) -> tuple[int, int]:
-    """Append findings to ``state.findings``, skipping ones already banked this run.
-
-    Returns ``(banked, duplicates)``. Banking is idempotent by full-field
-    identity — the finding's canonical JSON serialization EXCLUDING the
-    loop-stamped ``verification_tier``: a driver that records findings
-    incrementally with ``record_findings`` and then re-lists the same ones in
-    ``conclude``'s ``final_findings`` (observed on Q578 — 8 findings rendered 16
-    times) no longer doubles the list. Serializing every OTHER field keeps
-    genuinely distinct findings that happen to share a source/quote (a different
-    ``claim`` or ``topic``) separate, and stays correct if ``Finding`` gains a
-    field. Each banked finding carries the code-derived tier (W4).
-
-    A duplicate still RESTAMPS the stored finding's tier: when the URL's tier
-    upgraded between the two banks (banked from a search snippet, then the same
-    URL was successfully fetched, then re-listed in conclude), the affirmative
-    re-record carries the fetched authority forward — otherwise a verified
-    discrepancy would stay demoted to the "possible corrections" block. Only an
-    explicit re-record upgrades (never a bare fetch alone: the driver may have
-    fetched, seen the claim was wrong, and deliberately not re-listed it), and
-    the best-tier merge in ``url_best_tier`` makes the restamp monotonic — a
-    tier never downgrades.
-    """
+    """Bank current findings by semantic content, with explicit replacement by run-local identity."""
     banked = 0
     duplicates = 0
     for finding in accepted:
-        # Key on the driver-stable identity (tier is loop-stamped, so exclude it)
-        # so dedup survives a between-bank tier upgrade.
-        key = finding.model_dump_json(exclude={"verification_tier"})
+        key = _finding_content_key(finding)
         stamped = _stamp_verification_tier(finding, state)
         existing_index = state.seen_finding_keys.get(key)
+        if finding.replaces_finding_id:
+            replaced_index = next(
+                (
+                    index
+                    for index, existing in enumerate(state.findings)
+                    if existing.finding_id == finding.replaces_finding_id
+                ),
+                None,
+            )
+            if replaced_index is None:
+                continue
+            state.seen_finding_keys = {
+                existing_key: index
+                for existing_key, index in state.seen_finding_keys.items()
+                if index != replaced_index
+            }
+            stamped = stamped.model_copy(update={"finding_id": finding.replaces_finding_id})
+            state.findings[replaced_index] = stamped
+            state.seen_finding_keys[key] = replaced_index
+            banked += 1
+            continue
         if existing_index is not None:
             duplicates += 1
-            if _outranks(stamped.verification_tier, state.findings[existing_index].verification_tier):
-                state.findings[existing_index] = stamped
             continue
+        stamped = stamped.model_copy(update={"finding_id": f"finding_{state.next_finding_number}"})
+        state.next_finding_number += 1
         state.seen_finding_keys[key] = len(state.findings)
         state.findings.append(stamped)
         banked += 1

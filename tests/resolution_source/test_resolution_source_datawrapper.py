@@ -406,6 +406,13 @@ class TestDatawrapperHop:
 
     async def test_chart_cap_bounds_dataset_fetches(self, monkeypatch):
         monkeypatch.setattr(resolution_datawrapper, "RESOLUTION_SOURCE_DATAWRAPPER_MAX_CHARTS", 2)
+
+        async def delay_hero_chart_preflight(url: str) -> bool:
+            if url.endswith("Aaaa1.csv"):
+                await asyncio.sleep(0.02)
+            return True
+
+        monkeypatch.setattr(guard, "is_public_http_url", delay_hero_chart_preflight)
         page = _tracker_page_html("Aaaa1", "Bbbb2", "Cccc3", "Dddd4")
         session = FakeSession(
             {
@@ -533,9 +540,9 @@ class TestDatawrapperHop:
         assert [r.parent_url for r in results] == [None, PAGE_URL, None, other_page]
 
     async def test_wall_clock_timeout_drains_a_hanging_dataset_fetch(self, monkeypatch):
-        """The F5 teardown guard, now that dataset tasks join the cancel list: when
-        the hop's budget expires mid-fetch, the in-flight dataset request must settle
-        BEFORE the session closes. Closing the session first is what yanks transports
+        """The F5 teardown guard: when the hop's budget expires mid-fetch, the
+        directly awaited dataset request must settle BEFORE the session closes.
+        Closing the session first is what yanks transports
         out from under live requests (aiohttp then logs transport-closed tracebacks
         and can leak connections), so the event ordering — not just the final state —
         is the invariant.

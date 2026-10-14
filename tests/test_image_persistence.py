@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from metaculus_bot.research import agentic_gap_fill
-from metaculus_bot.research.agentic.types import LoopTelemetry
+from metaculus_bot.research.agentic.types import LoopResult, LoopTelemetry
 from metaculus_bot.research.image_assets import ImageView
 from metaculus_bot.research.image_persistence import (
     ImageAssetIngestError,
@@ -203,7 +203,7 @@ class TestPersistImageViews:
             ("https://source.test/article",),
         )
         transcript = _media_record(f"media/{_PNG_SHA256}.png")["gap_fill_v2"]["transcript"]
-        loop_result = SimpleNamespace(
+        loop_result = LoopResult(
             findings_markdown="findings",
             transcript=transcript,
             telemetry=LoopTelemetry(),
@@ -219,7 +219,7 @@ class TestPersistImageViews:
         async def _fake_session():
             yield object()
 
-        async def _fake_loop(*_args: Any, **_kwargs: Any) -> SimpleNamespace:
+        async def _fake_loop(*_args: Any, **_kwargs: Any) -> LoopResult:
             return loop_result
 
         monkeypatch.setenv("GAP_FILL_V2_ENABLED", "true")

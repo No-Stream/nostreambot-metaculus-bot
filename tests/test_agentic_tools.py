@@ -48,6 +48,7 @@ from metaculus_bot.research.agentic.tool_descriptions import FETCH_DESCRIPTION
 from metaculus_bot.research.agentic.types import ToolOutcome
 from metaculus_bot.research.document_text import extract_pdf_text
 from metaculus_bot.research.fetch_ladder import classify, context, direct_fetch, run_cache, rungs, throttle, verdict
+from metaculus_bot.research.fetch_ladder.digest import LadderDigest
 from metaculus_bot.research.fetch_ladder.policy import (
     GAP_FILL_DIRECT_POLICY,
     GAP_FILL_DOCUMENT_POLICY,
@@ -76,6 +77,7 @@ from metaculus_bot.research.resolution_fetch_result import (
     FetchStatusReason,
 )
 from metaculus_bot.research.robots_policy import robots_txt_url
+from metaculus_bot.research.source_evidence import SourceExcerpt
 from metaculus_bot.research.wayback import wayback_snapshot_url
 from scripts.telemetry.markers import MARKER_SPECS, qid_from_ref
 from tests.playwright_fakes import FakeChromium, FakePage, FakePlaywrightManager, install_fake_playwright
@@ -2519,35 +2521,87 @@ class TestReadDocumentAcquiresBeforePaying:
 
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("_robots_allowed")
-    async def test_subfloor_chrome_no_passage_matched_reaches_the_paid_reader(
+    async def test_subfloor_chrome_valid_empty_digest_is_an_explicit_no_answer(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """A JavaScript shell the browser could not rescue must not be digested (F38/D5).
+        """A valid empty selection neither treats shell metadata as evidence nor pays to reread it.
 
-        The ladder holds the shell's navigation chrome, which is under the same content floor
-        ``fetch`` escalates on, and no passage of it matches the ask. Digesting it stamped an
-        unread page ``fetched`` — the tier that supersedes the briefing — while the tool
-        description tells the driver a zero-passage digest means the document does not discuss
-        what was asked. The paid reader, which dials from Gemini's address, is the right rung.
+        The free read still runs the digest so valid-empty remains distinct from a failed
+        extraction. Its empty status prevents the zero-passage shell from earning fetched authority.
         """
         url = "https://manifold.markets/q/some-market"
         chrome = "Home | Markets | Browse | Related questions | Sign in | Newsletter | About | Terms"
         _serve_direct(monkeypatch, {url: _direct("success", url=url, text=chrome, escalate_rendered=True)})
         _serve_rendered(monkeypatch, None)
-        monkeypatch.setenv("GOOGLE_API_KEY", "key")
+        digest_calls: list[str] = []
+
+        async def valid_empty_digest(text: str, query: str, *, budget_seconds: float) -> LadderDigest:
+            del query, budget_seconds
+            digest_calls.append(text)
+            return LadderDigest(
+                passages=[],
+                passages_returned=0,
+                passages_grounded=0,
+                fallback_used=False,
+                method="llm_extractive",
+                outcome="valid_empty",
+            )
+
         monkeypatch.setattr(
-            agentic_tools, "_run_document_read_sync", MagicMock(return_value=("Model read.", 1, ["SUCCESS"]))
+            agentic_tools,
+            "GAP_FILL_DOCUMENT_POLICY",
+            replace(GAP_FILL_DOCUMENT_POLICY, digest=valid_empty_digest),
         )
+        monkeypatch.setenv("GOOGLE_API_KEY", "key")
+        document_reader = MagicMock(return_value=("Model read.", 1, ["SUCCESS"]))
+        monkeypatch.setattr(agentic_tools, "_run_document_read_sync", document_reader)
         monkeypatch.setattr("asyncio.to_thread", AsyncMock(side_effect=lambda fn, *args, **kwargs: fn(*args, **kwargs)))
 
         with caplog.at_level(logging.INFO, logger=local_document.__name__):
             outcome = await agentic_tools.read_document(url, "what unemployment rate did the department report for May")
 
-        assert outcome.method == "document"
+        assert outcome.method == "digest_local"
+        assert outcome.status == "empty"
         assert "Related questions" not in outcome.content_markdown
-        assert "AGENTIC_FETCH_LOCAL_DOC" not in caplog.text, (
-            "the local-read marker must fire only where a digest is actually served"
+        assert digest_calls == [chrome]
+        document_reader.assert_not_called()
+        assert "AGENTIC_FETCH_LOCAL_DOC" in caplog.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("_robots_allowed")
+    async def test_repeated_document_read_reuses_a_stable_local_digest(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        url = "https://example.gov/statement"
+        statement = "Statement: unemployment stood at 4.1 percent in May 2026."
+        query = "unemployment rate May 2026"
+        _serve_direct(monkeypatch, {url: _direct("success", url=url, text=statement, escalate_rendered=True)})
+        _serve_rendered(monkeypatch, None)
+        digest_calls: list[str] = []
+
+        async def stable_digest(text: str, ask: str, *, budget_seconds: float) -> LadderDigest:
+            del ask, budget_seconds
+            digest_calls.append(text)
+            return LadderDigest(
+                passages=[statement],
+                passages_returned=1,
+                passages_grounded=1,
+                fallback_used=False,
+                method="llm_extractive",
+                evidence_passages=(SourceExcerpt("", statement, "llm_extractive"),),
+            )
+
+        monkeypatch.setattr(
+            agentic_tools,
+            "GAP_FILL_DOCUMENT_POLICY",
+            replace(GAP_FILL_DOCUMENT_POLICY, digest=stable_digest),
         )
+        reader = _no_paid_reader(monkeypatch)
+
+        first = await agentic_tools.read_document(url, query)
+        second = await agentic_tools.read_document(url, query)
+
+        assert first == second
+        assert digest_calls == [statement]
+        reader.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("_robots_allowed")

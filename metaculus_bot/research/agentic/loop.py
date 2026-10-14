@@ -33,6 +33,7 @@ from typing import Any, Literal, get_args
 
 from pydantic import ValidationError
 
+from metaculus_bot.constants import GAP_FILL_V2_EVIDENCE_FINDING_MAX_CHARS
 from metaculus_bot.numeric.date_axis import format_epoch, to_epoch
 from metaculus_bot.question_types import QuestionType
 from metaculus_bot.research.agentic.artifact import detachment_lint, render_findings
@@ -50,10 +51,10 @@ from metaculus_bot.research.agentic.gates import (
     _apply_findings_telemetry,
     _bank_findings,
     _check_image_provenance,
-    _check_url_provenance,
     _coerce_pending_leads,
     _coerce_planned_gaps,
     _evaluate_conclude_gate,
+    _finding_content_key,
     _FindingsValidation,
 )
 from metaculus_bot.research.agentic.image_messages import bind_image_materialization
@@ -75,7 +76,6 @@ from metaculus_bot.research.agentic.provenance import (
     _method_to_tier,  # noqa: F401  # re-export: tests/test_agentic_tools.py imports it from this module
     _normalize_quote_text,  # noqa: F401  # re-export: tests/test_agentic_gates.py imports it from this module
     _normalize_url,  # noqa: F401  # re-export: tests/test_agentic_loop.py imports it from this module
-    _quote_is_grounded,
 )
 from metaculus_bot.research.agentic.tool_schemas import (
     _INTERNAL_TOOL_NAMES,
@@ -84,6 +84,7 @@ from metaculus_bot.research.agentic.tool_schemas import (
 )
 from metaculus_bot.research.agentic.types import (
     Finding,
+    FindingSupport,
     GhostContext,
     GhostForecast,
     LoopConfig,
@@ -111,6 +112,69 @@ _GHOST_V1_MARKER = "GHOST_FORECAST_V1"
 _GHOST_TIMEOUT_S = 60.0
 
 
+def _materialize_text_proposal(raw: dict[str, Any], state: _LoopState) -> tuple[dict[str, Any] | None, str | None]:
+    forbidden = {"quote", "retrieved_how", "supports", "verification_tier", "finding_id"} & raw.keys()
+    if forbidden:
+        return None, f"source evidence fields are code-owned: {', '.join(sorted(forbidden))}"
+    refs = raw.get("evidence_refs")
+    if not isinstance(refs, list) or not refs or any(not isinstance(ref, str) for ref in refs):
+        return None, "text findings require delivered evidence_refs"
+    if len(refs) != len(set(refs)) or any(ref not in state.delivered_evidence for ref in refs):
+        return None, "unknown or undelivered evidence_ref; use a numbered passage from an earlier tool result"
+    evidence = [state.delivered_evidence[ref] for ref in refs]
+    if sum(len(item.text) for item in evidence) > GAP_FILL_V2_EVIDENCE_FINDING_MAX_CHARS:
+        return None, (
+            f"cited evidence exceeds {GAP_FILL_V2_EVIDENCE_FINDING_MAX_CHARS} characters; choose a smaller adequate set"
+        )
+    source_url = raw.get("source_url")
+    if source_url is not None and source_url != evidence[0].source_url:
+        return None, "source_url disagrees with cited evidence_ref source"
+    return {
+        **raw,
+        "source_url": evidence[0].source_url,
+        "quote": evidence[0].text,
+        "retrieved_how": evidence[0].retrieval_method,
+        "supports": [
+            FindingSupport(
+                source_url=item.source_url,
+                quote=item.text,
+                retrieved_how=item.retrieval_method,
+                content_origin=item.content_origin,
+                evidence_ref=item.ref,
+                clipped=item.clipped,
+            ).model_dump()
+            for item in evidence
+        ],
+    }, None
+
+
+def _finding_provenance_reason(finding: Finding, state: _LoopState) -> str | None:
+    if finding.replaces_finding_id and finding.replaces_finding_id not in {
+        existing.finding_id for existing in state.findings
+    }:
+        return "replaces_finding_id is not a banked finding identity"
+    if finding.replaces_finding_id:
+        duplicate_index = state.seen_finding_keys.get(_finding_content_key(finding))
+        if duplicate_index is not None and state.findings[duplicate_index].finding_id != finding.replaces_finding_id:
+            return "replacement content already belongs to another current finding; cite that finding or revise the proposal"
+    return _check_image_provenance(finding, state)
+
+
+def _project_finding_identity(finding: Finding, index: int, owners: dict[str, str | None]) -> str | None:
+    """Reserve semantic content within one proposal batch before it is banked."""
+    content_key = _finding_content_key(finding)
+    if finding.replaces_finding_id:
+        if owners.get(content_key) not in {None, finding.replaces_finding_id}:
+            return "replacement content already belongs to another current finding; cite that finding or revise the proposal"
+        for key, owner in list(owners.items()):
+            if owner == finding.replaces_finding_id:
+                del owners[key]
+        owners[content_key] = finding.replaces_finding_id
+    else:
+        owners.setdefault(content_key, f"pending_{index}")
+    return None
+
+
 def _validate_findings_payload(
     raw_findings: Any,
     state: _LoopState,
@@ -127,9 +191,23 @@ def _validate_findings_payload(
     lint_rejections = 0
     provenance_rejections = 0
     quote_mismatch_warnings = 0
+    projected_key_owners = {_finding_content_key(finding): finding.finding_id for finding in state.findings}
     for index, raw_finding in enumerate(raw_findings):
+        if not isinstance(raw_finding, dict):
+            rejected.append(f"{label}[{index}] invalid: expected an object")
+            continue
+        if raw_finding.get("evidence_kind", "text") == "text":
+            proposal, reason = _materialize_text_proposal(raw_finding, state)
+            if reason is not None:
+                provenance_rejections += 1
+                rejected.append(f"{label}[{index}] rejected: {reason}")
+                continue
+            assert proposal is not None
+            candidate = proposal
+        else:
+            candidate = raw_finding
         try:
-            finding = Finding.model_validate(raw_finding)
+            finding = Finding.model_validate(candidate)
         except ValidationError as exc:
             rejected.append(f"{label}[{index}] invalid: {exc.errors()[0]['msg']}")
             continue
@@ -138,27 +216,13 @@ def _validate_findings_payload(
             lint_rejections += 1
             rejected.append(f"{label}[{index}] rejected: {'; '.join(violations)}")
             continue
-        image_provenance_reason = _check_image_provenance(finding, state)
-        if image_provenance_reason is not None:
-            provenance_rejections += 1
-            rejected.append(f"{label}[{index}] rejected: {image_provenance_reason}")
-            continue
-        provenance_reason = _check_url_provenance(finding, state) if finding.evidence_kind == "text" else None
+        provenance_reason = _finding_provenance_reason(finding, state) or _project_finding_identity(
+            finding, index, projected_key_owners
+        )
         if provenance_reason is not None:
             provenance_rejections += 1
             rejected.append(f"{label}[{index}] rejected: {provenance_reason}")
             continue
-        # Warn-only and deduped per run: see docs/agentic_gap_fill.md "The findings gates".
-        if finding.evidence_kind == "text" and not _quote_is_grounded(finding.quote, state.tool_content_normalized):
-            warned_key = (finding.source_url, finding.quote)
-            if warned_key not in state.warned_quote_keys:
-                state.warned_quote_keys.add(warned_key)
-                quote_mismatch_warnings += 1
-                logger.warning(
-                    "GAP_FILL_V2 quote_mismatch: source_url=%s quote=%r not found verbatim in tool contents",
-                    finding.source_url,
-                    finding.quote,
-                )
         accepted.append(finding)
     return _FindingsValidation(accepted, rejected, lint_rejections, provenance_rejections, quote_mismatch_warnings)
 
@@ -169,6 +233,8 @@ async def _record_findings_tool(state: _LoopState, arguments: dict[str, Any]) ->
     _apply_findings_telemetry(state, validation)
 
     lines = [f"Recorded {banked} finding(s)."]
+    if banked:
+        lines.append("Current finding identities: " + ", ".join(f.finding_id or "" for f in state.findings))
     if duplicates:
         lines.append(f"Skipped {duplicates} finding(s) already recorded earlier in this run.")
     if validation.rejected:
@@ -260,6 +326,8 @@ async def _conclude_tool(
     state.stop_loop = True
 
     lines = [f"Concluded with {banked} final finding(s) and {len(pending_leads)} pending lead(s)."]
+    if banked:
+        lines.append("Current finding identities: " + ", ".join(f.finding_id or "" for f in state.findings))
     if duplicates:
         lines.append(f"Skipped {duplicates} final finding(s) already recorded earlier in this run.")
     if validation.rejected or pending_errors:
@@ -353,6 +421,7 @@ async def _execute_one_tool_call(
         provenance_text=provenance_text,
         provenance_tiers=provenance_tiers,
         image_views=outcome.image_views,
+        outcome=outcome,
     )
 
 
@@ -398,6 +467,7 @@ def _freeze_result(
         image_views=list(state.image_views_by_id.values()),
         image_sources={image_id: sorted(sources) for image_id, sources in state.image_sources_by_id.items()},
         image_observations=copy.deepcopy(state.image_observations_by_id),
+        delivered_evidence=list(state.delivered_evidence.values()),
     )
 
 

@@ -265,7 +265,8 @@ class TestFetchDiagnosticForcesThePaidRungOff:
 
         result = await fetch_diagnostic.probe_ladder(_URL)
 
-        assert result.status == "success"
+        assert result.status == "no_resolving_content"
+        assert result.n_chars == 0
         assert session.requested == [_URL]
 
     async def test_main_forcing_the_flag_off_keeps_the_paid_reader_unspent(

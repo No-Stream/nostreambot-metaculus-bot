@@ -142,6 +142,24 @@ async def _fetch_datawrapper_dataset(
             )
 
 
+async def _fetch_datawrapper_datasets_in_order(
+    session: Any,
+    picks: list[tuple[int, DatawrapperChartRef]],
+    page_results: list[FetchResult],
+    host_sems: dict[str, asyncio.Semaphore],
+) -> list[FetchResult]:
+    """Fetch selected chart datasets in document order.
+
+    Each chart uses the same CDN host, and its host semaphore already serializes the
+    requests. Awaiting each preflight and fetch in turn prevents a slower DNS check
+    from letting a later chart overtake the hero chart.
+    """
+    results: list[FetchResult] = []
+    for idx, chart in picks:
+        results.append(await _fetch_datawrapper_dataset(session, chart, page_results[idx].url, host_sems))
+    return results
+
+
 async def fetch_resolution_sources(
     urls: list[str], *, query: str = "", fast_path: bool = False, fetch_policy: policy.LadderPolicy | None = None
 ) -> list[FetchResult]:
@@ -179,13 +197,10 @@ async def fetch_resolution_sources(
 
     Teardown race guard (F5): the outer factory wraps this call in
     ``asyncio.wait_for``. When the wall-clock timeout fires, wait_for cancels
-    this coroutine — but if a gather is still in flight we'd exit the
-    ``async with session`` block while children are mid-request, and aiohttp
-    would then close their transports out from under them (surfacing as
-    scary tracebacks in logs, and in extreme cases resource-warning fires
-    on connections that never got cleaned up). We use explicit Task objects
-    — pages and datasets alike — so we can cancel + drain them in a
-    ``finally`` before the session closes.
+    this coroutine. Page fetches run as explicit tasks and are canceled and
+    drained in ``finally`` before the session closes. The ordered Datawrapper
+    hop is awaited directly, so cancellation reaches its active fetch before
+    the same session closes.
     """
     # backends imports market_retrieval settlement helpers, which import this module's public URL
     # extractor. Keep the known-API wiring at the call boundary to break that genuine cycle.
@@ -260,17 +275,12 @@ async def fetch_resolution_sources(
                     len(page_results),
                 )
                 return page_results
-            dataset_tasks = [
-                asyncio.create_task(_fetch_datawrapper_dataset(session, chart, page_results[idx].url, host_sems))
-                for idx, chart in picks
-            ]
-            tasks.extend(dataset_tasks)
+            dataset_results: list[FetchResult] = []
             try:
-                dataset_results = list(
-                    await asyncio.wait_for(
-                        asyncio.gather(*dataset_tasks, return_exceptions=False), timeout=hop_budget_s
+                async with asyncio.timeout(hop_budget_s):
+                    dataset_results = await _fetch_datawrapper_datasets_in_order(
+                        session, picks, page_results, host_sems
                     )
-                )
             except TimeoutError:
                 logger.warning(
                     "resolution_source: datawrapper hop timed out after %.1fs; serving %d Tier-1 "

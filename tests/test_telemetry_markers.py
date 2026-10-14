@@ -1243,6 +1243,12 @@ RESOLUTION_SOURCE_FETCH_DIGEST_FALLBACK_LINE = (
     PFX + "RESOLUTION_SOURCE_FETCH: question=44554 url=https://www.bls.gov/news.release/empsit.nr0.htm "
     "status=ok http=200 embeds=none passages_returned=0 passages_grounded=0 fallback_used=True"
 )
+RESOLUTION_SOURCE_FETCH_DIGEST_OUTCOME_LINE = (
+    PFX + "RESOLUTION_SOURCE_FETCH: question=44554 url=https://www.bls.gov/news.release/empsit.nr0.htm "
+    "status=no_resolving_content http=200 embeds=none reason=no_matching_passage route=direct "
+    "passages_returned=0 passages_grounded=0 fallback_used=False "
+    "digest_outcome=valid_empty digest_scope=prefiltered_windows"
+)
 # Every optional tail group at once, in the documented order; the spec's positional groups make this order the contract.
 RESOLUTION_SOURCE_FETCH_FULL_TAIL_LINE = (
     PFX + "RESOLUTION_SOURCE_FETCH: question=44211 url=https://www.cbp.gov/newsroom/stats "
@@ -1404,6 +1410,11 @@ class TestResolutionSourceFetch:
         assert rec["passages_grounded"] == 4
         assert rec["fallback_used"] is False
 
+    def test_digest_outcome_and_scope_are_parsed_from_the_tail(self):
+        rec = _parse_one(RESOLUTION_SOURCE_FETCH_DIGEST_OUTCOME_LINE)
+        assert rec["digest_outcome"] == "valid_empty"
+        assert rec["digest_scope"] == "prefiltered_windows"
+
     def test_a_digest_fallback_parses_without_a_route(self):
         """The three sit after every earlier optional group, so a line carrying them and no route cannot mis-claim."""
         rec = _parse_one(RESOLUTION_SOURCE_FETCH_DIGEST_FALLBACK_LINE)
@@ -1420,6 +1431,8 @@ class TestResolutionSourceFetch:
             assert rec.get("passages_returned") is None
             assert rec.get("passages_grounded") is None
             assert rec.get("fallback_used") is None
+            assert rec.get("digest_outcome") is None
+            assert rec.get("digest_scope") is None
 
     def test_every_optional_tail_group_parses_together_in_the_documented_order(self):
         """The spec ships ahead of its emitter, so this line is the order the emitter must follow: a digest

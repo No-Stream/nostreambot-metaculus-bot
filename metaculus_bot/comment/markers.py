@@ -102,6 +102,14 @@ preserved comment tail alongside the STACKER_OUTCOME markers, so it survives the
 150k middle-trim. Cause of any drop stays in the run-log FORECASTER_DROPS
 telemetry (operational detail), not the public comment.
 
+EXPLANATION_DETAIL
+------------------
+
+``EXPLANATION_DETAIL=unknown`` is emitted only by the bounded incomplete-comment fallback. It
+means that the public explanation could not retain all rationale detail, so missing model
+attribution or reasoning must remain unknown to downstream readers. Unmarked historical comments
+do not claim complete detail.
+
 Stacker section headers
 -----------------------
 
@@ -190,6 +198,9 @@ def format_stacker_skip_reason_marker(reason: str) -> str:
 # Probabilistic-tools activation marker; see the module docstring.
 TOOLS_USED_MARKER_TRUE: str = "<!-- TOOLS_USED=true -->"
 TOOLS_USED_MARKER_FALSE: str = "<!-- TOOLS_USED=false -->"
+
+# Used only when the comment's essential structure exceeds the publication budget.
+EXPLANATION_DETAIL_UNKNOWN_MARKER: str = "<!-- EXPLANATION_DETAIL=unknown -->"
 
 TOOLS_USED_MARKER_RE: re.Pattern[str] = re.compile(
     r"<!--\s*TOOLS_USED=(true|false)\s*-->",
@@ -291,6 +302,7 @@ assert STACKED_BASE_REASONING_HEADER.startswith("## "), (
 
 __all__ = [
     "BASE_MODEL_SUBBLOCK_SPLIT_RE",
+    "EXPLANATION_DETAIL_UNKNOWN_MARKER",
     "FORECASTERS_USED_MARKER_PREFIX",
     "FORECASTERS_USED_MARKER_RE",
     "HISTORICAL_STACKER_META_HEADER",

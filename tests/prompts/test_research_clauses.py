@@ -41,12 +41,15 @@ from tests.prompt_builders import (
 
 
 class TestDriverSystemPromptSourceAttribution:
-    def test_cross_source_evidence_keeps_separate_quotes_and_links(self) -> None:
+    def test_cross_source_evidence_uses_delivered_refs_and_keeps_each_source(self) -> None:
         collapsed = " ".join(build_system_prompt("2026-09-11").split())
-        assert "verbatim quote from that source" in collapsed
-        assert "record a separate finding for each source so every excerpt keeps its own link" in collapsed
-        assert "State each source's evidence in its own claim and quote" in collapsed
-        assert "Put your comparison in claim" not in collapsed
+        assert "one or more evidence_refs from numbered passages delivered by research tools" in collapsed
+        assert "Do not retype quotes or source URLs" in collapsed
+        assert "One text finding may cite multiple sources" in collapsed
+        assert "each source keeps its own passage, retrieval method, and origin" in collapsed
+        assert "set replaces_finding_id" in collapsed
+        assert "verbatim quote from that source" not in collapsed
+        assert "supersede the corresponding briefing content" not in collapsed
 
     def test_visual_evidence_names_delivery_fields_and_interpretation_limit(self) -> None:
         collapsed = " ".join(build_system_prompt("2026-09-11").split())

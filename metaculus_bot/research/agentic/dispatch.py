@@ -22,7 +22,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
-from metaculus_bot.constants import GAP_FILL_V2_TOOL_BUDGET_LINE_RESERVE_CHARS
+from metaculus_bot.constants import GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS, GAP_FILL_V2_TOOL_BUDGET_LINE_RESERVE_CHARS
 from metaculus_bot.research.agentic.gates import _PLAN_REQUIRED_NUDGE
 from metaculus_bot.research.agentic.image_messages import image_reference_message, image_source_urls
 from metaculus_bot.research.agentic.loop_state import (
@@ -30,9 +30,9 @@ from metaculus_bot.research.agentic.loop_state import (
     _ToolCall,
     _ToolExecutionResult,
 )
-from metaculus_bot.research.agentic.provenance import _TIER_RANK, _normalize_quote_text
+from metaculus_bot.research.agentic.provenance import _TIER_RANK, _normalize_quote_text, _normalize_url
 from metaculus_bot.research.agentic.tool_schemas import _INTERNAL_TOOL_NAMES
-from metaculus_bot.research.agentic.types import LoopConfig, ToolOutcome
+from metaculus_bot.research.agentic.types import DeliveredEvidence, LoopConfig, ToolOutcome
 
 
 def _truncate_content(content: str, max_chars: int) -> tuple[str, bool]:
@@ -297,7 +297,9 @@ def _append_tool_messages(
             # warned.
             if result.method == "throttled":
                 state.seen_tool_calls.discard(_normalized_call_key(tool_call))
-            content = result.content + (_DUPLICATE_CALL_WARNING if tool_call.id in admitted.duplicate_call_ids else "")
+            content = _delivered_content_for_call(
+                result, state, config, duplicate=tool_call.id in admitted.duplicate_call_ids
+            )
         state.messages.append(
             {
                 "role": "tool",
@@ -317,3 +319,65 @@ def _append_tool_messages(
     if delivered_image_ids:
         state.messages.append(image_reference_message(delivered_image_ids))
         state.delivered_image_ids.update(delivered_image_ids)
+
+
+def _delivered_content_for_call(
+    result: _ToolExecutionResult, state: _LoopState, config: LoopConfig, *, duplicate: bool
+) -> str:
+    if result.outcome is not None and result.outcome.status == "ok" and result.outcome.evidence_passages:
+        result.content = _materialize_delivered_evidence(result, state, config)
+    if duplicate and len(result.content) + len(_DUPLICATE_CALL_WARNING) <= config.max_result_chars:
+        return result.content + _DUPLICATE_CALL_WARNING
+    return result.content
+
+
+def _materialize_delivered_evidence(result: _ToolExecutionResult, state: _LoopState, config: LoopConfig) -> str:
+    outcome: ToolOutcome = result.outcome
+    body_budget = tool_content_body_budget(result.tool_name, outcome, config.max_result_chars)
+    blocks: list[str] = []
+    delivered: list[DeliveredEvidence] = []
+    used = 0
+    omitted = 0
+    for index, passage in enumerate(outcome.evidence_passages):
+        if (
+            _normalize_url(passage.source_url) is None
+            or not passage.text.strip()
+            or len(passage.text) > GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS
+        ):
+            omitted += 1
+            continue
+        ref = f"ev_{state.next_evidence_number + len(delivered)}"
+        block = (
+            f"[evidence_ref: {ref}; source: {passage.source_url}; method: {passage.retrieval_method}; "
+            f"origin: {passage.content_origin}; clipped: {str(passage.clipped).lower()}]\n{passage.text}"
+        )
+        if used + len(block) + 2 > max(0, body_budget - 120):
+            omitted += len(outcome.evidence_passages) - index
+            break
+        blocks.append(block)
+        used += len(block) + 2
+        delivered.append(DeliveredEvidence(**passage.model_dump(), ref=ref, tool_call_id=result.tool_call_id))
+    if not delivered:
+        note = "[No citable passage was delivered: passages exceeded the evidence or tool-result size limit.]"
+        return _format_tool_content(
+            result.tool_name,
+            outcome.model_copy(update={"content_markdown": f"{note}\n{outcome.content_markdown}"}),
+            config.max_result_chars,
+        )
+    omitted_notice = f"[{omitted} source passage(s) omitted from citable delivery due to size.]\n" if omitted else ""
+    if len(omitted_notice) > max(0, body_budget - used - 80):
+        omitted_notice = ""
+    remaining = max(0, body_budget - used - len(omitted_notice) - 80)
+    ordinary, _ = _truncate_content(outcome.content_markdown, remaining)
+    ordinary = omitted_notice + ordinary
+    body = "\n\n".join([*blocks, ordinary] if ordinary else blocks)
+    formatted = _format_tool_content(
+        result.tool_name,
+        outcome.model_copy(update={"content_markdown": body}),
+        config.max_result_chars,
+    )
+    if any(block not in formatted for block in blocks):
+        raise RuntimeError("citable evidence was not delivered inside the tool-result budget")
+    state.next_evidence_number += len(delivered)
+    state.delivered_evidence.update({item.ref: item for item in delivered})
+    return formatted

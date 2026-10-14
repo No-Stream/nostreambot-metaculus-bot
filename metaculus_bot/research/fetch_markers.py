@@ -33,11 +33,17 @@ def fetch_marker_line(result: FetchResult, *, qid: int | None, caller: str) -> s
     server = f" server={result.server}" if result.server else ""
     digest = ""
     if result.passages_returned is not None:
-        if result.passages_grounded is None or result.fallback_used is None:
+        if (
+            result.passages_grounded is None
+            or result.fallback_used is None
+            or result.digest_outcome is None
+            or result.digest_scope is None
+        ):
             raise ValueError("digest marker fields must be provided together")
         digest = (
             f" passages_returned={result.passages_returned} passages_grounded={result.passages_grounded}"
-            f" fallback_used={result.fallback_used}"
+            f" fallback_used={result.fallback_used} digest_outcome={result.digest_outcome}"
+            f" digest_scope={result.digest_scope}"
         )
     embeds = ",".join(result.unreadable_embeds) if result.unreadable_embeds else "none"
     return (

@@ -39,6 +39,7 @@ from metaculus_bot.constants import (
     ASKNEWS_SECRET_ENV,
     DOCUMENT_DIGEST_TOP_K,
     EXA_API_KEY_ENV,
+    GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS,
     GOOGLE_API_KEY_ENV,
     RESOLUTION_SOURCE_URL_CONTEXT_MAX_ATTEMPTS,
 )
@@ -52,8 +53,10 @@ from metaculus_bot.research.agentic.fetch_outcomes import (
 )
 from metaculus_bot.research.agentic.image_tools import ImageViewState, view_acquired_image, view_image
 from metaculus_bot.research.agentic.tool_backends import (
+    _asknews_evidence_passages,
     _call_asknews_search,
     _call_exa_search,
+    _exa_evidence_passages,
     _format_asknews_results,
     _format_exa_results,
     _run_document_read_sync,
@@ -70,7 +73,7 @@ from metaculus_bot.research.agentic.tool_descriptions import (
     SEARCH_WEB_DESCRIPTION,
     VIEW_IMAGE_DESCRIPTION,
 )
-from metaculus_bot.research.agentic.types import ToolOutcome, ToolSpec
+from metaculus_bot.research.agentic.types import EvidencePassage, ToolOutcome, ToolSpec
 from metaculus_bot.research.fetch_ladder import run_cache
 from metaculus_bot.research.fetch_ladder.context import LadderContext, LocalReadReceipt, QuestionRungBudget
 from metaculus_bot.research.fetch_ladder.digest import bm25_digest
@@ -87,6 +90,7 @@ from metaculus_bot.research.image_leads import render_image_leads
 from metaculus_bot.research.resolution_fetch_result import FetchResult
 from metaculus_bot.research.robots_policy import ROBOTS_FETCH_TIMEOUT_S, google_extended_blocks_url, robots_host
 from metaculus_bot.research.source_documents import ParsedSource
+from metaculus_bot.research.source_evidence import SourceExcerpt
 
 logger = logging.getLogger(__name__)
 
@@ -97,19 +101,111 @@ _READ_DOCUMENT_TOTAL_BUDGET_S = 65.0
 _FETCH_HOST_SEMAPHORES: dict[str, asyncio.Semaphore] = {}
 
 
-def _slice_fetch_window(text: str, start_char: int, *, max_chars: int = _FETCH_WINDOW_CHARS) -> tuple[str, bool]:
+def _slice_fetch_window(
+    text: str,
+    start_char: int,
+    *,
+    max_chars: int = _FETCH_WINDOW_CHARS,
+) -> tuple[str, bool, str]:
     start = max(0, start_char)
     if start >= len(text):
-        return "", False
+        return "", False, ""
     end = min(len(text), start + max_chars)
     if end >= len(text):
-        return text[start:end], False
+        source_text = text[start:end]
+        return source_text, False, source_text
     while True:
         marker = f"\n[truncated at {end} of {len(text)} chars — call again with start_char={end}]"
         adjusted_end = min(len(text), start + max(0, max_chars - len(marker)))
         if adjusted_end == end:
-            return text[start:end] + marker, True
+            source_text = text[start:end]
+            return source_text + marker, True, source_text
         end = adjusted_end
+
+
+def _source_text_passages(
+    source_url: str,
+    text: str,
+    retrieval_method: str,
+    *,
+    clipped_start: bool = False,
+    clipped_end: bool = False,
+) -> list[EvidencePassage]:
+    """Keep bounded source paragraphs, marking visible start/end fragments as clipped."""
+    passages = []
+    paragraphs = text.split("\n\n")
+    for index, paragraph in enumerate(paragraphs):
+        if not paragraph.strip() or len(paragraph) > GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS:
+            continue
+        if paragraph.startswith(("[Partial document read:", "Navigation only;", "Archive members ", "Sheets ")):
+            continue
+        passages.append(
+            EvidencePassage(
+                source_url=source_url,
+                text=paragraph,
+                retrieval_method=retrieval_method,
+                content_origin="source_text",
+                clipped=(index == 0 and clipped_start) or (index == len(paragraphs) - 1 and clipped_end),
+            )
+        )
+    return passages
+
+
+def _structured_source_passages(
+    source_url: str, visible_text: str, passages: list[SourceExcerpt], retrieval_method: str
+) -> list[EvidencePassage]:
+    """Retain only producer-owned excerpts fully present in the delivered body window."""
+    return [
+        EvidencePassage(
+            source_url=passage.source_url or source_url,
+            text=passage.text,
+            retrieval_method=retrieval_method,
+            content_origin=passage.content_origin,
+            clipped=passage.clipped,
+        )
+        for passage in passages
+        if passage.text and passage.text in visible_text and len(passage.text) <= GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS
+    ]
+
+
+def _html_source_excerpts(source_url: str, text: str, retrieval_method: str) -> list[SourceExcerpt]:
+    """Build excerpts from extracted HTML body text, before URL leads and disclosures are rendered."""
+    return [
+        SourceExcerpt(source_url, paragraph, retrieval_method)
+        for paragraph in text.split("\n\n")
+        if paragraph.strip() and len(paragraph) <= GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS
+    ]
+
+
+def _generated_answer_passages(source_url: str, text: str) -> list[EvidencePassage]:
+    """Keep bounded whole paragraphs from a retrieved document reader's answer."""
+    return [
+        EvidencePassage(
+            source_url=source_url,
+            text=paragraph,
+            retrieval_method="document",
+            content_origin="generated_answer",
+        )
+        for paragraph in text.split("\n\n")
+        if paragraph.strip() and len(paragraph) <= GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS
+    ]
+
+
+def _digest_evidence_passages(
+    passages: tuple[SourceExcerpt, ...] | list[SourceExcerpt], block: str, source_url: str
+) -> list[EvidencePassage]:
+    """Bind selected source text to the URL and fetched-tier method this adapter actually used."""
+    return [
+        EvidencePassage(
+            source_url=passage.source_url or source_url,
+            text=passage.text,
+            retrieval_method=local_document.DIGEST_LOCAL_METHOD,
+            content_origin="source_text",
+            clipped=passage.clipped,
+        )
+        for passage in passages
+        if passage.text in block and len(passage.text) <= GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS
+    ]
 
 
 def _format_fetch_error(message: str, *, status: str = "error", method: str = "plain") -> ToolOutcome:
@@ -124,17 +220,41 @@ def _render_fetch_outcome(
     method: str,
     start_char: int,
     image_leads: str = "",
+    citable: bool = True,
+    evidence_passages: list[SourceExcerpt] | None = None,
 ) -> ToolOutcome:
-    del url
     prototype = ToolOutcome(content_markdown="", links=links, method=method)
     body_budget = tool_content_body_budget("fetch", prototype, _FETCH_WINDOW_CHARS)
     lead_block = f"\n\n{image_leads}" if image_leads and start_char == 0 else ""
-    window, truncated = _slice_fetch_window(text, start_char, max_chars=max(0, body_budget - len(lead_block)))
+    window, truncated, visible_source_text = _slice_fetch_window(
+        text,
+        start_char,
+        max_chars=max(0, body_budget - len(lead_block)),
+    )
+    source_start = max(0, start_char)
+    source_end = source_start + len(visible_source_text)
+    clipped_start = source_start > 0 and text[max(0, source_start - 2) : source_start] != "\n\n"
+    clipped_end = source_end < len(text) and text[source_end : source_end + 2] != "\n\n"
     return ToolOutcome(
         content_markdown=window + lead_block,
         links=links,
         method=method,
         truncated=truncated,
+        evidence_passages=(
+            (
+                _source_text_passages(
+                    url,
+                    visible_source_text,
+                    method,
+                    clipped_start=clipped_start,
+                    clipped_end=clipped_end,
+                )
+                if evidence_passages is None
+                else _structured_source_passages(url, visible_source_text, evidence_passages, method)
+            )
+            if citable and method != "local_navigation"
+            else []
+        ),
     )
 
 
@@ -184,6 +304,7 @@ def _read_content_outcome(
     method: str,
     start_char: int,
     image_leads: str = "",
+    evidence_passages: list[SourceExcerpt] | None = None,
 ) -> ToolOutcome:
     """Render a successful body the shared ladder has already classified."""
     return _render_fetch_outcome(
@@ -193,6 +314,7 @@ def _read_content_outcome(
         method=method,
         start_char=start_char,
         image_leads=image_leads,
+        evidence_passages=evidence_passages,
     )
 
 
@@ -251,7 +373,19 @@ async def _fetch_via_ladder(
     result = await fetch_url(url, policy=pol, ctx=request_context)
     if record:
         _log_ladder_markers(result)
-    return ladder_adapter.as_plain_result(result, requested_url=url)
+    artifact = request_context.artifact_for(result)
+    source_text = None
+    if isinstance(artifact, run_cache.HtmlRead) and result.status == "success":
+        source_text = "" if result.chrome_metric_withheld else artifact.extraction.text or ""
+    plain_result = ladder_adapter.as_plain_result(result, requested_url=url, source_text=source_text)
+    if isinstance(artifact, run_cache.HtmlRead) and result.status == "success":
+        if result.digest_outcome is None and not result.chrome_metric_withheld:
+            plain_result.evidence_passages = _html_source_excerpts(
+                result.url, artifact.extraction.text or "", plain_result.method
+            )
+        else:
+            plain_result.evidence_passages = list(result.evidence_passages)
+    return plain_result
 
 
 def _log_ladder_markers(result: FetchResult) -> None:
@@ -277,7 +411,11 @@ async def search_news(query: str) -> ToolOutcome:
         articles = await _call_asknews_search(query)
     except Exception as exc:  # noqa: BLE001  # HARNESS-SCAN-EXEMPT-broad-except  # tool-handler soft-fail boundary: a dead provider becomes a tool result the driver can read, never a loop crash
         return _format_fetch_error(f"AskNews search failed: {type(exc).__name__}: {exc}", method="news")
-    return ToolOutcome(content_markdown=_format_asknews_results(articles), method="news")
+    return ToolOutcome(
+        content_markdown=_format_asknews_results(articles),
+        method="news",
+        evidence_passages=_asknews_evidence_passages(articles),
+    )
 
 
 async def search_web(query: str, end_published_date: str | None = None) -> ToolOutcome:
@@ -287,7 +425,11 @@ async def search_web(query: str, end_published_date: str | None = None) -> ToolO
         results = await _call_exa_search(query, end_published_date)
     except Exception as exc:  # noqa: BLE001  # HARNESS-SCAN-EXEMPT-broad-except  # tool-handler soft-fail boundary: a dead provider becomes a tool result the driver can read, never a loop crash
         return _format_fetch_error(f"Exa search failed: {type(exc).__name__}: {exc}", method="search")
-    return ToolOutcome(content_markdown=_format_exa_results(results), method="search")
+    return ToolOutcome(
+        content_markdown=_format_exa_results(results),
+        method="search",
+        evidence_passages=_exa_evidence_passages(results),
+    )
 
 
 def _generic_document_ask(question_topic: str) -> str:
@@ -312,7 +454,7 @@ def _pdf_local_outcome(url: str, plain: PlainFetchResult, *, start_char: int) ->
         pages=None if pdf is None else pdf.pages_read,
         passages=None,
     )
-    return _read_content_outcome(url, plain.text, plain.links, method=plain.method, start_char=start_char)
+    return _read_content_outcome(plain.url, plain.text, plain.links, method=plain.method, start_char=start_char)
 
 
 def _blocked_outcome(blocked: PlainFetchResult) -> ToolOutcome:
@@ -342,7 +484,8 @@ def _held_from_result(url: str, result: PlainFetchResult) -> local_document.Held
     if pdf is not None:
         held = local_document.held_pdf(pdf)
     elif result.status == "ok" and result.method != DOCUMENT_NEEDED_METHOD:
-        held = local_document.HeldDocument(text=result.text.strip())
+        source_text = result.source_text if result.source_text is not None else result.text
+        held = local_document.HeldDocument(text=source_text.strip())
     else:
         # Reading the use-read_document placeholder as the page would digest our own instruction.
         return local_document.HeldDocument()
@@ -445,10 +588,8 @@ async def _local_digest_outcome(
 ) -> ToolOutcome | None:
     """Answer the ask from text we hold, deterministically and for free — or None to pay instead.
 
-    None means the one shape where a digest would answer the ask out of furniture: a sub-floor page
-    with no parse behind it whose digest selected NO passage. All three conditions are needed, and
-    the digest runs off the event loop for a measured reason; both receipts are in
-    ``docs/agentic_gap_fill.md`` "Why the free digest can refuse to answer".
+    A valid empty passage selection is an explicit no-answer and never falls through to a paid
+    reader. None is reserved for a digest failure that leaves no candidate passages to show.
     """
     if held.pdf is not None:
         digest = await asyncio.to_thread(
@@ -466,18 +607,21 @@ async def _local_digest_outcome(
             pages=held.pdf.pages_read,
             passages=digest.passages,
         )
-        return ToolOutcome(content_markdown=digest.block, method=local_document.DIGEST_LOCAL_METHOD)
-
-    minimum_content_chars = policy.thin_content_escalation_chars
-    if minimum_content_chars is not None and len(held.text) < minimum_content_chars:
-        matching_passages = await asyncio.to_thread(
-            document_text.select_passages, held.text, ask, top_k=DOCUMENT_DIGEST_TOP_K
+        return ToolOutcome(
+            content_markdown=digest.block,
+            method=local_document.DIGEST_LOCAL_METHOD,
+            status="ok" if digest.passages else "empty",
+            evidence_passages=_digest_evidence_passages(digest.evidence_passages, digest.block, url),
         )
-        if not matching_passages:
-            return None
 
     digest_fn = policy.digest or bm25_digest
-    passages = await digest_fn(held.text, ask, budget_seconds=max(0.0, budget_seconds))
+    passages = await run_cache.memoized_digest(
+        url,
+        held.text,
+        ask,
+        digest_fn,
+        budget_seconds=max(0.0, budget_seconds),
+    )
     rendered = await asyncio.to_thread(
         document_text.render_flat_passages,
         passages.passages,
@@ -486,6 +630,27 @@ async def _local_digest_outcome(
         source_url=url,
         source_chars=len(held.text),
     )
+    evidence_passages = _digest_evidence_passages(passages.evidence_passages, rendered, url)
+    if not evidence_passages:
+        if passages.outcome in {"valid_empty", "empty_page"}:
+            local_document.log_local_document_read(
+                url,
+                method=local_document.DIGEST_LOCAL_METHOD,
+                chars=len(held.text),
+                pages=None,
+                passages=0,
+            )
+            return ToolOutcome(content_markdown=rendered, method=local_document.DIGEST_LOCAL_METHOD, status="empty")
+        if passages.outcome in {
+            "ungrounded",
+            "malformed",
+            "api_error",
+            "timeout",
+            "empty_completion",
+            "insufficient_budget",
+        }:
+            return None
+        raise RuntimeError(f"local document digest returned no evidence for outcome {passages.outcome!r}")
     local_document.log_local_document_read(
         url,
         method=local_document.DIGEST_LOCAL_METHOD,
@@ -493,7 +658,11 @@ async def _local_digest_outcome(
         pages=None,
         passages=passages.passages_grounded,
     )
-    return ToolOutcome(content_markdown=rendered, method=local_document.DIGEST_LOCAL_METHOD)
+    return ToolOutcome(
+        content_markdown=rendered,
+        method=local_document.DIGEST_LOCAL_METHOD,
+        evidence_passages=evidence_passages,
+    )
 
 
 def _local_source_for_result(url: str, plain: PlainFetchResult) -> ParsedSource:
@@ -522,21 +691,32 @@ def _local_source_fetch_outcome(
         )
         if navigation_only:
             return _render_fetch_outcome(
-                url,
+                plain.url,
                 source_presentation.source_inventory(source, member=member),
                 plain.links,
                 method=ladder_adapter.LOCAL_NAVIGATION_METHOD,
                 start_char=start_char,
+                citable=False,
             )
         text = source_presentation.source_text(sections)
     except ValueError as error:
         return _format_fetch_error(str(error), method="local_selection")
     return _render_fetch_outcome(
-        url,
+        plain.url,
         text,
         plain.links,
         method=ladder_adapter.LOCAL_SOURCE_METHOD,
         start_char=start_char,
+        evidence_passages=[
+            SourceExcerpt(
+                plain.url,
+                paragraph,
+                ladder_adapter.LOCAL_SOURCE_METHOD,
+            )
+            for section in sections
+            for paragraph in section.text.split("\n\n")
+            if paragraph.strip() and len(paragraph) <= GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS
+        ],
     )
 
 
@@ -578,7 +758,11 @@ async def _local_source_digest_outcome(
         )
     except ValueError as error:
         return _format_fetch_error(str(error), method="local_selection")
-    return ToolOutcome(content_markdown=digest.block, method=local_document.DIGEST_LOCAL_METHOD)
+    return ToolOutcome(
+        content_markdown=digest.block,
+        method=local_document.DIGEST_LOCAL_METHOD,
+        evidence_passages=_digest_evidence_passages(digest.evidence_passages, digest.block, url),
+    )
 
 
 def _finish_local_digest_worker(
@@ -662,12 +846,13 @@ async def fetch(
         return await read_document(plain.url, _generic_document_ask(question_topic), ladder_exhausted=True, ctx=ctx)
     if plain.status == "ok":
         return _read_content_outcome(
-            url,
+            plain.url,
             plain.text,
             plain.links,
             method=plain.method,
             start_char=start_char,
             image_leads=render_image_leads(plain.image_leads),
+            evidence_passages=plain.evidence_passages,
         )
     if plain.status == "empty":
         return _empty_fetch_outcome(plain.url)
@@ -750,10 +935,8 @@ async def _free_route_outcome(
     reader would follow the same hop. An oversize body is an error rather than a reason to
     escalate. Text we hold is digested, and the size gate rides the same branch as the text it
     guards so the two can never disagree: a document we hold is served from the digest whatever
-    its size, and the biggest are the clearest case (the nine archived documents past the gate
-    carried 67% of the season's reader tokens and the largest of them returned nothing for the
-    money). A None digest is the one shape that must not be served: sub-floor chrome that no
-    passage matched, which the paid reader is the right rung for (see ``_local_digest_outcome``).
+    its size. A valid empty selection is an explicit no-answer and does not trigger a second read;
+    a digest failure with no candidate passages leaves the paid reader available.
     """
     if held.refused_landing is not None:
         return _blocked_outcome(held.refused_landing)
@@ -855,7 +1038,11 @@ async def read_document(
             "so any answer would be unsourced recall rather than a read of the document.",
             method="document",
         )
-    return ToolOutcome(content_markdown=text, method="document")
+    return ToolOutcome(
+        content_markdown=text,
+        method="document",
+        evidence_passages=_generated_answer_passages(url, text),
+    )
 
 
 def question_ladder_context(*, session: object | None = None) -> LadderContext:

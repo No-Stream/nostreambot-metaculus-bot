@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from typing import Literal
 
-from metaculus_bot.research.agentic.artifact import detachment_lint, render_findings
+from metaculus_bot.research.agentic.artifact import (
+    PENDING_LEADS_END_MARKER,
+    PENDING_LEADS_START_MARKER,
+    detachment_lint,
+    render_findings,
+)
 from metaculus_bot.research.agentic.types import Finding
 
 
@@ -44,6 +49,10 @@ def test_render_findings_is_deterministic_and_topic_sorted() -> None:
     assert rendered.index("### alpha") < rendered.index("### zeta")
     assert rendered.index("The ministry published a corrigendum.") < rendered.index("A regulator archived the filing.")
     assert "Pending leads:\n- Check the appendix PDF." in rendered
+    assert (
+        f"{PENDING_LEADS_START_MARKER}\nPending leads:\n- Check the appendix PDF.\n{PENDING_LEADS_END_MARKER}"
+        in rendered
+    )
 
 
 def test_render_findings_hoists_discrepancies_to_corrections_block_first() -> None:
@@ -56,8 +65,8 @@ def test_render_findings_hoists_discrepancies_to_corrections_block_first() -> No
             retrieved_how="fetch",
             topic="labor",
             discrepancy=True,
-            # W4: a fetched-tier discrepancy keeps the supersede banner; this test
-            # exercises the hoist-above-topics behavior on the supersede block.
+            # Historical Findings can still carry a fetched tier. Rendering keeps
+            # the correction visible above topic evidence without claiming authority.
             verification_tier="fetched",
         ),
         Finding(
@@ -72,13 +81,14 @@ def test_render_findings_hoists_discrepancies_to_corrections_block_first() -> No
 
     rendered = render_findings(findings, [])
 
-    assert "### ⚠ Corrections to the briefing" in rendered
-    assert rendered.index("### ⚠ Corrections to the briefing") < rendered.index("### labor")
+    assert "### ⚠ Driver-reported corrections to the briefing" in rendered
+    assert rendered.index("### ⚠ Driver-reported corrections to the briefing") < rendered.index("### labor")
     assert (
-        "The sourced findings below contradict the research briefing and supersede the corresponding briefing content."
+        "Compare these claims with the briefing and each cited excerpt; source attribution does not verify interpretation."
         in rendered
     )
     assert "The briefing says the rate is 7%, but the source says 5.2%." in rendered
+    assert "supersede" not in rendered.lower()
 
 
 def _discrepancy(
@@ -96,33 +106,29 @@ def _discrepancy(
     )
 
 
-def test_fetched_discrepancy_keeps_supersede_block() -> None:
-    """W4: a discrepancy stamped ``fetched`` (primary source pulled) renders under
-    the supersede header with its supersede banner — full authority."""
+def test_fetched_discrepancy_is_driver_reported_for_comparison() -> None:
+    """A fetched excerpt is attributable evidence, not semantic verification."""
     rendered = render_findings([_discrepancy("fetched", claim="Briefing says 7%; source says 5.2%.")], [])
 
-    assert "### ⚠ Corrections to the briefing" in rendered
-    assert "### ⚠ Possible corrections (snippet-sourced — recheck advised)" not in rendered
+    assert "### ⚠ Driver-reported corrections to the briefing" in rendered
+    assert "### ⚠ Driver-reported corrections (limited evidence)" not in rendered
     assert (
-        "The sourced findings below contradict the research briefing and supersede the corresponding briefing content."
+        "Compare these claims with the briefing and each cited excerpt; source attribution does not verify interpretation."
         in rendered
     )
     assert "Briefing says 7%; source says 5.2%." in rendered
+    assert "supersede" not in rendered.lower()
 
 
-def test_snippet_discrepancy_renders_demoted_block_not_supersede() -> None:
-    """W4 core fix (131.3): a discrepancy stamped ``snippet`` renders under the
-    demoted header with a banner stating it does NOT supersede the briefing — the
-    supersede header/banner must be absent."""
+def test_snippet_discrepancy_renders_limited_evidence_block() -> None:
+    """Snippet and generated-answer corrections remain visibly less complete."""
     rendered = render_findings([_discrepancy("snippet", claim="Briefing says 133; a snippet says 131.3.")], [])
 
-    assert "### ⚠ Possible corrections (snippet-sourced — recheck advised)" in rendered
-    assert "### ⚠ Corrections to the briefing" not in rendered
-    assert "do NOT supersede the briefing" in rendered
-    assert "treat them as leads that contradict it" in rendered
+    assert "### ⚠ Driver-reported corrections (limited evidence)" in rendered
+    assert "### ⚠ Driver-reported corrections to the briefing" not in rendered
+    assert "These claims rely partly on snippets or generated answers; recheck the underlying sources." in rendered
     assert "Briefing says 133; a snippet says 131.3." in rendered
-    # The supersede banner text must NOT appear anywhere.
-    assert "supersede the corresponding briefing content" not in rendered
+    assert "supersede" not in rendered.lower()
 
 
 def test_untiered_discrepancy_is_demoted() -> None:
@@ -130,14 +136,12 @@ def test_untiered_discrepancy_is_demoted() -> None:
     tool, or only via a failed fetch) is demoted conservatively, same as snippet."""
     rendered = render_findings([_discrepancy(None, claim="Briefing says X; an untiered source says Y.")], [])
 
-    assert "### ⚠ Possible corrections (snippet-sourced — recheck advised)" in rendered
-    assert "### ⚠ Corrections to the briefing" not in rendered
+    assert "### ⚠ Driver-reported corrections (limited evidence)" in rendered
+    assert "### ⚠ Driver-reported corrections to the briefing" not in rendered
 
 
-def test_mixed_discrepancies_render_both_blocks_supersede_first() -> None:
-    """W4: a run with both a fetched and a snippet discrepancy renders BOTH
-    correction blocks, supersede first, then demoted, both above the topic
-    blocks; non-discrepancy findings stay in their topic block."""
+def test_mixed_discrepancies_render_both_evidence_levels_before_topics() -> None:
+    """A run with fetched and limited-evidence discrepancies preserves both."""
     findings = [
         _discrepancy("snippet", claim="Snippet-only correction.", url="https://example.com/snippet"),
         _discrepancy("fetched", claim="Fetched correction.", url="https://example.com/fetched"),
@@ -154,13 +158,14 @@ def test_mixed_discrepancies_render_both_blocks_supersede_first() -> None:
 
     rendered = render_findings(findings, [])
 
-    supersede_at = rendered.index("### ⚠ Corrections to the briefing")
-    demoted_at = rendered.index("### ⚠ Possible corrections (snippet-sourced — recheck advised)")
+    fetched_at = rendered.index("### ⚠ Driver-reported corrections to the briefing")
+    limited_at = rendered.index("### ⚠ Driver-reported corrections (limited evidence)")
     topic_at = rendered.index("### labor")
-    assert supersede_at < demoted_at < topic_at
+    assert fetched_at < limited_at < topic_at
     assert "Fetched correction." in rendered
     assert "Snippet-only correction." in rendered
     assert "The ministry published a bulletin." in rendered
+    assert "supersede" not in rendered.lower()
 
 
 def test_verification_tier_renders_compactly_on_topic_findings() -> None:
@@ -229,7 +234,7 @@ def test_render_findings_without_discrepancies_has_no_corrections_block() -> Non
         [],
     )
 
-    assert "### ⚠ Corrections to the briefing" not in rendered
+    assert "### ⚠ Driver-reported corrections to the briefing" not in rendered
     assert rendered.startswith("## Agentic Research Findings\n\n### labor")
 
 
@@ -308,10 +313,10 @@ def test_render_labels_derived_findings() -> None:
     )
 
 
-def test_fetched_discrepancy_renders_derivation_in_supersede_block() -> None:
+def test_fetched_discrepancy_renders_derivation_in_driver_reported_block() -> None:
     """F5: a finding that is both discrepancy=True and carries a derivation — the
     literal 131.3 shape ("briefing says 133; arithmetic from quoted sources gives
-    131.3") — routes to the supersede block and must KEEP its arithmetic support:
+    131.3") — routes to the fetched correction block and must KEEP its arithmetic support:
     the derived-analysis label and the Derivation line, not just Claim/Quote."""
     finding = Finding(
         claim="Briefing says 133; the quoted sources sum to 131.3.",
@@ -327,17 +332,17 @@ def test_fetched_discrepancy_renders_derivation_in_supersede_block() -> None:
 
     rendered = render_findings([finding], [])
 
-    assert "### ⚠ Corrections to the briefing" in rendered
+    assert "### ⚠ Driver-reported corrections to the briefing" in rendered
     # The arithmetic support survives in the corrections block.
     assert "Derived analysis (arithmetic from quoted sources)" in rendered
     assert "Derivation: 40.0 + 51.3 + 40.0 = 131.3, not the 133 the briefing states." in rendered
     # The label/derivation sit inside the corrections block, above the topic blocks.
-    assert rendered.index("### ⚠ Corrections to the briefing") < rendered.index("Derived analysis")
+    assert rendered.index("### ⚠ Driver-reported corrections to the briefing") < rendered.index("Derived analysis")
+    assert "supersede" not in rendered.lower()
 
 
 def test_snippet_discrepancy_renders_derivation_in_demoted_block() -> None:
-    """F5, demoted variant: a snippet-tier derived discrepancy keeps its
-    derivation in the possible-corrections block too."""
+    """A snippet-tier derived discrepancy keeps its derivation in the limited-evidence block."""
     finding = Finding(
         claim="Briefing says 133; a snippet's numbers give 131.3.",
         source_url="https://example.com/snippet",
@@ -352,7 +357,7 @@ def test_snippet_discrepancy_renders_derivation_in_demoted_block() -> None:
 
     rendered = render_findings([finding], [])
 
-    assert "### ⚠ Possible corrections (snippet-sourced — recheck advised)" in rendered
+    assert "### ⚠ Driver-reported corrections (limited evidence)" in rendered
     assert "Derived analysis (arithmetic from quoted sources)" in rendered
     assert "Derivation: 40 + 51.3 + 40 = 131.3." in rendered
 

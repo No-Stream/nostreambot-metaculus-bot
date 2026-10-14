@@ -29,22 +29,16 @@ _BANNED_REGISTER_RE = re.compile(r"\b(?:" + "|".join(_BANNED_REGISTER_PATTERNS) 
 # arithmetic synthesis as ours so the panel weights it accordingly.
 _DERIVED_ANALYSIS_LABEL = "Derived analysis (arithmetic from quoted sources)"
 
-# Corrections block headers + banners (W4). Discrepancy findings split by their
-# loop-stamped ``verification_tier``: a "fetched" discrepancy (we pulled the
-# primary source) keeps supersede authority; a "snippet"/untiered one (seen only
-# in a search excerpt, or via a failed retrieval) is demoted so a snippet-median
-# "correction" can no longer override the briefing for every forecaster (the
-# 131.3 failure mode).
-_SUPERSEDE_HEADER = "### ⚠ Corrections to the briefing"
-_SUPERSEDE_BANNER = (
-    "The sourced findings below contradict the research briefing and supersede the corresponding briefing content."
+# Corrections are separated by the origin of their cited support. Even fetched
+# evidence leaves interpretation to the forecaster; neither block overrides the briefing.
+_FETCHED_CORRECTIONS_HEADER = "### ⚠ Driver-reported corrections to the briefing"
+_FETCHED_CORRECTIONS_BANNER = (
+    "Compare these claims with the briefing and each cited excerpt; source attribution does not verify interpretation."
 )
-_DEMOTED_HEADER = "### ⚠ Possible corrections (snippet-sourced — recheck advised)"
-_DEMOTED_BANNER = (
-    "The findings below contradict the briefing but rest only on search-snippet evidence, not a fetched primary "
-    "source. They do NOT supersede the briefing — treat them as leads that contradict it, and recheck against the "
-    "primary source before relying on them."
-)
+_DEMOTED_HEADER = "### ⚠ Driver-reported corrections (limited evidence)"
+_DEMOTED_BANNER = "These claims rely partly on snippets or generated answers; recheck the underlying sources."
+PENDING_LEADS_START_MARKER = "<!-- RESEARCH_PENDING_LEADS_START -->"
+PENDING_LEADS_END_MARKER = "<!-- RESEARCH_PENDING_LEADS_END -->"
 
 
 def detachment_lint(finding: Finding) -> list[str]:
@@ -100,7 +94,8 @@ def _finding_body_lines(finding: Finding, *, include_tier: bool) -> list[str]:
         # analysis, not a source claim.
         body.append(_DERIVED_ANALYSIS_LABEL)
     body.append(f"Claim: {finding.claim}")
-    body.append(f"Source: {finding.source_url}")
+    if finding.finding_id:
+        body.append(f"Finding ID: {finding.finding_id}")
     if finding.evidence_kind == "image":
         body.append(f"Image ID: {finding.image_id}")
         body.append(
@@ -108,22 +103,32 @@ def _finding_body_lines(finding: Finding, *, include_tier: bool) -> list[str]:
             f"{finding.visual_observation}"
         )
     else:
-        body.append("Quote:")
-        body.extend(_quote_lines(finding.quote))
+        if finding.supports:
+            for support in finding.supports:
+                body.append(f"Source: {support.source_url}")
+                origin_label = support.content_origin.replace("_", " ")
+                clipping = "; clipped visible excerpt" if support.clipped else ""
+                body.append(f"Evidence ({origin_label}; {support.retrieved_how}; {support.evidence_ref}{clipping}):")
+                body.extend(_quote_lines(support.quote))
+        else:
+            body.append(f"Source: {finding.source_url}")
+            body.append("Quote:")
+            body.extend(_quote_lines(finding.quote))
+    if finding.evidence_kind == "image":
+        body.append(f"Source: {finding.source_url}")
     if finding.derivation:
         body.append(f"Derivation: {finding.derivation}")
     body.append(f"Date: {finding.date}")
-    body.append(_retrieved_how_line(finding) if include_tier else f"Retrieved how: {finding.retrieved_how}")
+    if not finding.supports:
+        body.append(_retrieved_how_line(finding) if include_tier else f"Retrieved how: {finding.retrieved_how}")
     return body
 
 
 def _append_correction_block(lines: list[str], header: str, banner: str, corrections: list[Finding]) -> None:
     """Append one corrections block (header + banner + each finding) to ``lines``.
 
-    Shared by the fetched (supersede) and snippet-sourced (demoted) blocks so the
-    two stay byte-for-byte parallel except for their header/banner. Corrections
-    omit the tier token (the block header already states it) but keep the derived-
-    analysis label/derivation via the shared body renderer (F5).
+    Both fetched and limited-evidence corrections use the shared body renderer.
+    The block header describes the tier; the body retains any derivation.
     """
     lines.append("")
     lines.append(header)
@@ -139,13 +144,8 @@ def render_findings(findings: list[Finding], pending_leads: list[str]) -> str:
     if not findings and not pending_leads:
         return ""
 
-    # W4: discrepancies split by loop-stamped tier. Only a "fetched" discrepancy
-    # (we pulled the primary source) keeps supersede authority; "snippet" and
-    # untiered (None — never retrieved through a tool, or via a failed fetch)
-    # are demoted so a snippet-sourced "correction" can't override the briefing
-    # for every forecaster. Insertion order is preserved within each block
-    # (deterministic).
-    supersede_corrections = [f for f in findings if f.discrepancy and f.verification_tier == "fetched"]
+    # Insertion order remains stable within the fetched and limited-evidence blocks.
+    fetched_corrections = [f for f in findings if f.discrepancy and f.verification_tier == "fetched"]
     demoted_corrections = [f for f in findings if f.discrepancy and f.verification_tier != "fetched"]
     grouped: dict[str, list[Finding]] = defaultdict(list)
     for finding in findings:
@@ -154,8 +154,8 @@ def render_findings(findings: list[Finding], pending_leads: list[str]) -> str:
         grouped[finding.topic].append(finding)
 
     lines = ["## Agentic Research Findings"]
-    if supersede_corrections:
-        _append_correction_block(lines, _SUPERSEDE_HEADER, _SUPERSEDE_BANNER, supersede_corrections)
+    if fetched_corrections:
+        _append_correction_block(lines, _FETCHED_CORRECTIONS_HEADER, _FETCHED_CORRECTIONS_BANNER, fetched_corrections)
     if demoted_corrections:
         _append_correction_block(lines, _DEMOTED_HEADER, _DEMOTED_BANNER, demoted_corrections)
 
@@ -169,8 +169,10 @@ def render_findings(findings: list[Finding], pending_leads: list[str]) -> str:
 
     if pending_leads:
         lines.append("")
+        lines.append(PENDING_LEADS_START_MARKER)
         lines.append("Pending leads:")
         for lead in pending_leads:
             lines.append(f"- {lead}")
+        lines.append(PENDING_LEADS_END_MARKER)
 
     return "\n".join(lines)

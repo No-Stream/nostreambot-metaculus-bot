@@ -46,6 +46,7 @@ import logging
 import re
 from collections.abc import Sequence
 
+from metaculus_bot.comment.markers import EXPLANATION_DETAIL_UNKNOWN_MARKER
 from metaculus_bot.performance_analysis.comment_sections import (
     _FORECASTER_RE,
     _iter_per_model_blocks,
@@ -78,6 +79,18 @@ from metaculus_bot.performance_analysis.marker_readers import (
 logger: logging.Logger = logging.getLogger(__name__)
 
 SKIP_RESOLUTIONS: frozenset[str] = frozenset({"annulled", "ambiguous"})
+
+
+def parse_explanation_detail_status(comment_text: str | None) -> str | None:
+    """Return ``unknown`` when the published comment explicitly omits rationale detail.
+
+    ``None`` means the comment carries no completeness marker, which is the only honest result
+    for historical comments and complete comments that predate this disclosure.
+    """
+    if comment_text is None:
+        return None
+    return "unknown" if EXPLANATION_DETAIL_UNKNOWN_MARKER in comment_text else None
+
 
 # Minimum DISTINCT percentile labels a member's declared curve needs before anything
 # rebuilds a distribution from it and compares that against another member's. A sparse

@@ -188,7 +188,7 @@ DEFAULT_MAX_CONCURRENT_RESEARCH: int = 6  # conservative for AskNews; adjust aft
 
 BENCHMARK_BATCH_SIZE: int = 4  # modest, to balance concurrency against provider rate limits
 
-# One budget per section, trimmed before assembly. Receipt: docs/constants.md "FORECASTS_SECTION_CHAR_LIMIT".
+# Standalone section caps for explicit `trim_section` callers; published comments use COMMENT_CHAR_LIMIT once.
 FORECASTS_SECTION_CHAR_LIMIT: int = 89_999
 RESEARCH_SECTION_CHAR_LIMIT: int = 44_999
 SUMMARY_SECTION_CHAR_LIMIT: int = 13_999
@@ -582,6 +582,8 @@ GAP_FILL_IMAGE_MAX_LEADS: int = 3
 GAP_FILL_IMAGE_LEADS_MAX_CHARS: int = 1000
 GAP_FILL_IMAGE_METADATA_MAX_CHARS: int = 160
 GAP_FILL_V2_TOOL_BUDGET_LINE_RESERVE_CHARS: int = 512
+GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS: int = 1600
+GAP_FILL_V2_EVIDENCE_FINDING_MAX_CHARS: int = 3000
 # terra-low won the blind 5-arm replay eval 2026-07-17; terra->sol (GPT-6, no Terra successor)
 # 2026-09-22; gpt-6-sol -> gpt-6.1-sol 2026-09-29, effort default unchanged at low.
 # Receipt: docs/constants.md "GAP_FILL_V2_DRIVER_MODEL".

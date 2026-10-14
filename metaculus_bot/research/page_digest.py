@@ -7,7 +7,8 @@ not trust a lexical ranker as the primary mechanism (decision of 2026-09-09, rec
 the page and returns the passages that bear on the caller's query, verbatim and ranked, and a
 literal grounding check drops anything it did not copy. BM25 keeps two jobs: the free pre-filter
 that cuts a very long page to a few thousand tokens before the model reads it, and the fallback
-when the call fails, returns nothing grounded, or cannot fit inside the caller's remaining wall.
+when the call fails, returns no grounded passage, or cannot fit inside the caller's remaining wall.
+An empty, valid extractor answer is a no-match result and is never replaced with BM25 candidates.
 The fallback is exactly the digest both callers shipped before, which is what makes this a
 strictly-safer change on the fetch wall.
 
@@ -27,6 +28,7 @@ import re
 import time
 from dataclasses import dataclass
 from itertools import pairwise
+from typing import Literal
 
 import openai
 from forecasting_tools import GeneralLlm
@@ -45,6 +47,7 @@ from metaculus_bot.constants import (
 from metaculus_bot.fallback_openrouter import build_llm_with_openrouter_fallback
 from metaculus_bot.llm_retry import is_zero_output_failure
 from metaculus_bot.research.document_text import Passage, select_passages
+from metaculus_bot.research.source_evidence import SourceExcerpt
 
 logger = logging.getLogger(__name__)
 
@@ -75,13 +78,6 @@ Return the passages of the page that bear on the query, most relevant first.
 Page text:
 {page_text}"""
 
-# Each is an outcome a healthy deployment produces, and each has one remedy: the free BM25 digest.
-_EXPECTED_CALL_FAILURES: tuple[type[BaseException], ...] = (
-    TimeoutError,  # asyncio.wait_for at the call budget, so the caller's wall never slips
-    openai.APIError,  # the root of every litellm provider and API error (llm_retry.llm_status_code)
-    ValidationError,  # the model answered off-schema, and a second paid attempt cannot fit inside the wall
-)
-
 
 class PageDigestPassages(BaseModel):
     """The extractor's structured answer: the verbatim passages, most relevant first."""
@@ -93,8 +89,9 @@ class PageDigestPassages(BaseModel):
 class PageDigest:
     """What a reader sees of a long page, plus the three counters the fetch marker carries.
 
-    ``passages`` opens with the page's first window whenever the page has one, so a reader still
-    sees what the page is, then the accepted passages in rank order. ``passages_returned`` is the
+    ``passages`` opens with the page's first window when selected passages exist, so a reader still
+    sees what the page is, then the accepted passages in rank order. A valid empty answer carries
+    no opening and no candidate excerpt. ``passages_returned`` is the
     raw count the model answered with and ``passages_grounded`` how many of those were literal
     substrings of the page, so the difference is the model's fabrication count; both are zero when
     no call was made or the call failed before answering. ``fallback_used`` is True whenever the
@@ -106,6 +103,19 @@ class PageDigest:
     passages_grounded: int
     fallback_used: bool
     method: str
+    outcome: Literal[
+        "answered",
+        "valid_empty",
+        "ungrounded",
+        "malformed",
+        "api_error",
+        "timeout",
+        "empty_completion",
+        "insufficient_budget",
+        "empty_page",
+    ]
+    scope: Literal["full_page", "prefiltered_windows"]
+    evidence_passages: tuple[SourceExcerpt, ...]
 
 
 async def digest_page(text: str, query: str, *, budget_seconds: float) -> PageDigest:
@@ -116,7 +126,8 @@ async def digest_page(text: str, query: str, *, budget_seconds: float) -> PageDi
     PAGE_DIGEST_WALL_MARGIN_S)`` and not attempted at all below ``PAGE_DIGEST_MIN_CALL_BUDGET_S`` or
     on an empty page, so a caller can hand over its remaining wall verbatim. The expected call
     failures and forecasting-tools' empty-completion ``RuntimeError`` degrade to the BM25 digest
-    with ``fallback_used=True``, as does an answer with nothing grounded; an answer whose grounded
+    with ``fallback_used=True``, as does an answer with nothing grounded; a valid empty answer
+    returns no passages and is not a fallback; an answer whose grounded
     passages all lie inside the opening returns the opening alone with ``fallback_used=False``;
     any other exception (the ``None``-content ``AssertionError`` included) propagates.
     """
@@ -126,10 +137,29 @@ async def digest_page(text: str, query: str, *, budget_seconds: float) -> PageDi
     call_budget = min(
         PAGE_DIGEST_EXTRACTOR_TIMEOUT_S, budget_seconds - (time.monotonic() - started) - PAGE_DIGEST_WALL_MARGIN_S
     )
-    if not text.strip() or call_budget < PAGE_DIGEST_MIN_CALL_BUDGET_S:
-        why = "empty page" if not text.strip() else f"{call_budget:.1f} s left, under the call floor"
-        logger.info(f"PAGE_DIGEST no call ({why}); serving the BM25 digest")
-        return _bm25_digest(ranked, opening=opening, passages_returned=0, passages_grounded=0)
+    scope: Literal["full_page", "prefiltered_windows"] = (
+        "full_page" if len(text) <= PAGE_DIGEST_PREFILTER_MAX_CHARS else "prefiltered_windows"
+    )
+    if not text.strip():
+        logger.info("PAGE_DIGEST no call (empty page); no passages to serve")
+        return _bm25_digest(
+            ranked,
+            opening=opening,
+            passages_returned=0,
+            passages_grounded=0,
+            outcome="empty_page",
+            scope="full_page",
+        )
+    if call_budget < PAGE_DIGEST_MIN_CALL_BUDGET_S:
+        logger.info(f"PAGE_DIGEST no call ({call_budget:.1f} s left, under the call floor); serving BM25 candidates")
+        return _bm25_digest(
+            ranked,
+            opening=opening,
+            passages_returned=0,
+            passages_grounded=0,
+            outcome="insufficient_budget",
+            scope=scope,
+        )
 
     prompt = PAGE_DIGEST_EXTRACTOR_PROMPT.format(
         query=query, max_passages=DOCUMENT_DIGEST_TOP_K, page_text=_prefiltered_text(text, ranked)
@@ -137,25 +167,83 @@ async def digest_page(text: str, query: str, *, budget_seconds: float) -> PageDi
     try:
         raw = await asyncio.wait_for(_build_extractor().invoke(prompt), timeout=call_budget)
         returned = PageDigestPassages.model_validate_json(raw).passages
-    except _EXPECTED_CALL_FAILURES as exc:
+    except TimeoutError as exc:
         logger.warning(f"PAGE_DIGEST extractor call failed ({type(exc).__name__}); serving the BM25 digest")
-        return _bm25_digest(ranked, opening=opening, passages_returned=0, passages_grounded=0)
+        return _bm25_digest(
+            ranked,
+            opening=opening,
+            passages_returned=0,
+            passages_grounded=0,
+            outcome="timeout",
+            scope=scope,
+        )
+    except openai.APIError as exc:
+        logger.warning(f"PAGE_DIGEST extractor call failed ({type(exc).__name__}); serving the BM25 digest")
+        return _bm25_digest(
+            ranked,
+            opening=opening,
+            passages_returned=0,
+            passages_grounded=0,
+            outcome="api_error",
+            scope=scope,
+        )
+    except ValidationError as exc:
+        logger.warning(f"PAGE_DIGEST extractor call failed ({type(exc).__name__}); serving the BM25 digest")
+        return _bm25_digest(
+            ranked,
+            opening=opening,
+            passages_returned=0,
+            passages_grounded=0,
+            outcome="malformed",
+            scope=scope,
+        )
     except RuntimeError as exc:
         if not is_zero_output_failure(exc):  # forecasting-tools raises a bare RuntimeError for an empty completion
             raise
         logger.warning("PAGE_DIGEST extractor returned an empty completion; serving the BM25 digest")
-        return _bm25_digest(ranked, opening=opening, passages_returned=0, passages_grounded=0)
+        return _bm25_digest(
+            ranked,
+            opening=opening,
+            passages_returned=0,
+            passages_grounded=0,
+            outcome="empty_completion",
+            scope=scope,
+        )
 
-    grounded, kept = _ground(returned, page_norm, opening)
+    grounded, kept, evidence = _ground(returned, text, page_norm, opening)
+    if not returned:
+        return PageDigest(
+            passages=[],
+            passages_returned=0,
+            passages_grounded=0,
+            fallback_used=False,
+            method=DIGEST_METHOD_LLM_EXTRACTIVE,
+            outcome="valid_empty",
+            scope=scope,
+            evidence_passages=(),
+        )
     if not grounded:
-        logger.warning(f"PAGE_DIGEST nothing grounded ({len(returned)} returned); serving the BM25 digest")
-        return _bm25_digest(ranked, opening=opening, passages_returned=len(returned), passages_grounded=0)
+        logger.warning(f"PAGE_DIGEST nothing grounded ({len(returned)} returned); serving BM25 candidates")
+        return _bm25_digest(
+            ranked,
+            opening=opening,
+            passages_returned=len(returned),
+            passages_grounded=0,
+            outcome="ungrounded",
+            scope=scope,
+        )
     return PageDigest(
         passages=_with_opening(opening, kept[:DOCUMENT_DIGEST_TOP_K]),
         passages_returned=len(returned),
         passages_grounded=grounded,
         fallback_used=False,
         method=DIGEST_METHOD_LLM_EXTRACTIVE,
+        outcome="answered",
+        scope=scope,
+        evidence_passages=tuple(
+            SourceExcerpt(source_url="", text=passage, retrieval_method=DIGEST_METHOD_LLM_EXTRACTIVE)
+            for passage in evidence[:DOCUMENT_DIGEST_TOP_K]
+        ),
     )
 
 
@@ -192,35 +280,81 @@ def _prefiltered_text(text: str, ranked: list[Passage]) -> str:
     return "".join(parts)
 
 
-def _ground(returned: list[str], page_norm: str, opening: str) -> tuple[int, list[str]]:
-    """``(grounded count, kept passages)``: literal substrings of the page, minus repeats and the opening."""
+def _ground(returned: list[str], page_text: str, page_norm: str, opening: str) -> tuple[int, list[str], list[str]]:
+    """Ground passages literally and return exact source slices for evidence."""
     opening_norm = _normalize(opening)
     grounded = 0
     kept: list[str] = []
+    evidence: list[str] = []
     seen: set[str] = set()
     for passage in returned:
         candidate = _normalize(passage)
         if not candidate or candidate not in page_norm:
             continue
         grounded += 1
-        if candidate in opening_norm or candidate in seen:
+        if candidate in seen:
             continue
         seen.add(candidate)
-        kept.append(passage.strip())
-    return grounded, kept
+        source_passage = _source_slice_for_normalized_match(page_text, candidate)
+        evidence.append(source_passage)
+        if candidate not in opening_norm:
+            kept.append(source_passage)
+    return grounded, kept, evidence
 
 
-def _bm25_digest(ranked: list[Passage], *, opening: str, passages_returned: int, passages_grounded: int) -> PageDigest:
-    """Today's deterministic digest off the ranking already computed, with the model's counters carried through."""
+def _bm25_digest(
+    ranked: list[Passage],
+    *,
+    opening: str,
+    passages_returned: int,
+    passages_grounded: int,
+    outcome: Literal[
+        "ungrounded", "malformed", "api_error", "timeout", "empty_completion", "insufficient_budget", "empty_page"
+    ],
+    scope: Literal["full_page", "prefiltered_windows"],
+) -> PageDigest:
+    """The deterministic candidates from the whole-page ranking, with the model outcome retained."""
     opening_norm = _normalize(opening)
     kept = [window.text for window in ranked[:DOCUMENT_DIGEST_TOP_K] if _normalize(window.text) not in opening_norm]
+    empty_page = outcome == "empty_page"
     return PageDigest(
-        passages=_with_opening(opening, kept),
+        passages=_with_opening(opening, kept) if not empty_page else [],
         passages_returned=passages_returned,
         passages_grounded=passages_grounded,
-        fallback_used=True,
+        fallback_used=not empty_page,
         method=DIGEST_METHOD_BM25,
+        outcome=outcome,
+        scope=scope,
+        evidence_passages=tuple(
+            SourceExcerpt(source_url="", text=window.text, retrieval_method="bm25_candidate")
+            for window in ranked[:DOCUMENT_DIGEST_TOP_K]
+        ),
     )
+
+
+def _source_slice_for_normalized_match(page_text: str, candidate: str) -> str:
+    """Return the source substring represented by a passage after whitespace normalization."""
+    normalized_chars: list[str] = []
+    source_spans: list[tuple[int, int]] = []
+    for index, char in enumerate(page_text):
+        if char in "\"'\u2018\u2019\u201c\u201d`":
+            continue
+        if char.isspace():
+            if normalized_chars and normalized_chars[-1] != " ":
+                normalized_chars.append(" ")
+                source_spans.append((index, index + 1))
+            elif source_spans and normalized_chars[-1] == " ":
+                source_spans[-1] = (source_spans[-1][0], index + 1)
+            continue
+        normalized_chars.append(char)
+        source_spans.append((index, index + 1))
+    normalized_page = "".join(normalized_chars).strip()
+    offset = normalized_page.find(candidate)
+    if offset < 0:
+        raise RuntimeError("grounded passage was not found in normalized source text")
+    start, _ = source_spans[offset]
+    _, end = source_spans[offset + len(candidate) - 1]
+    return page_text[start:end]
 
 
 def _opening_passage(text: str) -> str:
