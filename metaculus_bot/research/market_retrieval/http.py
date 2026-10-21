@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import math
+import random
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -30,10 +31,10 @@ logger = logging.getLogger(__name__)
 # Per-HTTP-call cap. The snapshot-level wall sits outside it.
 PLATFORM_HTTP_TIMEOUT = 10.0
 
-# One bounded backoff between retries. Two attempts is the measured sufficiency: the venue
-# fan-out already issues several queries per venue, so a persistent outage is visible
-# without a third attempt and a transient one is covered by the second.
-HTTP_RETRY_BACKOFF_SECS = 0.5
+# Backoff before retry n is element n - 1. The longest venue path has three attempts, so the
+# schedule covers both waits while keeping the budget derivable from the same constants.
+HTTP_RETRY_BACKOFFS_SECS: tuple[float, ...] = (0.5, 1.5)
+HTTP_RETRY_JITTER_BOUNDS: tuple[float, float] = (0.5, 1.5)
 
 # Hard cap on one buffered response body (the search endpoints don't paginate).
 MAX_RESPONSE_BYTES = 10 * 1024 * 1024
@@ -213,15 +214,14 @@ async def http_get_with_backoff(
     label: str,
     component: str | None = None,
 ) -> Any | None:
-    """GET ``url`` with ``max_attempts`` and one bounded backoff between retries.
+    """GET ``url`` with ``max_attempts`` and the scheduled backoffs between retries.
 
     Returns the parsed JSON body on 200, or None on retry exhaustion / a non-200. Caps the
     body at MAX_RESPONSE_BYTES so a runaway upstream cannot blow up memory.
 
     Elapsed time is bounded by ``max_attempts`` alone — ``max_attempts * PLATFORM_HTTP_TIMEOUT``
-    plus ``(max_attempts - 1)`` backoffs, which is what ``_HTTP_STAGE_WORST`` in the seam
-    module computes and folds into the snapshot budget. A separate cumulative-sleep budget
-    would add nothing over that: at every call site here the backoff total is one 0.5s sleep.
+    plus the first ``max_attempts - 1`` scheduled backoffs with jitter, which is what
+    ``_HTTP_STAGE_WORST`` in the seam module computes and folds into the snapshot budget.
 
     ``retryable_statuses`` defaults to (403, 429, 500, 502, 503, 504); anything >= 500 is
     retryable regardless.
@@ -260,10 +260,9 @@ async def _retry_transport_error(
     if attempt + 1 >= max_attempts:
         logger.warning(f"{label} transient error after {attempt + 1} attempts: {exc}")
         return False
-    logger.warning(
-        f"{label} transient error: {exc}; retry {attempt + 2}/{max_attempts} after {HTTP_RETRY_BACKOFF_SECS:.2f}s"
-    )
-    await asyncio.sleep(HTTP_RETRY_BACKOFF_SECS)
+    delay_s = _retry_delay_s(attempt)
+    logger.warning(f"{label} transient error: {exc}; retry {attempt + 2}/{max_attempts} after {delay_s:.2f}s")
+    await asyncio.sleep(delay_s)
     return True
 
 
@@ -281,10 +280,9 @@ async def _process_fetch_outcome(
             if component is not None:
                 RUN_STATUS.record_source_http_failure(component, http_status=outcome.status)
             return False, None
-        logger.warning(
-            f"{label} HTTP {outcome.status}; retry {attempt + 2}/{max_attempts} after {HTTP_RETRY_BACKOFF_SECS:.2f}s"
-        )
-        await asyncio.sleep(HTTP_RETRY_BACKOFF_SECS)
+        delay_s = _retry_delay_s(attempt)
+        logger.warning(f"{label} HTTP {outcome.status}; retry {attempt + 2}/{max_attempts} after {delay_s:.2f}s")
+        await asyncio.sleep(delay_s)
         return True, None
     if isinstance(outcome, _NonRetryableStatus):
         if component is not None:
@@ -300,6 +298,11 @@ def _record_transport_error(component: str | None, exc: TimeoutError | aiohttp.C
         return
     error_type = "timeout" if isinstance(exc, TimeoutError) else "connection_error"
     RUN_STATUS.record_source_failure(component, error_type=error_type)
+
+
+def _retry_delay_s(attempt: int) -> float:
+    """Return the scheduled backoff multiplied by a fresh jitter factor."""
+    return HTTP_RETRY_BACKOFFS_SECS[attempt] * random.uniform(*HTTP_RETRY_JITTER_BOUNDS)  # noqa: S311  # jitter spreads retries, not secrets
 
 
 def flatten_results(results: Sequence[Any], platform: str) -> tuple[list[MarketMatch], _FetchTally]:

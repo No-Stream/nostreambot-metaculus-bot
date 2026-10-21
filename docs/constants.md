@@ -1626,28 +1626,28 @@ venue fan-out and the Manifold detail enrichment. It runs inside `asyncio.gather
 providers, so raising it adds no wall-clock time to the research phase; for scale,
 `NATIVE_SEARCH_WALL_TIMEOUT` is 420, Gemini 360 and AskNews 300.
 
-150 is the ranked pipeline's 131.5 s worst case (the table under the next section) plus margin. It was 30.0 under
-the keyword and fuzzy design, which a roughly 36k-token ranking call and a full catalogue pull do not fit inside.
-`prediction_market.SNAPSHOT_STAGE_BUDGET_S` recomputes that worst case from these constants and WARNs loudly at
-provider init when an env override sits below it, so a stale `PREDICTION_MARKET_TIMEOUT=30` in a `.env` cannot
+210 is the ranked pipeline's 193.0 s worst case (the table under the next section) plus 17 s of margin. It was
+30.0 under the keyword and fuzzy design, which a roughly 36k-token ranking call and a full catalogue pull do not fit
+inside. `prediction_market.SNAPSHOT_STAGE_BUDGET_S` recomputes that worst case from these constants and WARNs loudly
+at provider init when an env override sits below it, so a stale `PREDICTION_MARKET_TIMEOUT=30` in a `.env` cannot
 masquerade as a generic snapshot timeout.
 
 ## Ranked market retrieval (the two LLM stages and the catalogue pull)
 
 Wall caps and backoff ladders for the snapshot's two LLM stages, plus the bounds on the full Kalshi events
-catalogue pull. Each stage's worst case is `(len(backoffs) + 1) * wall + sum(backoffs)`, and the serial chain of
-those worst cases has to fit under `PREDICTION_MARKET_TIMEOUT`. Stages 1a and 1b run concurrently, so the chain
-takes the max of them.
+catalogue pull. An LLM stage's worst case is `(len(backoffs) + 1) * wall + sum(backoffs)`. A venue HTTP stage uses
+the maximum venue attempt count and the backoff schedule multiplied by the jitter upper bound. The serial chain
+has to fit under `PREDICTION_MARKET_TIMEOUT`. Stages 1a and 1b run concurrently, so the chain takes the max of them.
 
-| stage                                   | cap                    | worst |
-|-----------------------------------------|------------------------|-------|
-| 1a Kalshi catalogue (wall)              | 40.0                   |  40   |
-| 1b query author (concurrent with 1a)    | wall 20, backoffs (1,) |  41   |
-| 1a PredictIt dump (concurrent)          | 10 x 2 + 0.5           |  20.5 |
-| 2  venue search                         | 10 x 2 + 0.5           |  20.5 |
-| 2.5 manifold detail fan-out (wall)      | 10.0                   |  10   |
-| 4  ranking                              | wall 60, backoffs ()   |  60   |
-| total                                   | max(41, 40, 20.5) + 20.5 + 10 + 60 | 131.5 |
+| stage                                   | cap                                | worst |
+|-----------------------------------------|------------------------------------|-------|
+| 1a Kalshi catalogue (wall)              | 90.0                               |  90   |
+| 1b query author (concurrent with 1a)    | wall 20, backoffs (1,)             |  41   |
+| 1a PredictIt dump (concurrent)          | 10 x 2 + 0.5 x 1.5                 |  20.75|
+| 2  venue search                         | 10 x 3 + (0.5 + 1.5) x 1.5        |  33   |
+| 2.5 manifold detail fan-out (wall)      | 10.0                               |  10   |
+| 4  ranking                              | wall 60, backoffs ()               |  60   |
+| total                                   | max(90, 41, 20.75) + 33 + 10 + 60  | 193   |
 
 ### MARKET_QUERY_AUTHOR_WALL_TIMEOUT, MARKET_QUERY_AUTHOR_BACKOFFS, MARKET_RANKER_WALL_TIMEOUT, MARKET_RANKER_BACKOFFS
 
@@ -1659,37 +1659,37 @@ universe plus Manifold enrichment, and prefill scales with it.
 ### KALSHI_CATALOGUE_WALL_TIMEOUT, KALSHI_PAGE_SLEEP_S, KALSHI_PREFETCH_EVENT_LIMIT, KALSHI_PREFETCH_MAX_PAGES
 
 The Kalshi catalogue pull gets a wall-clock budget for the whole paginated fetch, retries included, so pagination
-can never push the snapshot past its own timeout. The per-page `aiohttp.ClientTimeout` sits under this wall, not
-beside it.
+can never push the snapshot past its own timeout. The per-page `aiohttp.ClientTimeout` uses the time remaining
+inside this wall, so it sits under the wall rather than beside it.
 
-`KALSHI_PAGE_SLEEP_S` at 0.25 is measured, on the value itself. Six full cold pulls through the real
-`kalshi_prefetch_events` (2026-08-04 and 05, free unauthenticated GETs,
-`scratch/market_port_2026-08-04/kalshi_page_sleep_probe.py`, receipts in that directory's `qa_artifacts/`) all
-completed: 10,083 to 10,093 events over 51 pages every time, zero 429s, wall 16.90 to 25.37 s against this 40 s
-cap. Compare the zero-sleep baseline it replaced, an HTTP 429 on 2 of 4 pulls with 8 to 18% of the catalogue lost,
-and the 0.25 value is doing the work it was introduced for. That matters because a 429 is deliberately
-non-retryable for this venue: the pull stops, reports incomplete, and bumps both degradation counters, so the
-sleep value can redden CI on a condition it causes.
+The limits are sized to catalogue growth. The open catalogue was about 10.1k events over 51 pages on 2026-08-04,
+when the wall was 40 s, and about 15,200 events over 76 pages on 2026-10-17, roughly 70 events a day. Three
+production pulls that week hit the 40 s wall near page 76, at about 0.53 s per page under the old 0.25 s sleep.
+`KALSHI_PREFETCH_EVENT_LIMIT` at 30,000 and `KALSHI_PREFETCH_MAX_PAGES` at 150 (the endpoint's maximum page is 200
+events) cover about six months of that growth, and a pull that reaches either bound with the cursor still open
+reports itself truncated, so running out shows up as an alert rather than a silently short universe. The 90 s
+wall fits 150 pages at the old 0.53 s per page, and comfortably at the measured rate under the current sleep.
 
-The wall decomposes exactly, which is what makes the headroom trustworthy rather than lucky: 50 sleeps times 0.25
-is 12.50 s fixed, plus 4.29 to 12.77 s of actual fetch, with a residual of about 0.10 s. So the sleep is half to
-three-quarters of the elapsed pull and the worst observed case used 63% of the wall. Only the run's first question
-pays it, thanks to a 6-hour TTL cache, and it does not move `SNAPSHOT_STAGE_BUDGET_S`, since stage 1a already
-takes the max of the author wall, this wall and the HTTP stage.
+`KALSHI_PAGE_SLEEP_S` at 0.1 is measured, on the value itself. Four full cold pulls through the real
+`kalshi_prefetch_events` on 2026-10-21 (free unauthenticated GETs, 60 s apart, with the 90 s wall and the new
+bounds, via `scratch/market_port_2026-08-04/kalshi_page_sleep_probe.py`; receipt
+`qa_artifacts/kalshi_page_sleep_probe_2026-10-21_sleep0.1_wall90.json`) all completed: 14,929 to 14,940 events
+over 75 pages, zero 429s, wall 22.68 to 29.02 s. The August history is why the sleep exists at all: at zero sleep 2
+of 4 pulls took an HTTP 429 and lost 8 to 18% of the catalogue, while six pulls at 0.25 s were clean. Kalshi
+documents 20 reads a second for an authenticated basic account and states no unauthenticated limit, and 0.1 s
+paces the pull at roughly 3 requests a second. A 429 is deliberately non-retryable for this venue: the pull stops,
+reports incomplete and bumps both degradation counters, so a 429 returning is the signal to raise the sleep again,
+with the wall as the other lever. The probe was run from a residential IP, not a shared Actions runner, which is
+the one condition it did not cover.
 
-Headroom to raise it if a 429 ever returns: 0.3 projects to about 27.8 s and 0.4 to about 32.8 s at the worst
-measured fetch, so 0.4 is the practical ceiling under this wall. Beyond it `attempt_budget`, which doubles as the
-per-page HTTP timeout, starves the late pages and trades throttle-loss for wall-timeout-loss, bumping the same two
-counters. Raising the wall alongside is the other lever.
+A note for re-probing: in August, back-to-back pulls 60 s apart got monotonically slower while 120 s gaps stayed
+flat, which looks like soft rate pressure that drains. Space probe pulls out, or the probe's own cadence produces
+the slowdown it reports.
 
-One residual observation, benign but worth knowing before re-probing: back-to-back pulls 60 s apart got
-monotonically slower (fetch 4.47, then 8.15, then 12.77 s), and the same cadence at 120 s gaps stayed flat (4.29,
-4.41, 7.11 s). That looks like soft rate pressure that drains, never a 429, and prod pulls the catalogue once per
-run, so it constrains probe design (space pulls out, or a probe's own cadence manufactures the slowdown it
-reports) rather than the constant.
-
-`KALSHI_PREFETCH_EVENT_LIMIT` is a runaway guard well above the roughly 10.1k live open events;
-`KALSHI_PREFETCH_MAX_PAGES` is the real bound.
+Only a complete pull enters the 6-hour cache. An incomplete pull still serves the requesters already sharing its
+single-flight fetch, but it is not cached, so each later question that arrives after that fetch finishes starts a
+new pull and pays the wall again. Each Actions run is a fresh process, so every run that forecasts anything pays
+for one full pull.
 
 ## Time-Series Anchor Provider (Phase B)
 

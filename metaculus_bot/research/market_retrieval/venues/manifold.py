@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 MANIFOLD_SEARCH_URL = "https://api.manifold.markets/v0/search-markets"
 MANIFOLD_MARKET_URL = "https://api.manifold.markets/v0/market"
 
-MANIFOLD_MAX_ATTEMPTS = 2
+MANIFOLD_MAX_ATTEMPTS = 3
 
 # The ONE ``outcomeType`` whose market-level ``probability`` is a probability — see the module
 # docstring for why this is an allow-list. Every other type either publishes that field as null
@@ -277,14 +277,14 @@ async def manifold_market_detail(session: Any, market_id: str) -> dict[str, Any]
 
     ``None`` on any failure, which the enrichment hook treats as "leave the row title-only":
     a lost detail GET costs no recall, only rules text and — on a multi-outcome row — its only
-    price. One attempt, no retry — 60 of these fire per question under a 10s fan-out wall, and a
-    row's description is not worth spending that wall on twice.
+    price. Two attempts recover one transient response failure; the enrichment hook still bounds
+    all detail requests together under its 10s fan-out wall.
     """
     payload = await http_get_with_backoff(
         session,
         f"{MANIFOLD_MARKET_URL}/{market_id}",
         {},
-        max_attempts=1,
+        max_attempts=2,
         retryable_statuses=(429, 500, 502, 503, 504),
         label=f"Manifold detail id={market_id[:40]!r}",  # HARNESS-SCAN-EXEMPT-subsampling  # log-label truncation
     )

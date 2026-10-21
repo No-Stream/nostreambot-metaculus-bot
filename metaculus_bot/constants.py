@@ -712,8 +712,9 @@ NUMERIC_STACKING_ENABLED_ENV: str = "NUMERIC_STACKING_ENABLED"
 # Hard-disabled under is_benchmarking. Receipt: docs/constants.md "PREDICTION_MARKETS_ENABLED_ENV".
 PREDICTION_MARKETS_ENABLED_ENV: str = "PREDICTION_MARKETS_ENABLED"
 
-# 150 is the ranked pipeline's 131.5 s worst case plus margin. Receipt: docs/constants.md "PREDICTION_MARKET_TIMEOUT".
-PREDICTION_MARKET_TIMEOUT: float = float(os.environ.get("PREDICTION_MARKET_TIMEOUT", "150.0"))
+# 210 is the ranked pipeline's 193.0 s worst case plus 17 s margin.
+# Receipt: docs/constants.md "PREDICTION_MARKET_TIMEOUT".
+PREDICTION_MARKET_TIMEOUT: float = float(os.environ.get("PREDICTION_MARKET_TIMEOUT", "210.0"))
 
 # --- Ranked market retrieval (the two LLM stages and the catalogue pull) ---
 
@@ -723,11 +724,11 @@ MARKET_QUERY_AUTHOR_BACKOFFS: tuple[float, ...] = (1.0,)
 MARKET_RANKER_WALL_TIMEOUT: float = 60.0
 MARKET_RANKER_BACKOFFS: tuple[float, ...] = ()
 
-# KALSHI_PAGE_SLEEP_S is measured on the value itself. Receipt: docs/constants.md "KALSHI_CATALOGUE_WALL_TIMEOUT".
-KALSHI_CATALOGUE_WALL_TIMEOUT: float = 40.0
-KALSHI_PAGE_SLEEP_S: float = 0.25
-KALSHI_PREFETCH_EVENT_LIMIT: int = 20_000
-KALSHI_PREFETCH_MAX_PAGES: int = 120
+# The open-events catalogue grew by about 70 events/day. Capacity and wall receipt: docs/constants.md.
+KALSHI_CATALOGUE_WALL_TIMEOUT: float = 90.0
+KALSHI_PAGE_SLEEP_S: float = 0.1
+KALSHI_PREFETCH_EVENT_LIMIT: int = 30_000
+KALSHI_PREFETCH_MAX_PAGES: int = 150
 
 # --- Time-Series Anchor Provider (Phase B) ---
 

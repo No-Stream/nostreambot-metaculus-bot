@@ -785,15 +785,15 @@ binding constraint: a perfect ranker over the pool that already exists reaches
 Four stages per question:
 
 1. **Catalogue prefetch**, concurrent with a **query author**. Kalshi's complete
-   open-events catalogue (~10k open events, streamed from `/events`) is paginated
+   open-events catalogue (about 15.2k events on 2026-10-17, streamed from `/events`) is paginated
    (`KALSHI_CATALOGUE_WALL_TIMEOUT`,
    `KALSHI_PREFETCH_MAX_PAGES`, `KALSHI_PAGE_SLEEP_S` between pages) and projected
    down as each page streams in, tiered so that only the fields read across an
    event's nested markets are kept past the first one. It is cached for
-   `KALSHI_CACHE_TTL_S` only if it **completed**: a pull cut short by a 429, the wall
-   or a runaway bound still serves the question that paid for it, but pinning that
-   partial list would let one blip on the first question starve the whole run. Both
-   catalogues are pulled SINGLE-FLIGHT, one pull per cache key at a time: the TTL
+   `KALSHI_CACHE_TTL_S` only if it **completed**: a partial pull serves callers already
+   sharing its single-flight fetch, but is not cached. A later question after that pull
+   finishes starts or joins a new fetch. Both catalogues use SINGLE-FLIGHT, one pull per
+   cache key at a time: the TTL
    check cannot see a pull that has started and not finished, so a run's concurrent
    questions used to open one whole pagination each against the same venue and be
    rate-limited for it. Callers arriving while a pull is in flight await that pull and

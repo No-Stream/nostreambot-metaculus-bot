@@ -433,7 +433,7 @@ def no_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
     a suite mysteriously slow rather than red. The second target is the SUBMODULE, not the
     `venues` package: the package re-export is a separate binding the pull never reads.
     """
-    monkeypatch.setattr("metaculus_bot.research.market_retrieval.http.HTTP_RETRY_BACKOFF_SECS", 0.0)
+    monkeypatch.setattr("metaculus_bot.research.market_retrieval.http.HTTP_RETRY_BACKOFFS_SECS", (0.0, 0.0))
     monkeypatch.setattr(venues.kalshi, "HTTP_RETRY_BACKOFF_SECS", 0.0)
 
 
