@@ -13,12 +13,12 @@ not a code bug.
 
 ``verify_api_identity`` makes an unauthenticated request (no token, no headers)
 to the posts list under the given API base URL and confirms the host behaves
-like the real API before any authenticated call runs. A read timeout gets one
-additional attempt capped at two seconds; identity responses and other failures
-are never retried. ``verify_metaculus_api_identity``
-is the Metaculus run modes' wrapper over it; the Mantic run mode calls
-``verify_api_identity`` with ``MANTIC_API_BASE_URL`` directly, so a Mantic run
-never depends on Metaculus DNS health. Two jobs:
+like the real API before any authenticated call runs. A transport failure or
+transient/server-error response gets one retry after five seconds, using the
+same full timeout. Other responses are evaluated immediately for identity.
+``verify_metaculus_api_identity`` is the Metaculus run modes' wrapper over it;
+the Mantic run mode calls ``verify_api_identity`` with ``MANTIC_API_BASE_URL``
+directly, so a Mantic run never depends on Metaculus DNS health. Two jobs:
 
 1. Never send the token to a host we haven't sanity-checked — the preflight
    itself carries no credentials.
@@ -38,13 +38,12 @@ one call; that is an accepted trade — GHA runners have direct egress, and the
 no-credentials-to-an-unknown-host invariant wins over honoring ambient network
 config for a single identity probe.
 
-The identity gate does not retry HTTP responses, including transient statuses:
-it cannot establish identity from them, so the run remains fail-shut. A read
-timeout is the sole exception because no response arrived to evaluate; after
-that one initial timeout, the gate makes one retry with a two-second timeout
-cap. Both attempts use the same isolated session without credentials. Retries
-with the token attached belong to ``fetch_hardening``, which runs only after
-identity is established.
+The retry is safe because both attempts use the same isolated session without
+credentials; retrying cannot send a token or ambient netrc credentials to an
+unvetted host. A transient response still cannot establish identity, so a
+second transient/server-error response fails shut as unreachable. Retries with
+the token attached belong to ``fetch_hardening``, which runs only after identity
+is established.
 
 Signatures observed live:
 
@@ -63,6 +62,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 from urllib.parse import urlparse
 
@@ -115,12 +115,10 @@ _AUTH_GATED_STATUSES = frozenset({401, 403})
 
 # Transient edge conditions the real Metaculus front door emits under load
 # (see fetch_hardening._RETRYABLE_STATUSES and the 2026-05-19 CDN-403 incident).
-# We still abort — we can't confirm identity — but with a throttle-flavored
-# message so the operator doesn't chase a phantom hijack.
 _TRANSIENT_STATUSES = frozenset({408, 429, 502, 503, 504})
 
-# Bound the extra startup delay after the normal preflight request times out.
-_READ_TIMEOUT_RETRY_CAP_SECONDS = 2.0
+# One retry gives short edge incidents time to clear without creating a long startup loop.
+_RETRY_DELAY_SECONDS = 5.0
 
 # Cap on the body echoed into an ApiIdentityError, shared with the Mantic preflight so both gates document one cap.
 BODY_PREVIEW_CHARS = 200
@@ -144,6 +142,16 @@ class ApiIdentityError(RuntimeError):
     """
 
 
+class ApiUnreachableError(ApiIdentityError):
+    """Raised when a preflight attempt cannot reach a response that verifies API identity."""
+
+    http_status: int | None
+
+    def __init__(self, message: str, *, http_status: int | None) -> None:
+        super().__init__(message)
+        self.http_status = http_status
+
+
 def _parse_json_object(body: str) -> dict[str, Any] | None:
     """Parse ``body`` as JSON, returning the object as a dict or None if it isn't a JSON object."""
     try:
@@ -158,42 +166,77 @@ def verify_api_identity(base_url: str, *, timeout: float = 20.0) -> None:
 
     Sends an unauthenticated GET (no token, no headers) to ``{base_url}/posts/?limit=1``
     through an isolated ``trust_env=False`` session (so no netrc/env credential is
-    attached). Retries once with a two-second timeout cap only if the first request
-    raises ``ReadTimeout``. Passes silently on a real API's fingerprint — an auth-gated 401/403
-    (Metaculus without a token) or a 200 JSON object carrying ``results`` (Metaculus with
-    a token; Mantic, whose posts list is public); raises ``ApiIdentityError`` with a
-    diagnostic naming the vetted host on anything else. HTTP responses and other transport
-    failures are never retried — see module docstring.
+    attached). Retries once after :data:`_RETRY_DELAY_SECONDS` on a request transport
+    failure or a transient/5xx response, using the same timeout. Passes silently on a
+    real API's fingerprint — an auth-gated 401/403 (Metaculus without a token) or a
+    200 JSON object carrying ``results`` (Metaculus with a token; Mantic, whose posts
+    list is public); raises ``ApiIdentityError`` for identity mismatches and
+    ``ApiUnreachableError`` if the retry also fails transiently.
     """
     url = _preflight_url(base_url)
     host = urlparse(base_url).hostname or base_url
     preflight = f"API identity preflight for {host}"
-    try:
-        with requests.Session() as session:
-            session.trust_env = False  # do not let ~/.netrc or proxy env inject credentials
-            try:
-                response = session.get(url, timeout=timeout, allow_redirects=False)
-            except requests.ReadTimeout:
-                try:
-                    response = session.get(
-                        url,
-                        timeout=min(timeout, _READ_TIMEOUT_RETRY_CAP_SECONDS),
-                        allow_redirects=False,
-                    )
-                except requests.RequestException as retry_error:
-                    raise ApiIdentityError(
-                        f"{preflight} timed out waiting for a response from {url!r} on its first request; "
-                        f"the bounded retry failed ({type(retry_error).__name__}: {retry_error}). "
-                        "API identity remains unverified; a later retry of the whole run is appropriate; "
-                        "do NOT retry with credentials."
-                    ) from retry_error
-    except requests.RequestException as e:
-        raise ApiIdentityError(
-            f"{preflight} request for {url!r} failed ({type(e).__name__}: {e}); "
-            "could not verify API identity. "
-            f"Do NOT retry with credentials; check `dig {host}` and the platform's status channels."
-        ) from e
+    with requests.Session() as session:
+        session.trust_env = False  # do not let ~/.netrc or proxy env inject credentials
+        try:
+            response = session.get(url, timeout=timeout, allow_redirects=False)
+        except requests.RequestException:
+            time.sleep(_RETRY_DELAY_SECONDS)
+            response = _retry_preflight_request(session, url, timeout, host)
+        else:
+            if _is_unreachable_status(response.status_code):
+                time.sleep(_RETRY_DELAY_SECONDS)
+                response = _retry_preflight_request(session, url, timeout, host, first_status=response.status_code)
 
+        status = response.status_code
+        if _is_unreachable_status(status):
+            body_preview = response.text[:BODY_PREVIEW_CHARS]
+            if status in _TRANSIENT_STATUSES:
+                raise ApiUnreachableError(
+                    f"{preflight} got {status=} from {url!r} "
+                    f"(first {BODY_PREVIEW_CHARS} chars: {body_preview!r}); transient edge throttle/server "
+                    "condition — not necessarily an identity problem; a later retry of the whole run is "
+                    "appropriate; do NOT retry with credentials now.",
+                    http_status=status,
+                )
+            raise ApiUnreachableError(
+                f"{preflight} got {status=} from {url!r} "
+                f"(first {BODY_PREVIEW_CHARS} chars: {body_preview!r}); genuine or transient server error "
+                f"from {host}; a later retry of the whole run may be appropriate; do NOT retry with credentials.",
+                http_status=status,
+            )
+
+        _validate_api_identity_response(response, host, preflight, url)
+
+
+def _retry_preflight_request(
+    session: requests.Session, url: str, timeout: float, host: str, *, first_status: int | None = None
+) -> requests.Response:
+    """Retry once with the same unauthenticated session and full request timeout."""
+    preflight = f"API identity preflight for {host}"
+    try:
+        return session.get(url, timeout=timeout, allow_redirects=False)
+    except requests.RequestException as retry_error:
+        first_attempt = (
+            "failed without a response on both attempts"
+            if first_status is None
+            else f"retry after {first_status=} failed without a response"
+        )
+        raise ApiUnreachableError(
+            f"{preflight} request for {url!r} {first_attempt} "
+            f"({type(retry_error).__name__}: {retry_error}); API identity remains unverified; "
+            f"a later retry of the whole run is appropriate; check `dig {host}` and platform status channels; "
+            "do NOT retry with credentials.",
+            http_status=None,
+        ) from retry_error
+
+
+def _is_unreachable_status(status: int) -> bool:
+    return status in _TRANSIENT_STATUSES or 500 <= status < 600
+
+
+def _validate_api_identity_response(response: requests.Response, host: str, preflight: str, url: str) -> None:
+    """Accept the known API fingerprints and reject other non-transient responses."""
     status = response.status_code
     body_preview = response.text[:BODY_PREVIEW_CHARS]
 
@@ -209,22 +252,6 @@ def verify_api_identity(base_url: str, *, timeout: float = 20.0) -> None:
         raise ApiIdentityError(
             f"{preflight} got {status=} from {url!r} but the body is not the expected JSON results "
             f"payload (first {BODY_PREVIEW_CHARS} chars: {body_preview!r}); {_hijack_hint(host)}."
-        )
-
-    if status in _TRANSIENT_STATUSES:
-        raise ApiIdentityError(
-            f"{preflight} got {status=} from {url!r} "
-            f"(first {BODY_PREVIEW_CHARS} chars: {body_preview!r}); transient edge throttle/server condition — "
-            "not necessarily a hijack; a later retry of the whole run is appropriate; "
-            "do NOT retry with credentials now."
-        )
-
-    if 500 <= status < 600:
-        raise ApiIdentityError(
-            f"{preflight} got {status=} from {url!r} "
-            f"(first {BODY_PREVIEW_CHARS} chars: {body_preview!r}); cannot verify API identity. "
-            f"This may be a genuine {host} server error rather than a hijack, but the run is useless either way. "
-            "Do NOT retry with credentials; check the platform's status channels."
         )
 
     # Any other status — 404, a 3xx redirect (allow_redirects=False keeps it a

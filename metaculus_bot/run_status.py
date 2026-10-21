@@ -16,8 +16,10 @@ from collections import Counter
 from pathlib import Path
 from typing import Literal, TypedDict
 
+from requests import Timeout as RequestsTimeout
+
 from metaculus_bot.degradation_counters import DegradationSnapshot
-from metaculus_bot.http_status import http_status_from_exception
+from metaculus_bot.http_status import http_status_from_exception, iter_cause_chain
 from metaculus_bot.research.provider_diagnostics import is_lost_source
 
 logger = logging.getLogger(__name__)
@@ -154,7 +156,13 @@ def _error_type_from_name(error_type: str | None) -> str:
         return "authentication_error"
     if error_type in {"Timeout", "TimeoutError", "ReadTimeout", "ConnectTimeout"}:
         return "timeout"
-    if error_type in {"ConnectError", "ConnectionError", "ClientConnectorError", "ConnectionResetError"}:
+    if error_type in {
+        "ApiUnreachableError",
+        "ConnectError",
+        "ConnectionError",
+        "ClientConnectorError",
+        "ConnectionResetError",
+    }:
         return "connection_error"
     return "provider_failure"
 
@@ -543,9 +551,14 @@ def safe_error_type_from_exception(exc: BaseException) -> str:
     if http_status_from_exception(exc) is not None:
         return "http_error"
 
+    class_name = type(exc).__name__
+    if class_name == "ApiUnreachableError":
+        if any(isinstance(cause, (TimeoutError, RequestsTimeout)) for cause in iter_cause_chain(exc)):
+            return "timeout"
+        return "connection_error"
+
     if isinstance(exc, TimeoutError):
         return "timeout"
-    class_name = type(exc).__name__
     if class_name in {
         "ConnectError",
         "ConnectionError",

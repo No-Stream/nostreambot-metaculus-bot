@@ -3,8 +3,18 @@ from __future__ import annotations
 import json
 from dataclasses import fields
 
+import requests
+
+from metaculus_bot import api_preflight
 from metaculus_bot.degradation_counters import DegradationSnapshot
-from metaculus_bot.run_status import COUNT_UNITS, RunStatus, _source_token_evidence
+from metaculus_bot.http_status import http_status_from_exception
+from metaculus_bot.run_status import (
+    COUNT_UNITS,
+    RunStatus,
+    _error_type_from_name,
+    _source_token_evidence,
+    safe_error_type_from_exception,
+)
 
 
 def test_run_status_serializes_counts_by_unit_without_error_text(tmp_path) -> None:
@@ -212,6 +222,40 @@ def test_source_token_evidence_uses_shared_health_rule_and_preserves_lost_causes
     assert _source_token_evidence("http_403") == (True, "http_error", 403)
     assert _source_token_evidence("error(http_503)") == (True, "http_error", 503)
     assert _source_token_evidence("timeout") == (True, "timeout", None)
+
+
+def test_api_unreachable_status_maps_to_http_error() -> None:
+    error = api_preflight.ApiUnreachableError("temporary edge failure", http_status=502)
+
+    assert http_status_from_exception(error) == 502
+    assert safe_error_type_from_exception(error) == "http_error"
+
+
+def test_api_unreachable_timeout_maps_to_timeout() -> None:
+    error = api_preflight.ApiUnreachableError("request timed out", http_status=None)
+    error.__cause__ = requests.ReadTimeout("response stalled")
+
+    assert http_status_from_exception(error) is None
+    assert safe_error_type_from_exception(error) == "timeout"
+
+
+def test_api_unreachable_connection_failure_maps_to_connection_error() -> None:
+    error = api_preflight.ApiUnreachableError("host unavailable", http_status=None)
+    error.__cause__ = requests.ConnectionError("connection reset")
+
+    assert http_status_from_exception(error) is None
+    assert safe_error_type_from_exception(error) == "connection_error"
+
+
+def test_api_unreachable_name_uses_existing_connection_error_category() -> None:
+    assert _error_type_from_name("ApiUnreachableError") == "connection_error"
+
+
+def test_plain_api_identity_error_remains_authentication_error() -> None:
+    error = api_preflight.ApiIdentityError("identity mismatch")
+
+    assert safe_error_type_from_exception(error) == "authentication_error"
+    assert _error_type_from_name("ApiIdentityError") == "authentication_error"
 
 
 def test_free_text_inside_source_token_never_reaches_the_status_payload() -> None:
