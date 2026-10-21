@@ -42,10 +42,13 @@ def iter_cause_chain(exc: BaseException, max_depth: int = _CAUSE_CHAIN_DEPTH) ->
 def http_status_from_exception(exc: BaseException) -> int | None:
     """Best-effort HTTP status for a requests-shaped exception, or None.
 
-    Prefers a real ``response.status_code`` anywhere in the cause chain, then
-    falls back to ft's own message text.
+    Prefers a typed ``http_status`` attribute, then a real ``response.status_code``
+    anywhere in the cause chain, then ft's own message text.
     """
     for cause in iter_cause_chain(exc):
+        status = getattr(cause, "http_status", None)
+        if isinstance(status, int) and not isinstance(status, bool):
+            return status
         status = getattr(getattr(cause, "response", None), "status_code", None)
         if isinstance(status, int):
             return status

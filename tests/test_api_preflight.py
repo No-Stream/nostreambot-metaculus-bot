@@ -3,9 +3,10 @@
 Motivated by the 2026-07-21 DNS-parking incident — metaculus.com's DNS was
 repointed at a GoDaddy parking host while the bot's scheduled runs kept sending
 ``Authorization: Token $METACULUS_TOKEN`` to the unknown host. The preflight
-makes ONE unauthenticated GET and aborts with a diagnostic if the host doesn't
-behave like the real API, so the token is never leaked to a hijacked host. Since
-the Mantic season it is generic over the API base URL: ``verify_api_identity``
+makes an unauthenticated GET and retries transport failures and transient/server
+responses once. It aborts with a diagnostic if the host doesn't behave like the
+real API, so the token is never leaked to a hijacked host. Since the Mantic
+season it is generic over the API base URL: ``verify_api_identity``
 takes the base, and ``verify_metaculus_api_identity`` is the Metaculus wrapper.
 
 Mocking strategy: patch the HTTP transport (``HTTPAdapter.send``), NOT
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Any
 from unittest.mock import MagicMock, patch
 from urllib.parse import urlparse
 
@@ -29,6 +31,7 @@ from requests.adapters import HTTPAdapter
 from metaculus_bot import api_preflight, cli
 from metaculus_bot.api_preflight import (
     ApiIdentityError,
+    ApiUnreachableError,
     verify_api_identity,
     verify_metaculus_api_identity,
 )
@@ -47,15 +50,22 @@ def _mock_transport(
     body: str = "",
     exc: BaseException | None = None,
     attempt_exceptions: tuple[BaseException | None, ...] | None = None,
+    attempt_responses: tuple[tuple[int, str], ...] | None = None,
 ) -> Iterator[dict]:
     """Stub the HTTP transport so the preflight runs against a fake response.
 
-    Only ``HTTPAdapter.send`` is replaced; the real Session (trust_env=False)
-    still prepares the request, so ``captured["request"]`` reflects exactly what
-    would go on the wire (headers included). Yields a dict populated with the
-    prepared request, the send kwargs, and the send count.
+    Only ``HTTPAdapter.send`` is replaced. The real Session (trust_env=False)
+    still prepares every request; ``Session.get`` is observed and delegates to
+    its original method. Captured requests show the headers, and the capture
+    records each call's arguments and session.
     """
-    captured: dict = {"send_count": 0, "requests": [], "kwargs_by_send": []}
+    captured: dict = {"send_count": 0, "requests": [], "kwargs_by_send": [], "sessions": [], "kwargs_by_get": []}
+    original_get = requests.Session.get
+
+    def capture_get(self: requests.Session, url: str, **kwargs: Any) -> requests.Response:
+        captured["sessions"].append(self)
+        captured["kwargs_by_get"].append(kwargs)
+        return original_get(self, url, **kwargs)
 
     def fake_send(self: HTTPAdapter, request: requests.PreparedRequest, **kwargs: object) -> requests.Response:
         captured["request"] = request
@@ -69,10 +79,20 @@ def _mock_transport(
         )
         if attempt_exc is not None:
             raise attempt_exc
-        assert status is not None  # a non-exception transport stub must supply a status
-        return text_response(body, status=status, url=request.url or api_preflight.preflight_url(), request=request)
+        attempt_status, attempt_body = (
+            attempt_responses[attempt_index]
+            if attempt_responses and attempt_index < len(attempt_responses)
+            else (status, body)
+        )
+        assert attempt_status is not None  # a non-exception transport stub must supply a status
+        return text_response(
+            attempt_body,
+            status=attempt_status,
+            url=request.url or api_preflight.preflight_url(),
+            request=request,
+        )
 
-    with patch.object(HTTPAdapter, "send", fake_send):
+    with patch.object(HTTPAdapter, "send", fake_send), patch.object(requests.Session, "get", capture_get):
         yield captured
 
 
@@ -127,38 +147,61 @@ class TestRaisesOnImposterHost:
         # allow_redirects=False: the lander redirect must stay visible as a 3xx.
         assert captured["send_count"] == 1
 
-    def test_500_raises_with_server_error_flavor(self) -> None:
+    def test_500_raises_as_unreachable_with_server_error_flavor(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(api_preflight, "_RETRY_DELAY_SECONDS", 0)
         with (
-            _mock_transport(status=500, body="Internal Server Error"),
-            pytest.raises(ApiIdentityError, match="server error"),
+            _mock_transport(
+                attempt_responses=((500, "Internal Server Error"), (500, "Internal Server Error")),
+            ) as captured,
+            pytest.raises(ApiUnreachableError, match="server error") as excinfo,
         ):
             verify_metaculus_api_identity()
+        assert excinfo.value.http_status == 500
+        assert captured["send_count"] == 2
 
-    def test_connection_error_raises_chained(self) -> None:
+    def test_connection_error_retries_and_raises_chained(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(api_preflight, "_RETRY_DELAY_SECONDS", 0)
         original = requests.ConnectionError("dns down")
-        with _mock_transport(exc=original), pytest.raises(ApiIdentityError) as excinfo:
+        with (
+            _mock_transport(attempt_exceptions=(original, original)) as captured,
+            pytest.raises(ApiUnreachableError) as excinfo,
+        ):
             verify_metaculus_api_identity()
         assert excinfo.value.__cause__ is original
+        assert excinfo.value.http_status is None
+        assert captured["send_count"] == 2
 
-    def test_timeout_raises_chained(self) -> None:
+    def test_timeout_retries_and_raises_chained(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(api_preflight, "_RETRY_DELAY_SECONDS", 0)
         original = requests.Timeout("slow")
-        with _mock_transport(exc=original) as captured, pytest.raises(ApiIdentityError) as excinfo:
+        with (
+            _mock_transport(attempt_exceptions=(original, original)) as captured,
+            pytest.raises(ApiUnreachableError) as excinfo,
+        ):
             verify_metaculus_api_identity()
         assert excinfo.value.__cause__ is original
-        assert captured["send_count"] == 1
+        assert excinfo.value.http_status is None
+        assert captured["send_count"] == 2
 
 
 class TestTransientEdgeStatuses:
-    """Transient front-door conditions get a throttle-flavored message, not the hijack hint."""
+    """Transient front-door conditions are retried once and reported as unreachable."""
 
     @pytest.mark.parametrize("status", [408, 429, 502, 503, 504])
-    def test_transient_status_raises_without_hijack_hint(self, status: int) -> None:
+    def test_transient_status_retries_once_without_hijack_hint(
+        self, status: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(api_preflight, "_RETRY_DELAY_SECONDS", 0)
         with (
-            _mock_transport(status=status, body="Too Many Requests"),
-            pytest.raises(ApiIdentityError, match="transient") as excinfo,
+            _mock_transport(
+                attempt_responses=((status, "Too Many Requests"), (status, "Too Many Requests"))
+            ) as captured,
+            pytest.raises(ApiUnreachableError, match="transient") as excinfo,
         ):
             verify_metaculus_api_identity()
         message = str(excinfo.value)
+        assert excinfo.value.http_status == status
+        assert captured["send_count"] == 2
         # Must not carry the DNS-parking/hijack diagnostic (its distinctive tokens).
         assert "parking" not in message
         assert "dig " not in message
@@ -166,9 +209,34 @@ class TestTransientEdgeStatuses:
 
 
 class TestReadTimeoutRetry:
-    """A read timeout gets one short unauthenticated retry before the gate fails shut."""
+    """Any request failure gets one full-timeout retry before the gate fails shut."""
 
-    def test_read_timeout_retries_once_with_short_timeout_and_no_credentials(self) -> None:
+    def test_transient_status_then_results_passes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(api_preflight, "_RETRY_DELAY_SECONDS", 0)
+        with _mock_transport(attempt_responses=((502, "Bad Gateway"), (200, _MANTIC_POSTS_BODY))) as captured:
+            verify_api_identity(MANTIC_API_BASE_URL)
+
+        assert captured["send_count"] == 2
+        assert [kwargs["timeout"] for kwargs in captured["kwargs_by_send"]] == [20.0, 20.0]
+        assert [kwargs["allow_redirects"] for kwargs in captured["kwargs_by_get"]] == [False, False]
+        assert captured["sessions"][0] is captured["sessions"][1]
+        assert all("Authorization" not in request.headers for request in captured["requests"])
+
+    def test_second_transient_status_raises_unreachable_with_last_status(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(api_preflight, "_RETRY_DELAY_SECONDS", 0)
+        with (
+            _mock_transport(attempt_responses=((502, "Bad Gateway"), (502, "Bad Gateway"))) as captured,
+            pytest.raises(ApiUnreachableError) as excinfo,
+        ):
+            verify_api_identity(MANTIC_API_BASE_URL)
+
+        assert excinfo.value.http_status == 502
+        assert captured["send_count"] == 2
+
+    def test_read_timeout_retries_once_with_full_timeout_and_no_credentials(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(api_preflight, "_RETRY_DELAY_SECONDS", 0)
         with _mock_transport(
             status=200,
             body=_MANTIC_POSTS_BODY,
@@ -177,23 +245,25 @@ class TestReadTimeoutRetry:
             verify_api_identity(MANTIC_API_BASE_URL)
 
         assert captured["send_count"] == 2
-        assert [kwargs["timeout"] for kwargs in captured["kwargs_by_send"]] == [20.0, 2.0]
+        assert [kwargs["timeout"] for kwargs in captured["kwargs_by_send"]] == [20.0, 20.0]
         assert all("Authorization" not in request.headers for request in captured["requests"])
 
-    def test_second_read_timeout_fails_with_read_timeout_diagnostic(self) -> None:
+    def test_second_read_timeout_raises_unreachable_without_status(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(api_preflight, "_RETRY_DELAY_SECONDS", 0)
         first_timeout = requests.ReadTimeout("first response stalled")
         second_timeout = requests.ReadTimeout("retry response stalled")
         with (
             _mock_transport(attempt_exceptions=(first_timeout, second_timeout)) as captured,
-            pytest.raises(ApiIdentityError, match="timed out waiting for a response") as excinfo,
+            pytest.raises(ApiUnreachableError) as excinfo,
         ):
             verify_api_identity(MANTIC_API_BASE_URL)
 
         assert captured["send_count"] == 2
         assert excinfo.value.__cause__ is second_timeout
-        assert "DNS/TLS/connect failure before any response" not in str(excinfo.value)
+        assert excinfo.value.http_status is None
 
-    def test_read_timeout_retry_respects_smaller_caller_timeout(self) -> None:
+    def test_retry_uses_caller_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(api_preflight, "_RETRY_DELAY_SECONDS", 0)
         with _mock_transport(
             status=403,
             body="Permission Error",
@@ -206,11 +276,26 @@ class TestReadTimeoutRetry:
     def test_wrong_identity_response_does_not_retry(self) -> None:
         with (
             _mock_transport(status=404, body="") as captured,
-            pytest.raises(ApiIdentityError),
+            pytest.raises(ApiIdentityError) as excinfo,
         ):
             verify_api_identity(MANTIC_API_BASE_URL)
 
+        assert type(excinfo.value) is ApiIdentityError
         assert captured["send_count"] == 1
+
+    def test_transient_status_then_identity_mismatch_raises_plain_identity_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(api_preflight, "_RETRY_DELAY_SECONDS", 0)
+        with (
+            _mock_transport(attempt_responses=((502, "Bad Gateway"), (404, ""))) as captured,
+            pytest.raises(ApiIdentityError) as excinfo,
+        ):
+            verify_api_identity(MANTIC_API_BASE_URL)
+
+        assert type(excinfo.value) is ApiIdentityError
+        assert not hasattr(excinfo.value, "http_status")
+        assert captured["send_count"] == 2
 
 
 class TestNeverSendsCredentials:
@@ -275,8 +360,9 @@ class TestVerifyApiIdentityAgainstMantic:
         assert "dig competitions.mantic.com" in message
         assert "metaculus" not in message.lower()
 
-    def test_connect_failure_names_the_mantic_host(self) -> None:
+    def test_connect_failure_names_the_mantic_host(self, monkeypatch: pytest.MonkeyPatch) -> None:
         original = requests.ConnectionError("dns down")
+        monkeypatch.setattr(api_preflight, "_RETRY_DELAY_SECONDS", 0)
         with _mock_transport(exc=original), pytest.raises(ApiIdentityError) as excinfo:
             verify_api_identity(MANTIC_API_BASE_URL)
         assert excinfo.value.__cause__ is original

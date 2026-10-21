@@ -2,8 +2,8 @@
 
 Two decisions shape everything here.
 
-- **The pull is the whole catalogue** (~9,762 events, ~49 pages), streamed so each page passes
-  through a TIERED projection and peak memory tracks the retained fields rather than the ~3
+- **The pull is the whole catalogue** (about 15,200 events over 76 pages on 2026-10-17), streamed so each page
+  passes through a TIERED projection and peak memory tracks the retained fields rather than the ~3
   MB/page raw body — 49 pages of raw JSON is ~150 MB, and the caller holds the result for 6h in
   the process that runs forecasters. Only the rules text is head-only; see
   ``KALSHI_NESTED_TAIL_FIELDS``.
@@ -49,7 +49,7 @@ from metaculus_bot.constants import (
 )
 from metaculus_bot.research.http_fetch import read_body_snippet
 from metaculus_bot.research.market_retrieval.http import (
-    HTTP_RETRY_BACKOFF_SECS,
+    HTTP_RETRY_BACKOFFS_SECS,
     parse_iso,
     safe_float,
     settlement_sources,
@@ -58,6 +58,9 @@ from metaculus_bot.research.market_retrieval.types import MarketChild, MarketMat
 from metaculus_bot.research.market_retrieval.venues._shared import NO_PRICE_SPREAD, RULES_TEXT_MAX_CHARS
 
 logger = logging.getLogger(__name__)
+
+# Kalshi keeps its independent pagination retry and uses the first shared backoff interval.
+HTTP_RETRY_BACKOFF_SECS = HTTP_RETRY_BACKOFFS_SECS[0]
 
 KALSHI_EVENTS_URL = "https://api.elections.kalshi.com/trade-api/v2/events"
 

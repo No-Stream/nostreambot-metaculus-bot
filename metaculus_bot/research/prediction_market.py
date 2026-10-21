@@ -34,8 +34,8 @@ are in `scratch/bakeoff_run_2026-08-03/results/`):
 
 Two behaviours the old keyword/fuzzy design had are deliberately gone. There is no fuzzy score
 FLOOR (it discarded the adjacent-cut markets that carry most of the evidential value; the
-fuzzy scorer survives as a way to ORDER Kalshi's ~9,762 events down to a promptable 100). And
-the provider path passes `as_of=None`: the filter dropped every market closing before the
+fuzzy scorer orders Kalshi's ~15,200 events (2026-10-17) down to a promptable 100). And the
+provider path passes `as_of=None`: the filter dropped every market closing before the
 question resolved, which is precisely the "same quantity, adjacent month" class the ranked arm
 scored most of its wins on, and 20 of 47 archived runs had Polymarket fetch candidates and
 render nothing because of it. The parameter and the cache key survive for explicit callers
@@ -83,8 +83,12 @@ from metaculus_bot.constants import (
 from metaculus_bot.fallback_openrouter import build_llm_with_openrouter_fallback
 from metaculus_bot.llm_configs import MARKET_QUERY_AUTHOR_LLM_CONFIG, MARKET_RANKER_LLM_CONFIG
 from metaculus_bot.llm_retry import invoke_with_transient_retry
-from metaculus_bot.research.market_retrieval import generation, ranking, rendering
-from metaculus_bot.research.market_retrieval.http import HTTP_RETRY_BACKOFF_SECS, PLATFORM_HTTP_TIMEOUT
+from metaculus_bot.research.market_retrieval import generation, ranking, rendering, venues
+from metaculus_bot.research.market_retrieval.http import (
+    HTTP_RETRY_BACKOFFS_SECS,
+    HTTP_RETRY_JITTER_BOUNDS,
+    PLATFORM_HTTP_TIMEOUT,
+)
 from metaculus_bot.research.market_retrieval.queries import (
     build_query_author_prompt,
     dedupe_queries,
@@ -154,12 +158,21 @@ logger = logging.getLogger(__name__)
 # raised wall cannot silently outgrow PREDICTION_MARKET_TIMEOUT. A previous 31.0-versus-30.0
 # overrun shipped once, which is why the arithmetic is code rather than a comment: stages 1a and
 # 1b run concurrently so the chain takes their max, and the rest is serial. Per-stage worst case
-# is `(len(backoffs) + 1) * wall + sum(backoffs)`.
+# is `(len(backoffs) + 1) * wall + sum(backoffs)`. HTTP retry waits use the maximum venue attempt
+# count and the largest jitter multiplier.
 def _llm_stage_worst(wall_timeout: float, backoffs: tuple[float, ...]) -> float:
     return (len(backoffs) + 1) * wall_timeout + sum(backoffs)
 
 
-_HTTP_STAGE_WORST = PLATFORM_HTTP_TIMEOUT * 2 + HTTP_RETRY_BACKOFF_SECS
+_HTTP_MAX_ATTEMPTS = max(
+    venues.MANIFOLD_MAX_ATTEMPTS,
+    venues.POLYMARKET_MAX_ATTEMPTS,
+    venues.PREDICTIT_MAX_ATTEMPTS,
+)
+_HTTP_STAGE_WORST = (
+    PLATFORM_HTTP_TIMEOUT * _HTTP_MAX_ATTEMPTS
+    + sum(HTTP_RETRY_BACKOFFS_SECS[: _HTTP_MAX_ATTEMPTS - 1]) * HTTP_RETRY_JITTER_BOUNDS[1]
+)
 SNAPSHOT_STAGE_BUDGET_S: float = (
     max(
         _llm_stage_worst(MARKET_QUERY_AUTHOR_WALL_TIMEOUT, MARKET_QUERY_AUTHOR_BACKOFFS),
@@ -374,7 +387,7 @@ async def fetch_market_snapshot(
 
     The `timeout` default is the same constant the provider path passes, because any lower
     default is one the pipeline cannot succeed under — stage 1a alone outruns the 5.0s this
-    carried while `SNAPSHOT_STAGE_BUDGET_S` grew past 130s, so a direct caller (backtest,
+    carried while `SNAPSHOT_STAGE_BUDGET_S` grew past 190s, so a direct caller (backtest,
     replay tool) omitting the argument got a guaranteed `error(timeout)` and a source-loss bump.
 
     `as_of` (backtest leakage defence) drops candidates whose `close_time` is at or before it.

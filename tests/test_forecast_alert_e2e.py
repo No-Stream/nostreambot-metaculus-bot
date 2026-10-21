@@ -23,9 +23,9 @@ import requests
 from forecasting_tools.ai_models import general_llm as general_llm_module
 from requests.adapters import HTTPAdapter
 
-from metaculus_bot import cli
+from metaculus_bot import api_preflight, cli
 from metaculus_bot import forecaster as forecaster_module
-from metaculus_bot.api_preflight import ApiIdentityError
+from metaculus_bot.api_preflight import ApiIdentityError, ApiUnreachableError
 from metaculus_bot.constants import DONATED_OPENROUTER_KEY_ENABLED_ENV, MANTIC_TOKEN_ENV
 from metaculus_bot.research.market_retrieval.venues import POLYMARKET_MAX_ATTEMPTS
 from metaculus_bot.run_status import RUN_STATUS
@@ -444,4 +444,48 @@ def test_invalid_mantic_credentials_write_setup_failure_status(monkeypatch: pyte
     assert "Forecast run: Hard Failure" in summary
     assert "Setup authentication error" in summary
     assert "title=Failed; Setup authentication error" in output
+    assert "::error" in annotation
+
+
+@pytest.mark.e2e
+def test_mantic_preflight_502_writes_http_setup_failure_status(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    status_path = tmp_path / "run_logs" / "status.json"
+    monkeypatch.setenv("FORECAST_RUN_STATUS_PATH", str(status_path))
+    monkeypatch.setenv(DONATED_OPENROUTER_KEY_ENABLED_ENV, "false")
+    monkeypatch.setenv(MANTIC_TOKEN_ENV, _PRIVATE_TOKEN)
+    monkeypatch.setattr(sys, "argv", ["main.py", "--mode", "mantic"])
+    monkeypatch.setattr(api_preflight, "_RETRY_DELAY_SECONDS", 0)
+    RUN_STATUS.reset()
+    requests_seen: list[requests.PreparedRequest] = []
+
+    def reject_preflight_with_edge_error(
+        _adapter: HTTPAdapter, request: requests.PreparedRequest, **_kwargs: Any
+    ) -> requests.Response:
+        requests_seen.append(request)
+        assert urlparse(request.url or "").path.endswith("/posts/")
+        assert "Authorization" not in request.headers
+        return json_response({"detail": "temporary edge error"}, status=502, request=request)
+
+    monkeypatch.setattr(HTTPAdapter, "send", reject_preflight_with_edge_error)
+
+    with pytest.raises(ApiUnreachableError, match="502"):
+        cli.main()
+
+    assert len(requests_seen) == 2
+    status = _read_runtime_status(status_path)
+    assert status["outcome"] == "hard_failure"
+    assert status["causes"] == [
+        {
+            "component": "setup",
+            "unit": "alerts",
+            "affected": 1,
+            "attempted": None,
+            "error_type": "http_error",
+            "http_status": 502,
+        }
+    ]
+
+    summary, output, annotation = _render_notification(tmp_path, status_path, outcome="failure")
+    assert "Setup HTTP 502" in summary
+    assert "title=Failed; Setup HTTP 502" in output
     assert "::error" in annotation

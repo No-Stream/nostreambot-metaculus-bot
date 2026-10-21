@@ -22,6 +22,7 @@ so the pair agreed and the suite stayed green.
 from __future__ import annotations
 
 import copy
+import inspect
 import json
 import logging
 from datetime import UTC, datetime
@@ -30,6 +31,13 @@ from typing import Any
 
 import pytest
 
+from metaculus_bot.constants import (
+    KALSHI_CATALOGUE_WALL_TIMEOUT,
+    KALSHI_PAGE_SLEEP_S,
+    KALSHI_PREFETCH_EVENT_LIMIT,
+    KALSHI_PREFETCH_MAX_PAGES,
+)
+from metaculus_bot.research.market_retrieval import http as market_http
 from metaculus_bot.research.market_retrieval import venues
 from metaculus_bot.research.market_retrieval.http import (
     flatten_results,
@@ -118,6 +126,18 @@ def _rendered_child_prices(snapshot: MarketSnapshot) -> list[str]:
 
 class TestKalshiEventProjection:
     """The streamed ``/events`` projection: what it keeps, and what it refuses to cache."""
+
+    def test_the_default_pull_bounds_match_the_catalogue_budget(self) -> None:
+        assert KALSHI_CATALOGUE_WALL_TIMEOUT == 90.0
+        assert KALSHI_PAGE_SLEEP_S == 0.1
+        assert KALSHI_PREFETCH_EVENT_LIMIT == 30_000
+        assert KALSHI_PREFETCH_MAX_PAGES == 150
+
+        defaults = inspect.signature(venues.kalshi_prefetch_events).parameters
+        assert defaults["wall_timeout"].default == KALSHI_CATALOGUE_WALL_TIMEOUT
+        assert defaults["page_sleep_s"].default == KALSHI_PAGE_SLEEP_S
+        assert defaults["event_limit"].default == KALSHI_PREFETCH_EVENT_LIMIT
+        assert defaults["max_pages"].default == KALSHI_PREFETCH_MAX_PAGES
 
     @pytest.mark.asyncio
     async def test_projection_retains_exactly_the_listed_fields_per_tier(
@@ -405,11 +425,11 @@ class TestKalshiEventProjection:
         catalogue it leaves is TRUNCATED, so the pull is not complete. Reporting `complete=True`
         here would pin a short universe for the 6h TTL behind a green `ok(n)`, which is reachable
         with no code change at all: Kalshi halving its effective page size puts ~38% of the
-        universe past the 120-page bound."""
+        universe past the 150-page bound."""
         forever = {"events": multi_close_page["events"][:1], "cursor": "always-more"}
         session = FakeSession({venues.KALSHI_EVENTS_URL: FakeResponse(200, payload=forever)})
         # page_sleep_s=0.0: this test is about the BOUND, not the throttle courtesy the real
-        # 0.25s default buys, and three real sleeps per bound test is dead suite time.
+        # 0.1s default buys, and three real sleeps per bound test is dead suite time.
         pull = await venues.kalshi_prefetch_events(session, max_pages=3, page_sleep_s=0.0)
 
         assert pull.tally.ok == 3
@@ -1467,6 +1487,27 @@ class TestManifold:
 
         assert await venues.manifold_market_detail(session, "abc") is None
 
+    @pytest.mark.asyncio
+    async def test_a_detail_fetch_retries_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        async def no_sleep(_delay: float) -> None:
+            return None
+
+        monkeypatch.setattr(market_http.asyncio, "sleep", no_sleep)
+        monkeypatch.setattr(market_http.random, "uniform", lambda _low, _high: 1.0)
+        session = FakeSession(
+            {
+                venues.MANIFOLD_MARKET_URL: [
+                    FakeResponse(503, text="temporarily unavailable"),
+                    FakeResponse(200, payload={"id": "abc", "textDescription": "rules"}),
+                ]
+            }
+        )
+
+        detail = await venues.manifold_market_detail(session, "abc")
+
+        assert detail == {"id": "abc", "textDescription": "rules"}
+        assert session._call_counts[venues.MANIFOLD_MARKET_URL] == 2
+
 
 class TestManifoldMultiOutcome:
     """The rows the ``contractType=BINARY`` pin used to hide, and where their price comes from.
@@ -2445,7 +2486,7 @@ class TestPredictIt:
 
 
 class TestVenueRetryBudget:
-    """Each buffered venue gets a SECOND attempt, pinned on a literal 2.
+    """Venue retries and backoff timing are pinned on observable requests and sleeps.
 
     The sibling assertion in the provider suite compares the call count to
     ``*_MAX_ATTEMPTS`` itself, which is tautological: dropping all three constants to 1
@@ -2475,12 +2516,52 @@ class TestVenueRetryBudget:
     async def test_a_transient_first_attempt_is_retried_and_the_second_succeeds(
         self, monkeypatch: pytest.MonkeyPatch, url: str, fetch: Any, attempts: int, empty_body: Any
     ) -> None:
-        monkeypatch.setattr("metaculus_bot.research.market_retrieval.http.HTTP_RETRY_BACKOFF_SECS", 0.0)
+        monkeypatch.setattr(market_http, "HTTP_RETRY_BACKOFFS_SECS", (0.0, 0.0))
         session = FakeSession({url: [FakeResponse(503, text="down"), FakeResponse(200, payload=empty_body)]})
 
         assert await fetch(session) == [], "the second attempt's body must reach the parser"
         assert session._call_counts[url] == 2, "a transient first attempt must be retried"
         assert attempts >= 2, "the constant must permit the retry this test just took"
+
+    @pytest.mark.asyncio
+    async def test_manifold_retries_two_503_responses_with_escalating_jitter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sleeps: list[float] = []
+        uniform_bounds: list[tuple[float, float]] = []
+        jitter_factors = iter((0.5, 1.5))
+
+        async def record_sleep(delay: float) -> None:
+            sleeps.append(delay)
+
+        def deterministic_jitter(low: float, high: float) -> float:
+            uniform_bounds.append((low, high))
+            return next(jitter_factors)
+
+        monkeypatch.setattr(market_http.asyncio, "sleep", record_sleep)
+        monkeypatch.setattr(market_http.random, "uniform", deterministic_jitter)
+        session = FakeSession(
+            {
+                venues.MANIFOLD_SEARCH_URL: [
+                    FakeResponse(503, text="busy"),
+                    FakeResponse(503, text="still busy"),
+                    FakeResponse(200, payload=[]),
+                ]
+            }
+        )
+
+        assert await venues.manifold_search(session, "q", width=60) == []
+        assert session._call_counts[venues.MANIFOLD_SEARCH_URL] == 3
+        assert sleeps == pytest.approx([0.25, 2.25])
+        assert uniform_bounds == [(0.5, 1.5), (0.5, 1.5)]
+        assert venues.MANIFOLD_MAX_ATTEMPTS == 3
+
+    @pytest.mark.asyncio
+    async def test_a_non_retryable_status_is_not_retried(self) -> None:
+        session = FakeSession({venues.MANIFOLD_SEARCH_URL: FakeResponse(404, text="not found")})
+
+        assert await venues.manifold_search(session, "q", width=60) is None
+        assert session._call_counts[venues.MANIFOLD_SEARCH_URL] == 1
 
 
 class TestBufferedBodyCap:

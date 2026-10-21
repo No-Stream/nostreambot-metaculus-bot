@@ -28,7 +28,7 @@ spent its slots on).
 Everything CPU-bound runs in ONE ``asyncio.to_thread`` hop, and that is not hygiene:
 ``publish_hardening.py`` documents how a pinned event loop misattributes forecaster
 soft-deadline drops to the forecasters. Building the settlement-domain index belongs in the
-same hop — it walks the same ~10k events and is not memoized.
+same hop — it walks the current ~15.2k-event catalogue and is not memoized.
 
 The hop only works because the scan itself releases the GIL. As a per-event Python loop the
 full-catalogue fuzzy scan measured ~0.45-0.59s of GIL-HOLDING bytecode (9,762 events x ~17
@@ -70,8 +70,8 @@ VENUE_ORDER: tuple[str, ...] = ("kalshi", "polymarket", "manifold", "predictit")
 # away — the same "cannot come back by way of a defaulted argument" logic as the deleted
 # score floors. A venue missing from this dict is unbounded, which is the statement.
 #
-# Kalshi's 100 is what fits in a prompt out of ~9,762 open events, so something has to order
-# them; that is all `fuzzy_best` is for here. The two venue-search widths are ceilings on
+# Kalshi's 100 is what fits in a prompt out of ~15,200 open events (2026-10-17), so something has to
+# order them; that is all `fuzzy_best` is for here. The two venue-search widths are ceilings on
 # the union across queries (each query's own response is capped at the endpoint's `limit`).
 RETRIEVAL_WIDTH: dict[str, int] = {
     "kalshi": 100,

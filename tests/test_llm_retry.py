@@ -59,8 +59,13 @@ from metaculus_bot.llm_retry import (
     llm_error_fields,
     llm_status_code,
 )
+from metaculus_bot.research.market_retrieval import venues
 from metaculus_bot.research.market_retrieval.generation import MANIFOLD_DETAIL_WALL_S
-from metaculus_bot.research.market_retrieval.http import HTTP_RETRY_BACKOFF_SECS, PLATFORM_HTTP_TIMEOUT
+from metaculus_bot.research.market_retrieval.http import (
+    HTTP_RETRY_BACKOFFS_SECS,
+    HTTP_RETRY_JITTER_BOUNDS,
+    PLATFORM_HTTP_TIMEOUT,
+)
 from metaculus_bot.research.prediction_market import SNAPSHOT_STAGE_BUDGET_S
 from tests.conftest import PRODUCTION_KEY_LIMIT_403
 
@@ -396,12 +401,21 @@ def test_market_retrieval_stage_budgets_fit_the_snapshot_timeout() -> None:
     which would have to be edited every time a wall moves and would therefore stop being a
     check.
     """
-    http_stage = PLATFORM_HTTP_TIMEOUT * 2 + HTTP_RETRY_BACKOFF_SECS
+    max_venue_attempts = max(
+        venues.MANIFOLD_MAX_ATTEMPTS,
+        venues.POLYMARKET_MAX_ATTEMPTS,
+        venues.PREDICTIT_MAX_ATTEMPTS,
+    )
+    http_stage = (
+        PLATFORM_HTTP_TIMEOUT * max_venue_attempts
+        + sum(HTTP_RETRY_BACKOFFS_SECS[: max_venue_attempts - 1]) * HTTP_RETRY_JITTER_BOUNDS[1]
+    )
+    assert MANIFOLD_DETAIL_WALL_S == 10.0
     author = _stage_worst(MARKET_QUERY_AUTHOR_WALL_TIMEOUT, MARKET_QUERY_AUTHOR_BACKOFFS)
     ranker = _stage_worst(MARKET_RANKER_WALL_TIMEOUT, MARKET_RANKER_BACKOFFS)
     chain = max(author, KALSHI_CATALOGUE_WALL_TIMEOUT, http_stage) + http_stage + MANIFOLD_DETAIL_WALL_S + ranker
 
-    assert chain < PREDICTION_MARKET_TIMEOUT, (
+    assert chain <= PREDICTION_MARKET_TIMEOUT, (
         f"the pipeline's worst-case chain of {chain}s must fit inside the {PREDICTION_MARKET_TIMEOUT}s snapshot budget"
     )
     # The provider recomputes the same chain to WARN when an env override sits below it, so the

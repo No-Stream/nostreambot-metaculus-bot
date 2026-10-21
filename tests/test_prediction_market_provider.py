@@ -158,7 +158,7 @@ class TestProviderFactory:
         nothing in prod and nothing else would catch it — but a direct caller (backtest, replay
         tool) omitting the argument gets `error(timeout)` on every question plus a source-loss
         bump, since stage 1a alone outruns the 5.0s this default carried while
-        `SNAPSHOT_STAGE_BUDGET_S` grew past 130s.
+        `SNAPSHOT_STAGE_BUDGET_S` grew past 190s.
         """
         default = inspect.signature(pmp.fetch_market_snapshot).parameters["timeout"].default
 

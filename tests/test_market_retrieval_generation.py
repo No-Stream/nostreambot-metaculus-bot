@@ -510,11 +510,16 @@ class TestManifoldEnrichment:
         """Without a wall on the WHOLE fan-out the worst case is 6 waves x 10s = 60s, which
         blows the snapshot's time budget on rules text."""
         rows = [_search_row("manifold", f"m{i}", f"row {i}") for i in range(4)]
+        cancelled: list[str] = []
 
         async def fake_detail(_session: Any, market_id: str) -> dict[str, Any]:
             if market_id == "m0":
                 return {"textDescription": "fast rules"}
-            await asyncio.sleep(30)
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                cancelled.append(market_id)
+                raise
             return {"textDescription": "never arrives"}
 
         monkeypatch.setattr(generation.venues, "manifold_market_detail", fake_detail)
@@ -524,6 +529,7 @@ class TestManifoldEnrichment:
         assert rows[0].raw_rules == "fast rules"
         assert [row.raw_rules for row in rows[1:]] == ["", "", ""]
         assert (outcome.n_attempted, outcome.n_ok) == (4, 1)
+        assert set(cancelled) == {"m1", "m2", "m3"}, "the detail wall must cancel outstanding GET tasks"
 
     @pytest.mark.asyncio
     async def test_concurrency_is_bounded(self, monkeypatch: pytest.MonkeyPatch) -> None:

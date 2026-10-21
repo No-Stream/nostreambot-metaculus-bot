@@ -280,7 +280,7 @@ def test_suppressed_credit_floor_does_not_make_a_clean_run_look_degraded() -> No
 async def test_singleflight_predictit_failure_has_one_transport_cause_for_three_questions(monkeypatch) -> None:
     RUN_STATUS.reset()
     _reset_session_caches()
-    monkeypatch.setattr(market_http, "HTTP_RETRY_BACKOFF_SECS", 0)
+    monkeypatch.setattr(market_http, "HTTP_RETRY_BACKOFFS_SECS", (0.0, 0.0))
     session = _Session()
 
     outcomes = await asyncio.gather(*(_predictit_universe(session, qid=qid) for qid in (11, 12, 13)))
@@ -318,7 +318,7 @@ async def test_singleflight_predictit_failure_has_one_transport_cause_for_three_
 async def test_predictit_http_200_wrong_shape_is_visible_from_real_source_token(monkeypatch) -> None:
     RUN_STATUS.reset()
     _reset_session_caches()
-    monkeypatch.setattr(market_http, "HTTP_RETRY_BACKOFF_SECS", 0)
+    monkeypatch.setattr(market_http, "HTTP_RETRY_BACKOFFS_SECS", (0.0, 0.0))
     session = _Session(status=200, body=b'{"events": []}')
 
     outcomes = await asyncio.gather(*(_predictit_universe(session, qid=qid) for qid in (21, 22, 23)))
