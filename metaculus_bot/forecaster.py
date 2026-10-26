@@ -171,6 +171,7 @@ class TemplateForecaster(CompactLoggingForecastBot):
 
         self._custom_research_provider: ResearchCallable | None = research_provider
         self.research_provider: ResearchCallable | None = research_provider  # For framework config access
+        self.research_sink: Any | None = research_sink  # For framework config access
         if max_questions_per_run is not None and max_questions_per_run <= 0:
             raise ValueError("max_questions_per_run must be a positive integer if provided")
         self.max_questions_per_run: int | None = max_questions_per_run
@@ -286,6 +287,10 @@ class TemplateForecaster(CompactLoggingForecastBot):
     @stacking_fallback_on_failure.setter
     def stacking_fallback_on_failure(self, value: bool) -> None:
         self._pipeline.stacking_fallback_on_failure = value
+
+    @property
+    def stacking_spread_thresholds(self) -> dict[str, float]:
+        return self._pipeline.stacking_spread_thresholds
 
     @property
     def stacking_randomize_order(self) -> bool:
