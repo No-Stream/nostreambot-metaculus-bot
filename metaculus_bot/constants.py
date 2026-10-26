@@ -370,9 +370,9 @@ CONDITIONAL_STACKING_NUMERIC_NORMALIZED_THRESHOLD: float = 0.15
 NATIVE_SEARCH_ENABLED_ENV: str = "NATIVE_SEARCH_ENABLED"
 NATIVE_SEARCH_MODEL_ENV: str = "NATIVE_SEARCH_MODEL"
 # Critical-path research; sol->terra 2026-07-17, terra->sol (GPT-6, no Terra successor) 2026-09-22.
-# gpt-6-sol -> gpt-6.1-sol 2026-09-29; request settings unchanged.
+# gpt-6-sol -> gpt-6.1-sol 2026-09-29; sol -> gpt-6.1-terra 2026-10-26 (Terra tier returned); settings unchanged.
 # Receipt: docs/constants.md "NATIVE_SEARCH_DEFAULT_MODEL".
-NATIVE_SEARCH_DEFAULT_MODEL: str = "openai/gpt-6.1-sol"
+NATIVE_SEARCH_DEFAULT_MODEL: str = "openai/gpt-6.1-terra"
 NATIVE_SEARCH_MAX_TOKENS: int = 16_000  # no temperature / top_p: temperature=None, so litellm omits it
 # The litellm per-request timeout, 240->360 on 2026-05-17. Receipt: docs/constants.md "NATIVE_SEARCH_TIMEOUT".
 NATIVE_SEARCH_TIMEOUT: int = 360
@@ -555,9 +555,9 @@ GAP_FILL_V2_READER_HTTP_ATTEMPTS: int = 2
 # Analyzer then parallel resolvers, failing soft to first-pass research alone.
 GAP_FILL_ENABLED_ENV: str = "GAP_FILL_ENABLED"
 # Non-grounded decomposition under a tight wall. terra->sol (GPT-6, no Terra successor) 2026-09-22.
-# gpt-6-sol -> gpt-6.1-sol 2026-09-29; request settings unchanged.
+# gpt-6-sol -> gpt-6.1-sol 2026-09-29; sol -> gpt-6.1-terra 2026-10-26 (Terra tier returned); settings unchanged.
 # Receipt: docs/constants.md "GAP_FILL_ANALYZER_MODEL".
-GAP_FILL_ANALYZER_MODEL: str = "openrouter/openai/gpt-6.1-sol"
+GAP_FILL_ANALYZER_MODEL: str = "openrouter/openai/gpt-6.1-terra"
 # 5 -> 4 on 2026-07-20; do NOT go below 4. Receipt: docs/constants.md "GAP_FILL_MAX_GAPS".
 GAP_FILL_MAX_GAPS: int = 4
 GAP_FILL_ANALYZER_TIMEOUT: int = 120  # tight, so a hung analyzer cannot hold a research slot
@@ -565,8 +565,9 @@ GAP_FILL_ANALYZER_TIMEOUT: int = 120  # tight, so a hung analyzer cannot hold a 
 GAP_FILL_ANALYZER_WALL_TIMEOUT: int = 135
 GAP_FILL_MIN_RESEARCH_CHARS: int = 200  # under this every provider likely soft-failed
 # Moved off grounded Gemini 2026-06-25; sol->terra 2026-07-20; terra->sol (GPT-6, no Terra successor)
-# 2026-09-22; gpt-6-sol -> gpt-6.1-sol 2026-09-29. Receipt: docs/constants.md "GAP_FILL_RESOLVER_MODEL".
-GAP_FILL_RESOLVER_MODEL: str = "openai/gpt-6.1-sol"
+# 2026-09-22; gpt-6-sol -> gpt-6.1-sol 2026-09-29; sol -> gpt-6.1-terra 2026-10-26.
+# Receipt: docs/constants.md "GAP_FILL_RESOLVER_MODEL".
+GAP_FILL_RESOLVER_MODEL: str = "openai/gpt-6.1-terra"
 GAP_FILL_RESOLVER_REASONING_EFFORT: str = "low"
 
 # --- Agentic gap-fill v2 (bounded research loop) ---
@@ -585,9 +586,9 @@ GAP_FILL_V2_TOOL_BUDGET_LINE_RESERVE_CHARS: int = 512
 GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS: int = 1600
 GAP_FILL_V2_EVIDENCE_FINDING_MAX_CHARS: int = 3000
 # terra-low won the blind 5-arm replay eval 2026-07-17; terra->sol (GPT-6, no Terra successor)
-# 2026-09-22; gpt-6-sol -> gpt-6.1-sol 2026-09-29, effort default unchanged at low.
-# Receipt: docs/constants.md "GAP_FILL_V2_DRIVER_MODEL".
-GAP_FILL_V2_DRIVER_MODEL: str = os.getenv("GAP_FILL_V2_DRIVER_MODEL") or "openai/gpt-6.1-sol"
+# 2026-09-22; gpt-6-sol -> gpt-6.1-sol 2026-09-29; sol -> gpt-6.1-terra 2026-10-26, effort default unchanged
+# at low. Receipt: docs/constants.md "GAP_FILL_V2_DRIVER_MODEL".
+GAP_FILL_V2_DRIVER_MODEL: str = os.getenv("GAP_FILL_V2_DRIVER_MODEL") or "openai/gpt-6.1-terra"
 GAP_FILL_V2_DRIVER_EFFORT: str = os.getenv("GAP_FILL_V2_DRIVER_EFFORT") or "low"
 # A wrong id, or a robots-gated host, kills the rung silently. Receipt: docs/constants.md "GAP_FILL_V2_READER_MODEL".
 GAP_FILL_V2_READER_MODEL: str = os.getenv("GAP_FILL_V2_READER_MODEL") or "gemini-3.8-flash"

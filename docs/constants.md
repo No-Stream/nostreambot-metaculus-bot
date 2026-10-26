@@ -485,6 +485,7 @@ Changed 2026-07-17 from sol to terra per the blind research-role audit in
 third, with the verdict "MARGINAL EDGE". Changed again 2026-09-22, terra to `gpt-6-sol`: GPT-6 shipped
 with no Terra successor, so every Terra role moved to Sol 6 at the same (low) effort.
 Updated 2026-09-29 to `gpt-6.1-sol`, retaining low effort and the existing budgets.
+Changed 2026-10-26 back to Terra as `gpt-6.1-terra` once GPT-6.1 shipped a Terra tier, at half Sol's price ($1/$5 against $2/$10 per million tokens), retaining low effort and the existing budgets.
 
 ### NATIVE_SEARCH_MAX_TOKENS
 
@@ -1182,6 +1183,7 @@ judgment. Grounded search resolution still uses google-genai directly via `gemin
 that path needs the search index. Changed 2026-09-22, terra to `gpt-6-sol`: GPT-6 shipped with no Terra
 successor, so every Terra role moved to Sol 6 at the same (low) effort.
 Updated 2026-09-29 to `gpt-6.1-sol`, retaining low effort and the existing budgets.
+Changed 2026-10-26 back to Terra as `gpt-6.1-terra` once GPT-6.1 shipped a Terra tier, at half Sol's price ($1/$5 against $2/$10 per million tokens), retaining low effort and the existing budgets.
 
 ### GAP_FILL_MAX_GAPS
 
@@ -1239,6 +1241,7 @@ consideration. The 2026-07-09 bench had sol-low matching terra-low coverage 24 o
 cost weight flip it. Changed again 2026-09-22, terra to `gpt-6-sol`: GPT-6 shipped with no Terra successor, so
 every Terra role moved to Sol 6 at the same (low) effort.
 Updated 2026-09-29 to `gpt-6.1-sol`, retaining low effort and the existing budgets.
+Changed 2026-10-26 back to Terra as `gpt-6.1-terra` once GPT-6.1 shipped a Terra tier, at half Sol's price ($1/$5 against $2/$10 per million tokens), retaining low effort and the existing budgets.
 
 ## Agentic gap-fill v2 (bounded research loop)
 
@@ -1284,6 +1287,7 @@ were openai or anthropic, so the loop's litellm binding routes via the donated O
 2026-09-22, terra to `gpt-6-sol`: GPT-6 shipped with no Terra successor, so every Terra role moved to Sol 6 at
 the same (low) effort default.
 Updated 2026-09-29 to `gpt-6.1-sol`, retaining low effort and the existing budgets.
+Changed 2026-10-26 back to Terra as `gpt-6.1-terra` once GPT-6.1 shipped a Terra tier, at half Sol's price ($1/$5 against $2/$10 per million tokens), retaining low effort and the existing budgets.
 
 ### GAP_FILL_V2_READER_MODEL
 

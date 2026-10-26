@@ -32,12 +32,13 @@ and planning docs named here may have moved out of the public repo. Neither is a
 
 ## Open, priced levers not yet built
 
-- **HIGH PRIORITY: gap-fill v2 driver on gpt-6-luna at xhigh/max instead of gpt-6.1-sol at low.** The driver sends a
+- **HIGH PRIORITY: gap-fill v2 driver on gpt-6-luna at xhigh/max instead of gpt-6.1-terra at low.** The driver sends a
   top-level `reasoning_effort`, which litellm 1.98's OpenRouter transform rewrites `max` -> `xhigh`, so the arm below
   ran at xhigh; testing true `max` needs the `reasoning={"effort": ...}` form. One-question replay on 2026-09-22 (Q44229, `scratch/model_migration_2026-09-22/`): both finished inside the 540 s loop (luna 146 s, sol
   85 s, 31-32 tool calls), and a blind Opus judge called it a tie leaning luna, low confidence. Luna read 882k prompt
   tokens against sol's 711k at a twentieth of the input price, so the driver's spend drops by roughly an order of
-  magnitude. Needs a multi-question replay before switching; Sol stays for the season start.
+  magnitude. Needs a multi-question replay before switching. Since 2026-10-26 the driver runs gpt-6.1-terra at half
+  Sol's price, which narrows the saving to roughly tenfold over Terra rather than twentyfold over Sol.
   Same-day native-search probe: luna at true `max` gave the brief a blind judge preferred, but took 278 s against
   sol-low's 30 s; luna at `high` or `xhigh` there is the untested middle.
 - **Tail-consistency check on the numeric block**: when a rationale derives a sigma then declares a tighter left tail,

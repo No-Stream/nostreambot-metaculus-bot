@@ -90,18 +90,17 @@ class TestNativeSearchDefaults:
     want to revert.
     """
 
-    def test_native_search_default_model_is_gpt_6_1_sol(self) -> None:
-        """Locks the default OpenRouter model to ``openai/gpt-6.1-sol``
+    def test_native_search_default_model_is_gpt_6_1_terra(self) -> None:
+        """Locks the default OpenRouter model to ``openai/gpt-6.1-terra``
         (2026-07-17 sol→terra flip per the blind research-role audit,
-        scratch/research_role_audit_2026-07-17/ — terra 1st, sol 2nd; then the
-        2026-09-22 GPT-6 migration, where Terra has no GPT-6 successor so the
-        role moved to Sol, followed by the 2026-09-29 Sol 6.1 migration)."""
-        assert NATIVE_SEARCH_DEFAULT_MODEL == "openai/gpt-6.1-sol"
+        scratch/research_role_audit_2026-07-17/ — terra 1st, sol 2nd; Sol only
+        while GPT-6 had no Terra tier, 2026-09-22 to 2026-10-26)."""
+        assert NATIVE_SEARCH_DEFAULT_MODEL == "openai/gpt-6.1-terra"
 
-    def test_gap_fill_sol_defaults_are_gpt_6_1(self) -> None:
-        assert GAP_FILL_ANALYZER_MODEL == "openrouter/openai/gpt-6.1-sol"
-        assert GAP_FILL_RESOLVER_MODEL == "openai/gpt-6.1-sol"
-        assert GAP_FILL_V2_DRIVER_MODEL == "openai/gpt-6.1-sol"
+    def test_gap_fill_defaults_are_gpt_6_1_terra(self) -> None:
+        assert GAP_FILL_ANALYZER_MODEL == "openrouter/openai/gpt-6.1-terra"
+        assert GAP_FILL_RESOLVER_MODEL == "openai/gpt-6.1-terra"
+        assert GAP_FILL_V2_DRIVER_MODEL == "openai/gpt-6.1-terra"
 
     def test_native_search_reasoning_effort_default_is_low(self):
         """Low effort gives ~4.5× faster wall-clock vs medium on the v3 bench

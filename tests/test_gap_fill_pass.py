@@ -999,14 +999,14 @@ async def test_benchmarking_flag_threaded_to_analyzer_and_searches() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolver_builds_native_search_llm_with_sol_low() -> None:
-    """The per-gap resolver runs OpenAI native search on gpt-6.1-sol at low effort.
+async def test_resolver_builds_native_search_llm_with_terra_low() -> None:
+    """The per-gap resolver runs OpenAI native search on gpt-6.1-terra at low effort.
 
     Locks the 2026-06-25 migration off direct-Google grounded Gemini: every gap
     resolution must build a native-search LLM with the GAP_FILL_RESOLVER_MODEL
     slug (gpt-5.6-terra since the 2026-07-20 sol→terra flip, then gpt-6-sol on the
-    2026-09-22 GPT-6 migration since Terra has no GPT-6 successor, and gpt-6.1-sol on
-    2026-09-29). Effort stays low
+    2026-09-22 GPT-6 migration since Terra had no GPT-6 successor, gpt-6.1-sol on
+    2026-09-29, and back to Terra as gpt-6.1-terra on 2026-10-26). Effort stays low
     (Round-2): the resolver was the ~5-min critical-path bottleneck, and low is
     ~4.5× faster (native_search v3 bench). Pinned to the constant so it stays a
     canary if either the model or effort changes again.
@@ -1030,7 +1030,7 @@ async def test_resolver_builds_native_search_llm_with_sol_low() -> None:
     builder.assert_called_once()
     call = builder.call_args
     model_arg = call.args[0] if call.args else call.kwargs.get("model_slug")
-    assert model_arg == GAP_FILL_RESOLVER_MODEL == "openai/gpt-6.1-sol"
+    assert model_arg == GAP_FILL_RESOLVER_MODEL == "openai/gpt-6.1-terra"
     assert call.kwargs["reasoning_effort"] == GAP_FILL_RESOLVER_REASONING_EFFORT == "low"
 
 
