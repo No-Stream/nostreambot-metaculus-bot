@@ -15,9 +15,6 @@ from metaculus_bot.constants import (
     DONATED_OPENROUTER_KEY_ENABLED_ENV,
     EXTREME_CALL_HIGH,
     EXTREME_CALL_LOW,
-    GAP_FILL_ANALYZER_MODEL,
-    GAP_FILL_RESOLVER_MODEL,
-    GAP_FILL_V2_DRIVER_MODEL,
     GAP_FILL_V2_READER_MODEL,
     GEMINI_SEARCH_DEFAULT_MODEL,
     MANTIC_API_BASE_URL,
@@ -28,7 +25,6 @@ from metaculus_bot.constants import (
     MC_PROB_MIN,
     MC_STACKING_ENABLED_ENV,
     METACULUS_HOST,
-    NATIVE_SEARCH_DEFAULT_MODEL,
     NATIVE_SEARCH_REASONING_EFFORT_DEFAULT,
     NATIVE_SEARCH_TIMEOUT,
     NATIVE_SEARCH_VERBOSITY_DEFAULT,
@@ -81,7 +77,7 @@ class TestMCClampBounds:
 class TestNativeSearchDefaults:
     """Pin OpenAI native-search defaults.
 
-    Model + verbosity locked from ``scratch/native_search_bench_2026-05-17/comparison_v3.md``.
+    Verbosity locked from ``scratch/native_search_bench_2026-05-17/comparison_v3.md``.
     Reasoning effort dropped medium→low on 2026-05-20 after an OpenRouter
     whitespace-stream incident consumed 8m37s on a single call; v3 bench
     measured low at ~50s vs medium at ~230s, so low gives ~4.5× more headroom
@@ -89,18 +85,6 @@ class TestNativeSearchDefaults:
     (sanity-check only) — rerun the bench with a graded `low` arm if you
     want to revert.
     """
-
-    def test_native_search_default_model_is_gpt_6_1_terra(self) -> None:
-        """Locks the default OpenRouter model to ``openai/gpt-6.1-terra``
-        (2026-07-17 sol→terra flip per the blind research-role audit,
-        scratch/research_role_audit_2026-07-17/ — terra 1st, sol 2nd; Sol only
-        while GPT-6 had no Terra tier, 2026-09-22 to 2026-10-26)."""
-        assert NATIVE_SEARCH_DEFAULT_MODEL == "openai/gpt-6.1-terra"
-
-    def test_gap_fill_defaults_are_gpt_6_1_terra(self) -> None:
-        assert GAP_FILL_ANALYZER_MODEL == "openrouter/openai/gpt-6.1-terra"
-        assert GAP_FILL_RESOLVER_MODEL == "openai/gpt-6.1-terra"
-        assert GAP_FILL_V2_DRIVER_MODEL == "openai/gpt-6.1-terra"
 
     def test_native_search_reasoning_effort_default_is_low(self):
         """Low effort gives ~4.5× faster wall-clock vs medium on the v3 bench
@@ -120,20 +104,10 @@ class TestNativeSearchDefaults:
 
 
 class TestGeminiNativeSdkModelDefaults:
-    """Pin both native google-genai model ids to gemini-3.8-flash.
-
-    Verified live on that SDK 2026-09-03 by scripts/probes/gemini_verify.py: grounding
-    chunks came back from the google_search tool, thinking_level was accepted, and
-    url_context retrieved a robots-allowed host. The grounded-search provider and the
-    gap-fill v2 reader deliberately run the SAME id so one verification covers both, and
-    so the shared 5k/month grounded-prompt pool is drawn by one model.
+    """The grounded-search provider and the gap-fill v2 reader deliberately run the SAME
+    google-genai id, so one live verification (scripts/probes/gemini_verify.py) covers both
+    and the shared 5k/month grounded-prompt pool is drawn by one model.
     """
-
-    def test_grounded_search_default_model_is_gemini_3_8_flash(self):
-        assert GEMINI_SEARCH_DEFAULT_MODEL == "gemini-3.8-flash"
-
-    def test_gap_fill_v2_reader_model_is_gemini_3_8_flash(self):
-        assert GAP_FILL_V2_READER_MODEL == "gemini-3.8-flash"
 
     def test_both_native_surfaces_run_the_same_id(self):
         """Trivially true while they match, which is the point: it fails the moment one

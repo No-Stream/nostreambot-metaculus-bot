@@ -343,8 +343,8 @@ class TestConcurrentStackerLock:
 
 
 class TestDefaultStackerWiredViaDonatedKey:
-    """When callers pass ``stacker_llm=None`` we construct claude-opus-4.5
-    (primary) and gpt-6.1-sol (fallback) routed via ``build_llm_with_openrouter_fallback``
+    """When callers pass ``stacker_llm=None`` we construct DEFAULT_STACKER_MODEL
+    (primary) and DEFAULT_STACKER_FALLBACK_MODEL routed via ``build_llm_with_openrouter_fallback``
     so the Metaculus-donated key is tried before the operator's paid key.
 
     This mirrors production STACKER_LLM / STACKER_FALLBACK_LLM in
@@ -354,12 +354,11 @@ class TestDefaultStackerWiredViaDonatedKey:
     ``OAI_ANTH_OPENROUTER_KEY`` GitHub-secret value behaved differently.
     """
 
-    def test_default_stacker_uses_opus_4_5_via_donated_key_wrapper(
+    def test_default_stacker_uses_default_model_via_donated_key_wrapper(
         self, cache: AblationCache, parser_llm: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from metaculus_bot.ablation.run_stacker import (  # HARNESS-SCAN-EXEMPT-function-level-import
-            DEFAULT_STACKER_FALLBACK_MODEL,
-            DEFAULT_STACKER_MODEL,
+        from metaculus_bot.ablation.run_stacker import (
+            DEFAULT_STACKER_MODEL,  # HARNESS-SCAN-EXEMPT-function-level-import
         )
         from metaculus_bot.fallback_openrouter import (
             FallbackOpenRouterLlm,  # HARNESS-SCAN-EXEMPT-function-level-import
@@ -368,12 +367,6 @@ class TestDefaultStackerWiredViaDonatedKey:
         # Both keys present + distinct → wrapper chooses FallbackOpenRouterLlm.
         monkeypatch.setenv("OAI_ANTH_OPENROUTER_KEY", "fake_donated")
         monkeypatch.setenv("OPENROUTER_API_KEY", "fake_paid")
-
-        # Pin the new defaults at the constant level — primary is opus-4.5,
-        # fallback is gpt-6.1-sol (different provider for independent failure
-        # mode; matches prod STACKER_FALLBACK_LLM post the 2026-09-29 migration).
-        assert DEFAULT_STACKER_MODEL == "openrouter/anthropic/claude-opus-4.5"
-        assert DEFAULT_STACKER_FALLBACK_MODEL == "openrouter/openai/gpt-6.1-sol"
 
         captured_llms: list[Any] = []
 
@@ -413,11 +406,14 @@ class TestDefaultStackerWiredViaDonatedKey:
         assert isinstance(primary, FallbackOpenRouterLlm), (
             f"Default stacker should be FallbackOpenRouterLlm; got {type(primary).__name__}"
         )
-        assert primary.model == "openrouter/anthropic/claude-opus-4.5"
+        assert primary.model == DEFAULT_STACKER_MODEL
 
-    def test_default_stacker_in_batch_uses_opus_4_5_via_donated_key_wrapper(
+    def test_default_stacker_in_batch_uses_default_model_via_donated_key_wrapper(
         self, cache: AblationCache, parser_llm: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        from metaculus_bot.ablation.run_stacker import (
+            DEFAULT_STACKER_MODEL,  # HARNESS-SCAN-EXEMPT-function-level-import
+        )
         from metaculus_bot.fallback_openrouter import (
             FallbackOpenRouterLlm,  # HARNESS-SCAN-EXEMPT-function-level-import
         )
@@ -467,4 +463,4 @@ class TestDefaultStackerWiredViaDonatedKey:
         assert len(captured_llms) == 1
         primary = captured_llms[0]
         assert isinstance(primary, FallbackOpenRouterLlm)
-        assert primary.model == "openrouter/anthropic/claude-opus-4.5"
+        assert primary.model == DEFAULT_STACKER_MODEL

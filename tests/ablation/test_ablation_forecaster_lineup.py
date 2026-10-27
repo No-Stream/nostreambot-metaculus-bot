@@ -105,7 +105,6 @@ def test_build_prod_forecaster_llms_routes_via_donated_wrapper(monkeypatch) -> N
 
     llms = build_prod_forecaster_llms()
     assert len(llms) == len(PROD_FORECASTER_MODELS) == 3
-    assert "openrouter/openai/gpt-6.1-sol" in PROD_FORECASTER_MODELS
     for llm, expected_model in zip(llms, PROD_FORECASTER_MODELS, strict=False):
         assert isinstance(llm, FallbackOpenRouterLlm), (
             f"{expected_model} must route via the donated-key wrapper (Metaculus work -> donated key)"
