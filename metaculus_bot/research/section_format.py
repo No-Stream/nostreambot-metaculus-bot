@@ -88,12 +88,7 @@ def assemble_provider_sections(results: list[tuple[str, ProviderResult]]) -> tup
     for raw, provider_result in results:
         provider_results.append(provider_result)
         if raw and raw.strip():
-            # Label the section with whoever actually produced the text. On a
-            # fallback that is NOT provider_result.name (which keeps the primary's
-            # identity for the diagnostics line) — rendering Perplexity prose under
-            # "## News Articles (AskNews)" mislabelled the source in the published
-            # comment and in the archive.
-            header = provider_header(provider_result.fallback_provider or provider_result.name)
+            header = provider_header(provider_result.name)
             combined_parts.append(f"{header}\n{_demote_inner_headings(raw)}")
 
     combined = "\n\n---\n\n".join(combined_parts) if combined_parts else ""

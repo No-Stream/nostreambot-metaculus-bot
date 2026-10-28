@@ -4,7 +4,7 @@ import argparse
 import asyncio
 import math
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -15,7 +15,19 @@ import backtest
 from backtest import _build_parser, _filter_bots
 from metaculus_bot.backtest.question_prep import BacktestQuestionSet
 from metaculus_bot.backtest.scoring import GroundTruth
-from metaculus_bot.constants import BACKTEST_DEFAULT_RESOLVED_AFTER, BACKTEST_DEFAULT_TOURNAMENT
+from metaculus_bot.benchmark.bot_factory import (
+    BENCHMARK_BOT_CONFIG,
+    DEFAULT_HELPER_LLMS,
+    INDIVIDUAL_MODEL_SPECS,
+    create_individual_bots,
+)
+from metaculus_bot.constants import (
+    BACKTEST_DEFAULT_RESOLVED_AFTER,
+    BACKTEST_DEFAULT_TOURNAMENT,
+    CONDITIONAL_STACKING_BINARY_PROB_RANGE_THRESHOLD,
+    CONDITIONAL_STACKING_MC_MAX_OPTION_THRESHOLD,
+    CONDITIONAL_STACKING_NUMERIC_NORMALIZED_THRESHOLD,
+)
 
 
 def test_import_backtest():
@@ -54,6 +66,29 @@ def test_cli_defaults_use_constants():
     args = parser.parse_args([])
     assert args.resolved_after == BACKTEST_DEFAULT_RESOLVED_AFTER
     assert args.tournament == BACKTEST_DEFAULT_TOURNAMENT
+
+
+def test_backtest_bots_expose_every_init_parameter_to_get_config():
+    """Benchmarker snapshots each bot with ``get_config()``, which reads every ``__init__`` parameter back.
+
+    A parameter the bot does not store crashes every backtest before its first forecast.
+    """
+    bots = create_individual_bots(
+        cast("Any", INDIVIDUAL_MODEL_SPECS),
+        DEFAULT_HELPER_LLMS,
+        BENCHMARK_BOT_CONFIG,
+        batch_size=1,
+        research_cache={},
+    )
+
+    for bot in bots:
+        config = bot.get_config()
+        assert config["stacking_spread_thresholds"] == {
+            "binary": CONDITIONAL_STACKING_BINARY_PROB_RANGE_THRESHOLD,
+            "mc": CONDITIONAL_STACKING_MC_MAX_OPTION_THRESHOLD,
+            "numeric": CONDITIONAL_STACKING_NUMERIC_NORMALIZED_THRESHOLD,
+        }
+        assert config["research_sink"] is None
 
 
 def test_model_filtering_include():

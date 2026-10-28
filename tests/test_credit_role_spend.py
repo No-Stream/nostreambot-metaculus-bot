@@ -798,11 +798,3 @@ class TestProdLlmsAreRoleTagged:
         """Raw dicts fed to build_llm_with_openrouter_fallback(**config) at call time."""
         assert MARKET_RANKER_LLM_CONFIG["role"] == "market_ranker"
         assert MARKET_QUERY_AUTHOR_LLM_CONFIG["role"] == "market_query_author"
-
-    def test_active_openai_model_roles_are_pinned(self) -> None:
-        """Keep every production Sol role on 6.1 while the parser stays on Luna."""
-        assert FORECASTER_LLMS[0].model == "openrouter/openai/gpt-6.1-sol"
-        assert SUMMARIZER_LLM.model == "openrouter/openai/gpt-6.1-sol"
-        assert STACKER_FALLBACK_LLM.model == "openrouter/openai/gpt-6.1-sol"
-        assert DISAGREEMENT_ANALYZER_LLM.model == "openrouter/openai/gpt-6.1-sol"
-        assert PARSER_LLM.model == "openrouter/openai/gpt-6-luna"

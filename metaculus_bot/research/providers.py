@@ -20,7 +20,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from forecasting_tools import GeneralLlm, SmartSearcher
+from forecasting_tools import GeneralLlm
 from forecasting_tools.data_models.questions import MetaculusQuestion
 
 from metaculus_bot.constants import (
@@ -31,7 +31,6 @@ from metaculus_bot.constants import (
     ASKNEWS_MAX_TRIES,
     ASKNEWS_SECRET_ENV,
     ASKNEWS_WALL_TIMEOUT,
-    EXA_API_KEY_ENV,
     NATIVE_SEARCH_CONTEXT_SIZE,
     NATIVE_SEARCH_DEFAULT_MODEL,
     NATIVE_SEARCH_MAX_RESULTS,
@@ -42,29 +41,16 @@ from metaculus_bot.constants import (
     NATIVE_SEARCH_TIMEOUT,
     NATIVE_SEARCH_VERBOSITY_DEFAULT,
     NATIVE_SEARCH_VERBOSITY_ENV,
-    OPENROUTER_API_KEY_ENV,
-    PERPLEXITY_API_KEY_ENV,
-    PERPLEXITY_RESEARCH_MODEL,
-    PERPLEXITY_RESEARCH_MODEL_VIA_OPENROUTER,
-    PERPLEXITY_WALL_TIMEOUT,
     RESEARCH_PROVIDER_ENV,
 )
-from metaculus_bot.credit_telemetry import llm_call_metadata, plain_llm_key_alias
 from metaculus_bot.fallback_openrouter import build_llm_with_openrouter_fallback
 from metaculus_bot.llm_retry import invoke_with_transient_retry
-from metaculus_bot.prompts import OUTSIDE_VENUE_MARKET_ODDS_POLICY, web_research_prompt
+from metaculus_bot.prompts import web_research_prompt
 from metaculus_bot.research.provider_diagnostics import record_provider_detail
 from metaculus_bot.research.raw_log import record_raw_research
 
 ResearchCallable = Callable[[MetaculusQuestion], Awaitable[str]]
 logger = logging.getLogger(__name__)
-
-
-class _OmittedPerplexityApiKey:
-    pass
-
-
-_OMITTED_API_KEY = _OmittedPerplexityApiKey()
 
 
 # ---------------------------------------------------------------------------
@@ -353,96 +339,6 @@ def _format_asknews_dual_sections(
     return formatted_articles
 
 
-async def _invoke_exa_research(
-    default_llm: GeneralLlm,
-    prompt: str,
-    *,
-    include_works_cited_list: bool | None = None,
-    use_brackets_around_citations: bool | None = None,
-) -> str:
-    citation_kwargs: dict[str, bool] = {}
-    if include_works_cited_list is not None:
-        citation_kwargs["include_works_cited_list"] = include_works_cited_list
-    if use_brackets_around_citations is not None:
-        citation_kwargs["use_brackets_around_citations"] = use_brackets_around_citations
-    searcher = SmartSearcher(
-        model=default_llm,
-        temperature=None,  # ignored on a preconfigured GeneralLlm; keeps litellm off the fallback str path
-        num_searches_to_run=2,
-        num_sites_per_search=10,
-        **citation_kwargs,
-    )
-    return await searcher.invoke(prompt)
-
-
-def _exa_provider(default_llm: GeneralLlm) -> ResearchCallable:
-    async def _fetch(question: MetaculusQuestion) -> str:
-        prompt = (
-            "You are an assistant to a superforecaster. The superforecaster will give"
-            " you a question they intend to forecast on. To be a great assistant, you generate"
-            " a concise but detailed rundown of the most relevant news, including if the question"
-            " would resolve Yes or No based on current information. You do not produce forecasts yourself."
-            f"\n\nThe question is: {question.question_text}"
-        )
-        # Pin the current citation shape against a future framework-default flip.
-        return await _invoke_exa_research(
-            default_llm,
-            prompt,
-            include_works_cited_list=False,
-            use_brackets_around_citations=False,
-        )
-
-    return _fetch
-
-
-async def _invoke_perplexity_research(
-    prompt: str,
-    *,
-    use_open_router: bool,
-    api_key: str | _OmittedPerplexityApiKey | None = _OMITTED_API_KEY,
-) -> str:
-    model_name = PERPLEXITY_RESEARCH_MODEL_VIA_OPENROUTER if use_open_router else PERPLEXITY_RESEARCH_MODEL
-    metadata = llm_call_metadata("perplexity_research", plain_llm_key_alias(model_name))
-    model_kwargs: dict[str, Any] = {
-        "model": model_name,
-        "temperature": None,  # provider-default sampling, pinned against a future GeneralLlm default flip
-        "allowed_tries": 1,  # the elapsed-gated wrapper below is the sole retry owner
-        "metadata": metadata,
-    }
-    if api_key is not _OMITTED_API_KEY:
-        model_kwargs["api_key"] = api_key
-    model = GeneralLlm(**model_kwargs)
-    return await invoke_with_transient_retry(
-        lambda: model.invoke(prompt),
-        wall_timeout=PERPLEXITY_WALL_TIMEOUT,
-        label="perplexity_research",
-    )
-
-
-def _perplexity_provider(use_open_router: bool = False, is_benchmarking: bool = False) -> ResearchCallable:
-    async def _fetch(question: MetaculusQuestion) -> str:
-        """Run Perplexity research, dropping the market-odds ask when benchmarking (leakage).
-
-        The market-odds ask is interpolated from ``OUTSIDE_VENUE_MARKET_ODDS_POLICY`` rather than
-        restated, because a second copy drifted once: docs/research.md "Primary provider: a
-        priority ladder".
-        """
-        prediction_markets_instruction = (
-            "" if is_benchmarking else f"In addition to news, cover: {OUTSIDE_VENUE_MARKET_ODDS_POLICY}\n"
-        )
-        prompt = (
-            "You are an assistant to a superforecaster.\n"
-            "Generate a concise but detailed rundown of the most relevant news, including if the question would resolve Yes or No based on current information.\n"
-            f"{prediction_markets_instruction}"
-            "Do not produce forecasts yourself. Provide data for the superforecaster.\n\n"
-            f"Question:\n{question.question_text}"
-        )
-        # Omitting api_key preserves LiteLLM's provider-specific environment lookup.
-        return await _invoke_perplexity_research(prompt, use_open_router=use_open_router)
-
-    return _fetch
-
-
 def build_native_search_llm(
     model_slug: str | None = None,
     *,
@@ -545,114 +441,53 @@ native_search_provider = _native_search_provider
 # ---------------------------------------------------------------------------
 
 
+def _empty_provider() -> ResearchCallable:
+    async def _empty(_: MetaculusQuestion) -> str:
+        return ""
+
+    return _empty
+
+
 def _forced_provider_choice(
     forced_lc: str,
-    *,
-    default_llm: GeneralLlm | None,
-    exa_callback: ResearchCallable | None,
-    perplexity_callback: ResearchCallable | None,
-    openrouter_callback: ResearchCallable | None,
-    is_benchmarking: bool,
 ) -> tuple[ResearchCallable, str] | None:
     """Resolve an explicit ``RESEARCH_PROVIDER`` override, or None to fall through to auto."""
+    if forced_lc == "none":
+        return _empty_provider(), "none"
     if forced_lc == "asknews":
         # Fail fast if creds missing to make misconfig obvious
         if not (os.getenv(ASKNEWS_CLIENT_ID_ENV) and os.getenv(ASKNEWS_SECRET_ENV)):
             raise ValueError("RESEARCH_PROVIDER=asknews requires ASKNEWS_CLIENT_ID and ASKNEWS_SECRET to be set")
         return _asknews_provider(), "asknews"
-    if forced_lc == "exa":
-        if exa_callback is not None:
-            return exa_callback, "exa"
-        if default_llm is None:
-            raise ValueError("RESEARCH_PROVIDER=exa requires default_llm or exa_callback to be provided")
-        return _exa_provider(default_llm), "exa"
-    if forced_lc == "perplexity":
-        if perplexity_callback is not None:
-            return perplexity_callback, "perplexity"
-        return _perplexity_provider(use_open_router=False, is_benchmarking=is_benchmarking), "perplexity"
-    if forced_lc == "openrouter":
-        if openrouter_callback is not None:
-            return openrouter_callback, "openrouter"
-        return _perplexity_provider(use_open_router=True, is_benchmarking=is_benchmarking), "openrouter"
     # Any other value behaves as auto
     return None
 
 
-def _auto_provider_choice(
-    *,
-    default_llm: GeneralLlm | None,
-    exa_callback: ResearchCallable | None,
-    perplexity_callback: ResearchCallable | None,
-    openrouter_callback: ResearchCallable | None,
-    is_benchmarking: bool,
-) -> tuple[ResearchCallable, str]:
-    """First provider whose credentials are present, in the documented priority order."""
+def _auto_provider_choice() -> tuple[ResearchCallable, str]:
+    """Choose AskNews when configured, or return an empty provider."""
     if os.getenv(ASKNEWS_CLIENT_ID_ENV) and os.getenv(ASKNEWS_SECRET_ENV):
         return _asknews_provider(), "asknews"
 
-    if os.getenv(EXA_API_KEY_ENV):
-        if exa_callback is not None:
-            return exa_callback, "exa"
-        if default_llm is None:
-            raise ValueError("default_llm must be provided for Exa research provider")
-        return _exa_provider(default_llm), "exa"
-
-    if os.getenv(PERPLEXITY_API_KEY_ENV):
-        if perplexity_callback is not None:
-            return perplexity_callback, "perplexity"
-        return _perplexity_provider(use_open_router=False, is_benchmarking=is_benchmarking), "perplexity"
-
-    if os.getenv(OPENROUTER_API_KEY_ENV):
-        if openrouter_callback is not None:
-            return openrouter_callback, "openrouter"
-        return _perplexity_provider(use_open_router=True, is_benchmarking=is_benchmarking), "openrouter"
-
-    async def _empty(_: MetaculusQuestion) -> str:
-        return ""
-
-    return _empty, "none"
+    return _empty_provider(), "none"
 
 
-def choose_provider_with_name(
-    default_llm: GeneralLlm | None = None,
-    *,
-    exa_callback: ResearchCallable | None = None,
-    perplexity_callback: ResearchCallable | None = None,
-    openrouter_callback: ResearchCallable | None = None,
-    is_benchmarking: bool = False,
-) -> tuple[ResearchCallable, str]:
+def choose_provider_with_name() -> tuple[ResearchCallable, str]:
     """Return a research coroutine and its provider name.
 
-    Priority order replicates pre-refactor behaviour:
-    1. AskNews (ASKNEWS_CLIENT_ID & ASKNEWS_SECRET)
-    2. Exa.ai (EXA_API_KEY)
-    3. Perplexity (PERPLEXITY_API_KEY)
-    4. Perplexity via OpenRouter (OPENROUTER_API_KEY)
-    5. Fallback stub that returns an empty string.
+    AskNews (ASKNEWS_CLIENT_ID & ASKNEWS_SECRET) is the only selectable primary provider.
+    Without both credentials, the empty provider ("none") returns an empty string.
 
-    ``RESEARCH_PROVIDER`` forces a specific provider; an unrecognized value falls
-    through to the priority order above.
+    ``RESEARCH_PROVIDER=asknews`` forces AskNews and fails if either credential is missing;
+    ``RESEARCH_PROVIDER=none`` forces the empty provider. Other override values fall through
+    to the same AskNews-or-empty choice.
     """
     forced = os.getenv(RESEARCH_PROVIDER_ENV)
     if forced:
-        choice = _forced_provider_choice(
-            forced.strip().lower(),
-            default_llm=default_llm,
-            exa_callback=exa_callback,
-            perplexity_callback=perplexity_callback,
-            openrouter_callback=openrouter_callback,
-            is_benchmarking=is_benchmarking,
-        )
+        choice = _forced_provider_choice(forced.strip().lower())
         if choice is not None:
             return choice
 
-    return _auto_provider_choice(
-        default_llm=default_llm,
-        exa_callback=exa_callback,
-        perplexity_callback=perplexity_callback,
-        openrouter_callback=openrouter_callback,
-        is_benchmarking=is_benchmarking,
-    )
+    return _auto_provider_choice()
 
 
 # ---------------------------------------------------------------------------

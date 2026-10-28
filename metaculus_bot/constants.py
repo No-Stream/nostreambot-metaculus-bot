@@ -194,7 +194,7 @@ RESEARCH_SECTION_CHAR_LIMIT: int = 44_999
 SUMMARY_SECTION_CHAR_LIMIT: int = 13_999
 COMMENT_CHAR_LIMIT: int = 149_999
 
-RESEARCH_PROVIDER_ENV: str = "RESEARCH_PROVIDER"  # auto|asknews|exa|perplexity|openrouter, case-insensitive
+RESEARCH_PROVIDER_ENV: str = "RESEARCH_PROVIDER"  # auto|asknews|none, case-insensitive
 
 # A URL list here replaces cli.py's EXAMPLE_QUESTIONS. Receipt: docs/constants.md "TEST_QUESTIONS_OVERRIDE_ENV".
 TEST_QUESTIONS_OVERRIDE_ENV: str = "TEST_QUESTIONS_OVERRIDE"
@@ -205,7 +205,6 @@ OAI_ANTH_OPENROUTER_KEY_ENV: str = "OAI_ANTH_OPENROUTER_KEY"
 ASKNEWS_CLIENT_ID_ENV: str = "ASKNEWS_CLIENT_ID"
 ASKNEWS_SECRET_ENV: str = "ASKNEWS_SECRET"  # noqa: S105  # env var NAME, not a credential
 EXA_API_KEY_ENV: str = "EXA_API_KEY"
-PERPLEXITY_API_KEY_ENV: str = "PERPLEXITY_API_KEY"
 METACULUS_TOKEN_ENV: str = "METACULUS_TOKEN"  # noqa: S105  # env var NAME, not a credential
 MANTIC_TOKEN_ENV: str = "MANTIC_TOKEN"  # noqa: S105  # env var NAME, not a credential; personal, never donated
 # Master switch; a Mantic run sets it false and fails shut. Receipt: docs/constants.md "donated_openrouter_key_enabled".
@@ -386,15 +385,6 @@ NATIVE_SEARCH_VERBOSITY_DEFAULT: str = "low"
 NATIVE_SEARCH_MAX_RESULTS: int = 20  # web options passed to the OpenRouter plugins
 NATIVE_SEARCH_CONTEXT_SIZE: str = "high"  # "low", "medium", "high"
 
-# --- Perplexity (fallback research provider; dormant while AskNews wins the ladder) ---
-
-# One constant; the two call sites drifted apart. Receipt: docs/constants.md "PERPLEXITY_RESEARCH_MODEL".
-PERPLEXITY_RESEARCH_MODEL: str = "perplexity/sonar-reasoning-pro"
-PERPLEXITY_RESEARCH_MODEL_VIA_OPENROUTER: str = f"openrouter/{PERPLEXITY_RESEARCH_MODEL}"
-
-# Both call sites had NO wall bound at all. Receipt: docs/constants.md "PERPLEXITY_WALL_TIMEOUT".
-PERPLEXITY_WALL_TIMEOUT: float = 300.0
-
 # --- Resolution-Source Fetcher (Tier 1) ---
 
 # The char caps here bound RAW fetched content only; LLM-emitted research is never truncated.
@@ -565,8 +555,9 @@ GAP_FILL_ANALYZER_TIMEOUT: int = 120  # tight, so a hung analyzer cannot hold a 
 GAP_FILL_ANALYZER_WALL_TIMEOUT: int = 135
 GAP_FILL_MIN_RESEARCH_CHARS: int = 200  # under this every provider likely soft-failed
 # Moved off grounded Gemini 2026-06-25; sol->terra 2026-07-20; terra->sol (GPT-6, no Terra successor)
-# 2026-09-22; gpt-6-sol -> gpt-6.1-sol 2026-09-29. Receipt: docs/constants.md "GAP_FILL_RESOLVER_MODEL".
-GAP_FILL_RESOLVER_MODEL: str = "openai/gpt-6.1-sol"
+# 2026-09-22; gpt-6-sol -> gpt-6.1-sol 2026-09-29; sol -> gpt-6.1-terra 2026-10-26.
+# Receipt: docs/constants.md "GAP_FILL_RESOLVER_MODEL".
+GAP_FILL_RESOLVER_MODEL: str = "openai/gpt-6.1-terra"
 GAP_FILL_RESOLVER_REASONING_EFFORT: str = "low"
 
 # --- Agentic gap-fill v2 (bounded research loop) ---
@@ -585,9 +576,9 @@ GAP_FILL_V2_TOOL_BUDGET_LINE_RESERVE_CHARS: int = 512
 GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS: int = 1600
 GAP_FILL_V2_EVIDENCE_FINDING_MAX_CHARS: int = 3000
 # terra-low won the blind 5-arm replay eval 2026-07-17; terra->sol (GPT-6, no Terra successor)
-# 2026-09-22; gpt-6-sol -> gpt-6.1-sol 2026-09-29, effort default unchanged at low.
-# Receipt: docs/constants.md "GAP_FILL_V2_DRIVER_MODEL".
-GAP_FILL_V2_DRIVER_MODEL: str = os.getenv("GAP_FILL_V2_DRIVER_MODEL") or "openai/gpt-6.1-sol"
+# 2026-09-22; gpt-6-sol -> gpt-6.1-sol 2026-09-29; sol -> gpt-6.1-terra 2026-10-26, effort default unchanged
+# at low. Receipt: docs/constants.md "GAP_FILL_V2_DRIVER_MODEL".
+GAP_FILL_V2_DRIVER_MODEL: str = os.getenv("GAP_FILL_V2_DRIVER_MODEL") or "openai/gpt-6.1-terra"
 GAP_FILL_V2_DRIVER_EFFORT: str = os.getenv("GAP_FILL_V2_DRIVER_EFFORT") or "low"
 # A wrong id, or a robots-gated host, kills the rung silently. Receipt: docs/constants.md "GAP_FILL_V2_READER_MODEL".
 GAP_FILL_V2_READER_MODEL: str = os.getenv("GAP_FILL_V2_READER_MODEL") or "gemini-3.8-flash"

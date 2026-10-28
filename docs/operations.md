@@ -231,14 +231,14 @@ people up is the two OpenRouter keys.
 - **`OAI_ANTH_OPENROUTER_KEY`: donated / shared.** Metaculus provides credits
   on this key for OpenAI, Anthropic, and Google models routed via OpenRouter.
   Its server-side allowed-providers list is locked to those three, so anything
-  else (Grok via x-ai, Qwen, Perplexity) returns 404 on this key. This is the
+  else (Grok via x-ai, Qwen) returns 404 on this key. This is the
   only shared credential in the bot; despite the name it covers all three
   providers, not just OpenAI and Anthropic. `DONATED_OPENROUTER_KEY_ENABLED`
   (default `true`) is its master switch: `--mode mantic` requires it to read false
   and fails shut otherwise, because the key was donated for Metaculus tournaments
   (see "Mantic" below).
 - **`OPENROUTER_API_KEY`: personal.** Pays for what the donated key can't
-  (Grok, Qwen, Perplexity-via-OpenRouter) and serves as the fallback when the
+  (Grok and Qwen) and serves as the fallback when the
   donated key hits a credential, credit, or allowed-providers error. The
   fallback wrapper is `FallbackOpenRouterLlm` in
   `metaculus_bot/fallback_openrouter.py`.
@@ -284,11 +284,10 @@ Gemini has two separate routes, which is the other easy thing to confuse:
   subsection below.
 
 Other keys, all personal, no shared variants: `METACULUS_TOKEN`, `MANTIC_TOKEN`
-(the Crucible bot token, read only in `--mode mantic`), `ASKNEWS_CLIENT_ID`
-+ `ASKNEWS_SECRET`, `EXA_API_KEY`, `PERPLEXITY_API_KEY`, `FRED_API_KEY`,
-`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`. The two direct provider keys only matter
-if you bypass OpenRouter; most flows route through OpenRouter and don't need
-them.
+(the Crucible bot token, read only in `--mode mantic`), `ASKNEWS_CLIENT_ID`,
+`ASKNEWS_SECRET`, `EXA_API_KEY`, `FRED_API_KEY`, `ANTHROPIC_API_KEY`, and
+`OPENAI_API_KEY`. The Exa key powers agentic gap-fill v2's `search_web` tool;
+it does not select or replace the primary research provider.
 
 `SEC_EDGAR_CONTACT_EMAIL` is not a key but a contact address (also personal): the SEC EDGAR
 client puts it in the fair-access User-Agent, and the client declines to dial without it. The
@@ -307,7 +306,7 @@ personal fallback, unless `GEMINI_USE_DONATED_OPENROUTER_KEY` has been forced
 OFF, in which case suspect `OPENROUTER_API_KEY`; and anything on
 `DONATED_KEY_BLOCKED_GOOGLE_MODELS` is pinned to the personal key with no donated
 attempt, so a credit error on one of those models is always a personal-key issue.
-A 401/402 on Grok, Qwen, or Perplexity is always the personal key
+A 401/402 on Grok or Qwen is always the personal key
 (the donated key 404s on those), and so is every OpenRouter auth error on a
 `--mode mantic` run, where the donated key is switched off entirely. A `google-genai` 401 or quota error is always
 `GOOGLE_API_KEY`. A `403` splits three ways, with the reported status deciding the
@@ -376,8 +375,8 @@ starts rather than a runtime toggle, because the roster's module-level `GeneralL
 
 Past the switch, the predicate matches OpenRouter model slugs of the form
 `openrouter/<provider>/<model>` against `DONATED_KEY_PROVIDERS`. It returns False for
-non-OpenRouter slugs such as `perplexity/sonar` and for unrecognized providers such as `x-ai` for
-Grok. Google routing is additionally gated on `GEMINI_USE_DONATED_OPENROUTER_KEY`, which defaults
+non-OpenRouter slugs and for unrecognized providers such as `x-ai` for Grok. Google
+routing is additionally gated on `GEMINI_USE_DONATED_OPENROUTER_KEY`, which defaults
 to on (`gemini_use_donated_openrouter_key`): after Metaculus raised the Google rate limits on
 2026-06-16 the donated key serves most Gemini models, for example `gemini-3.5-flash` and
 `gemini-3.1-flash-lite`. Setting that variable to a false-y value forces personal-key-only routing
@@ -811,12 +810,15 @@ CI.
 | `RESOLUTION_SOURCE_IMPERSONATE_ENABLED` | on | unset (so on) | The free TLS-impersonating retry of a direct-fetch 403 (`research/impersonated_fetch.py`, the `route=impersonate` rung and gap-fill v2's `fetch` / `read_document` ladders alike). The only research flag whose code default is ON, read through `impersonated_fetch.impersonation_enabled()`: it costs no key, no model call and no spend, fires on a host's 403 only, is memoized per host for the run once a host refuses the impersonated client, and sits behind the same wall-budget floor as the other one-GET rungs, so the flag is a kill switch rather than an opt-in. No bot workflow sets it. Set it to `false` to fall straight through to the archive and the paid reader on a 403 |
 | `TS_ANCHOR_ENABLED` | off | `true` | Time-series empirical P10/P50/P90 band from a question's own resolution series |
 | `TS_ANCHOR_CHART_ENABLED` | off | `false` | Chart-image side-channel for the anchor (vision message to base models); held off pending a text-vs-image A/B |
-| `RESEARCH_PROVIDER` | `auto` | unset | Forces one primary provider (`asknews`/`exa`/`perplexity`/`openrouter`) instead of the priority order |
+| `RESEARCH_PROVIDER` | `auto` | unset | Selects the primary provider: `asknews`, `none`, or `auto`; unsupported values behave like `auto` |
 
-The primary provider is chosen by priority: AskNews (when
-`ASKNEWS_CLIENT_ID` + `ASKNEWS_SECRET` are set, the prod case), then Exa, then
-Perplexity, then Perplexity-via-OpenRouter. The flags above run on top of the
-primary, each independently gated.
+AskNews is the only primary provider. In `auto` mode, it runs when
+`ASKNEWS_CLIENT_ID` and `ASKNEWS_SECRET` are set; `asknews` forces AskNews and
+requires those credentials; `none` selects an empty primary even when the
+credentials are present. Unsupported values behave like `auto`. A failed
+AskNews request does not trigger an Exa or Perplexity replacement. Exa remains
+available to agentic gap-fill v2's `search_web` tool. The flags above gate add-on
+providers independently of the primary.
 
 Those two are the only flags on the resolution-source escalation ladder (the paid rung's opt-in
 and the impersonated retry's kill switch); the rest of it is tuned by constants, all in
@@ -1832,7 +1834,7 @@ the pipeline spent it: `forecaster:openai` / `forecaster:anthropic` /
 `stacker`, `stacker_fallback`, `parser`, `summarizer`, `crux_analyzer`,
 `native_search`, `targeted_search`, `gap_fill_analyzer`, `gap_fill_resolver`,
 `gap_fill_v2_driver`, `market_query_author`, `market_ranker`,
-`financial_classifier`, `page_digest_extractor`, `perplexity_research`. This list is the only
+`financial_classifier`, and `page_digest_extractor`. This list is the only
 enumeration: each role is a string literal at its builder call site, stamped onto every completion
 through `credit_telemetry.llm_call_metadata`.
 
@@ -1905,18 +1907,16 @@ How the number is produced, because it decides how to read it:
   per role is `cached_tokens / prompt_tokens`; the gap-fill v2 driver should sit
   near 0.8 once the ghost call reuses the cache (`docs/agentic_gap_fill.md` "The
   ghost forecast"), and a forecaster slot near 0.
-- `role=untagged` means a completion nobody stamped: one of forecasting-tools'
-  own helpers (`SmartSearcher`), an ablation or benchmark harness, or a builder
-  call site that forgot its `role=`. It is visible on purpose rather than folded
+- `role=untagged` means a completion nobody stamped: an ablation or benchmark
+  harness, or a builder call site that forgot its `role=`. It is visible on purpose rather than folded
   into another row. `key=unknown` is the same thing for the key.
 - The two `metadata=` field names (`role`, `key_alias`) and the four key-alias
   values (`donated`, `personal`, `direct`, `unknown`) are separate vocabularies:
   the first pair names FIELDS, the second names KEYS. `donated` and `personal`
   are the `KEY_SPECS` aliases verbatim, so `CREDIT_ROLE_SPEND key=` joins onto
   `CREDIT_SPEND key=` and `CREDIT_BALANCE key=` without translation. `direct` is
-  a non-OpenRouter slug, a `perplexity/` or `exa/` model billed to its own
-  provider key: outside this ledger's remit, but still counted rather than
-  dropped.
+  a non-OpenRouter model slug billed to its own provider key: outside this
+  ledger's remit, but still counted rather than dropped.
 - Dollar figures on these lines render at four decimals, not the balance lines'
   two, because a per-role figure is a fraction of a cent per call: the parser
   costs about $0.0005 a question.

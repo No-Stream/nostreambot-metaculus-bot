@@ -32,6 +32,17 @@ the analysis era registry when merged; this authoring date is not the production
 
 **All dates below are AUTHORING dates on the july15 branch; every one of them reached prod together in merge `b4e9df0` at 2026-07-21T17:07:37Z, which is the single era boundary** (see the merge-date rule under era-bucketing): 2026-07-15: Fable-5 joined the forecaster roster (was stacker-only; stacking disabled in prod made it idle) and opus-4.6 retired, keeping n=6 at a 2 Anthropic / 2 OpenAI / 1 Google / 1 xAI balance. 2026-07-20 (first change): Fable-5 PULLED from the forecaster roster and the stacker after it returned `message.content=None` on 4/4 attempts for Q14333's numeric forecast + a truncated no-JSON-block output on Q578 in the 2026-07-19 test_bot run (suspected content classifiers refusing certain question content: fast deterministic empty completions, not timeouts); opus-4.7 took the slot, keeping n=6. Reconsidering fable-5 is a tracked follow-up (FUTURE.md). 2026-07-20 (second change, current): dropped from 6 to the 3-member latest-per-vendor triple, removing gpt-5.5, opus-4.7, and grok-4.5. Two adversarially-verified analyses (`scratch/ensemble_3member_audit_2026-07-20/` + `scratch/ensemble_power_model_2026-07-20/`) found the triple non-inferior on binary/MC and only a fragile numeric lean toward the full roster (+3.24, 95% CI [-2.5, +9.1], P(loss>1pt/Q)=0.80, driven by 2 questions); accepted as a ship-and-watch bet (see FUTURE.md "Triple-era September re-read"). This second change supersedes the first as the roster in effect, but both landed in the same merge, so residual analysis sees ONE boundary at 2026-07-21T17:07:37Z. No prod run ever used the intermediate opus-4.7 roster.
 
+**2026-10-27 (GPT-6.1 Terra for the expensive research roles):** At the operator's request, three roles that
+sat on Sol only because GPT-6 shipped without a Terra tier move to `gpt-6.1-terra`: the gap resolver, the agentic
+gap-fill driver and the AskNews summarizer. Together they cost about $0.70 of a $1.51 question on Sol, and the live
+[OpenRouter model catalog](https://openrouter.ai/api/v1/models) lists `openai/gpt-6.1-terra` at $1/$5 per million
+tokens against Sol's $2/$10. A resolver probe on question 46032 and a two-question research-only run found Terra's
+resolver and driver output as complete as Sol's at roughly half the cost. Native search and the gap analyzer stay
+on `gpt-6.1-sol`: Terra's output there was thinner on the same trial, and the two roles cost about $0.16 per
+question between them. The disagreement analyzer, the forecasters, the stacker fallback and the ablation lineup
+also stay on Sol. Efforts, timeouts, token caps and key routing are unchanged. This is a research-pipeline boundary
+with no forecaster roster change.
+
 **2026-09-29 (GPT-6.1 Sol migration):** At the operator's request, every active `gpt-6-sol`
 default moves to `gpt-6.1-sol`: the OpenAI forecaster, AskNews summarizer,
 stacker fallback, disagreement analyzer, native search, gap analyzer, gap resolver, agentic gap-fill driver,

@@ -3,8 +3,9 @@
 Every request runs through the real aiohttp session the client builds, against a loopback
 `aiohttp.test_utils.TestServer` that serves the recorded fixtures under `tests/data/sec_edgar/`
 and records what arrived (path, query, headers, arrival time). Loopback is the one host the
-suite's egress guard allows, so the fair-access header, the byte cap and the request spacing are
-all asserted on the wire rather than on a fake.
+suite's egress guard allows, so the fair-access header and the byte cap are asserted on the wire
+rather than on a fake. Request spacing is asserted on the spacer itself, plus a wire-level check
+that every request waits on it.
 
 Fixtures were recorded from the live endpoints on 2026-09-09 and trimmed to a few entries each.
 """
@@ -55,6 +56,24 @@ _TEN_K_HTML = b"<html><body><h1>UBER TECHNOLOGIES, INC. FORM 10-K</h1><p>Revenue
 
 def _fixture(name: str) -> Any:
     return json.loads((_FIXTURES / name).read_text())
+
+
+def _record_spacer_waits(monkeypatch: pytest.MonkeyPatch) -> list[RequestSpacer]:
+    """The spacer instance behind every ``RequestSpacer.wait`` call, in call order.
+
+    The wire tests assert that each request waits on the one shared spacer, and the spacing itself is
+    asserted on the spacer directly. Gaps between stub-side arrival times are not a usable signal:
+    under a loaded machine one request's delivery can be delayed until just before the next one's.
+    """
+    spacers_waited_on: list[RequestSpacer] = []
+    original_wait = RequestSpacer.wait
+
+    async def recording_wait(self: RequestSpacer) -> None:
+        spacers_waited_on.append(self)
+        await original_wait(self)
+
+    monkeypatch.setattr(RequestSpacer, "wait", recording_wait)
+    return spacers_waited_on
 
 
 @dataclass
@@ -292,22 +311,22 @@ class TestRequestSpacer:
         finally:
             sec_edgar.reset_request_spacer()
 
-    async def test_requests_on_the_wire_are_spaced(self, edgar: EdgarStub, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setattr(sec_edgar, "SEC_EDGAR_MAX_REQUESTS_PER_SECOND", 20.0)
+    async def test_every_request_on_the_wire_waits_on_the_shared_spacer(
+        self, edgar: EdgarStub, monkeypatch: pytest.MonkeyPatch
+    ):
         sec_edgar.reset_request_spacer()
+        spacers_waited_on = _record_spacer_waits(monkeypatch)
         url = filing_document_url(1543151, "0001543151-26-000015", "uber-20251231.htm")
         async with edgar_session() as session:
             await asyncio.gather(*(filing_document(session, url) for _ in range(4)))
 
-        arrivals = sorted(request.at for request in edgar.requests)
-        gaps = [later - earlier for earlier, later in pairwise(arrivals)]
-        assert len(gaps) == 3
-        assert min(gaps) >= 0.045, gaps
+        assert len(edgar.requests) == len(spacers_waited_on) == 4
+        assert spacers_waited_on == [sec_edgar.request_spacer()] * 4
 
     async def test_spacing_is_shared_across_edgar_hosts(self, edgar: EdgarStub, monkeypatch: pytest.MonkeyPatch):
         """SEC's ceiling is per caller, not per host, so www and data requests share one budget."""
-        monkeypatch.setattr(sec_edgar, "SEC_EDGAR_MAX_REQUESTS_PER_SECOND", 20.0)
         sec_edgar.reset_request_spacer()
+        spacers_waited_on = _record_spacer_waits(monkeypatch)
         second_host = await _serve(edgar)
         monkeypatch.setattr(sec_edgar, "WWW_BASE_URL", _base_url(second_host))
         try:
@@ -322,10 +341,8 @@ class TestRequestSpacer:
             await second_host.close()
 
         assert {urlparse(base).port for base in (sec_edgar.WWW_BASE_URL, sec_edgar.DATA_BASE_URL)} != {None}
-        arrivals = sorted(request.at for request in edgar.requests)
-        gaps = [later - earlier for earlier, later in pairwise(arrivals)]
-        assert len(gaps) == 3
-        assert min(gaps) >= 0.045, gaps
+        assert len(edgar.requests) == len(spacers_waited_on) == 4
+        assert spacers_waited_on == [sec_edgar.request_spacer()] * 4
 
 
 class TestTickerMap:

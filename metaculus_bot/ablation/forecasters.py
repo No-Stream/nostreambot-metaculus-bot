@@ -380,7 +380,6 @@ def _build_bot(
         max_questions_per_run=None,
         is_benchmarking=True,
         max_concurrent_research=1,
-        allow_research_fallback=False,
         research_cache={qid: research_blob},
         min_forecasters_to_publish=1,
     )

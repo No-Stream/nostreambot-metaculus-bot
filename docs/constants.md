@@ -221,8 +221,9 @@ on the wall clock.
 
 ### DEFAULT_MAX_CONCURRENT_RESEARCH
 
-Concurrency ceiling for research providers such as AskNews and Exa. Deliberately conservative for
-AskNews; adjust after observing rate limits.
+Per-run concurrency ceiling for the parallel research providers. This is separate from AskNews's
+process-wide rate and concurrency limits, which are configured deliberately conservatively and
+adjusted after observing rate limits.
 
 ### BENCHMARK_BATCH_SIZE
 
@@ -244,8 +245,10 @@ last rendering drops the disclosures too when they alone exceed the limit, so th
 
 ### RESEARCH_PROVIDER_ENV
 
-Optional environment variable that forces research provider selection. Accepted values, case
-insensitive: "auto", "asknews", "exa", "perplexity", "openrouter".
+Optional environment variable that selects the primary research provider. Accepted values, case
+insensitive: "auto", "asknews", "none". Auto uses AskNews when its credentials are configured;
+asknews requires those credentials; none skips the primary even when credentials are present.
+Unsupported values behave like auto. Exa is reserved for the agentic gap-fill v2 search tool.
 
 ### TEST_QUESTIONS_OVERRIDE_ENV
 
@@ -485,6 +488,7 @@ Changed 2026-07-17 from sol to terra per the blind research-role audit in
 third, with the verdict "MARGINAL EDGE". Changed again 2026-09-22, terra to `gpt-6-sol`: GPT-6 shipped
 with no Terra successor, so every Terra role moved to Sol 6 at the same (low) effort.
 Updated 2026-09-29 to `gpt-6.1-sol`, retaining low effort and the existing budgets.
+Kept on `gpt-6.1-sol` on 2026-10-27 when the gap resolver and the v2 driver moved to `gpt-6.1-terra`. On a two-question trial Terra's output in this role was thinner than Sol's (about half the length, fewer sources), and the role is cheap enough (about $0.13 per question on Sol) that the saving did not justify the loss.
 
 ### NATIVE_SEARCH_MAX_TOKENS
 
@@ -529,24 +533,6 @@ also at low, in `llm_configs.py`, while the forecaster slots set their own effor
 
 Native search web options, passed to the OpenRouter plugins. Context size accepts "low", "medium" or
 "high".
-
-## Perplexity (fallback research provider; dormant while AskNews wins the ladder)
-
-### PERPLEXITY_RESEARCH_MODEL, PERPLEXITY_RESEARCH_MODEL_VIA_OPENROUTER
-
-The model both Perplexity call sites use: the provider factory in `research/providers.py` and the
-orchestrator's AskNews-failure fallback. A single constant because the two sites each carried their
-own literal and silently drifted, with `providers.py` pinned to Perplexity's non-reasoning tier while
-the orchestrator used the reasoning one. The direct-provider route takes the bare slug; the
-OpenRouter route takes it prefixed, which is what `get_openrouter_api_key` keys its routing on.
-
-### PERPLEXITY_WALL_TIMEOUT
-
-A wall-clock cap for the two Perplexity call sites. Both previously had no wall bound at all: unlike
-native search and resolution-source, neither was ever migrated to the gated retry wrapper, so a
-stalled reasoning-tier call could run as long as litellm let it. Sized between
-`GEMINI_SEARCH_TIMEOUT` and the research phase's own budget, generous enough for a reasoning search
-and bounded enough that a stall cannot dominate the phase.
 
 ## Resolution-Source Fetcher (Tier 1)
 
@@ -1182,6 +1168,7 @@ judgment. Grounded search resolution still uses google-genai directly via `gemin
 that path needs the search index. Changed 2026-09-22, terra to `gpt-6-sol`: GPT-6 shipped with no Terra
 successor, so every Terra role moved to Sol 6 at the same (low) effort.
 Updated 2026-09-29 to `gpt-6.1-sol`, retaining low effort and the existing budgets.
+Kept on `gpt-6.1-sol` on 2026-10-27 when the gap resolver and the v2 driver moved to `gpt-6.1-terra`. On a two-question trial Terra's output in this role was thinner than Sol's (3 gaps listed on both questions where Sol filled the cap of 4), and the role is cheap enough (about $0.03 per question on Sol) that the saving did not justify the loss.
 
 ### GAP_FILL_MAX_GAPS
 
@@ -1239,6 +1226,7 @@ consideration. The 2026-07-09 bench had sol-low matching terra-low coverage 24 o
 cost weight flip it. Changed again 2026-09-22, terra to `gpt-6-sol`: GPT-6 shipped with no Terra successor, so
 every Terra role moved to Sol 6 at the same (low) effort.
 Updated 2026-09-29 to `gpt-6.1-sol`, retaining low effort and the existing budgets.
+Changed 2026-10-27 to `gpt-6.1-terra` once GPT-6.1 shipped a Terra tier, at half Sol's price ($1/$5 against $2/$10 per million tokens), retaining low effort and the existing budgets. A Sol-against-Terra probe on question 46032 found the same facts on all four gaps at 48% of the cost and half the wall time.
 
 ## Agentic gap-fill v2 (bounded research loop)
 
@@ -1284,6 +1272,7 @@ were openai or anthropic, so the loop's litellm binding routes via the donated O
 2026-09-22, terra to `gpt-6-sol`: GPT-6 shipped with no Terra successor, so every Terra role moved to Sol 6 at
 the same (low) effort default.
 Updated 2026-09-29 to `gpt-6.1-sol`, retaining low effort and the existing budgets.
+Changed 2026-10-27 to `gpt-6.1-terra` once GPT-6.1 shipped a Terra tier, at half Sol's price ($1/$5 against $2/$10 per million tokens), retaining low effort and the existing budgets. A two-question research-only run found its findings as complete as Sol's or more so, every claim with a quoted excerpt.
 
 ### GAP_FILL_V2_READER_MODEL
 

@@ -128,9 +128,7 @@ class TestV1GhostThroughTheStage:
         def sink(**kwargs) -> None:
             captured.update(kwargs)
 
-        orch = ResearchOrchestrator(
-            default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False, research_sink=sink
-        )
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, research_sink=sink)
         provider = AsyncMock(
             return_value="First-pass research prose long enough to pass the gap-fill min-chars gate. " * 4
         )
@@ -173,9 +171,7 @@ class TestV1GhostThroughTheStage:
         def sink(**kwargs) -> None:
             captured.update(kwargs)
 
-        orch = ResearchOrchestrator(
-            default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False, research_sink=sink
-        )
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, research_sink=sink)
         provider = AsyncMock(return_value="research prose")
         fake_llm = _happy_path_llm()
         llm_patch, tools_patch = _patch_loop_internals(fake_llm)

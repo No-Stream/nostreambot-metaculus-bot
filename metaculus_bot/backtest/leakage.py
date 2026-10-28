@@ -25,7 +25,7 @@ async def screen_research_for_leakage(
     ground_truths: dict[int, GroundTruth],
     concurrency: int = ASKNEWS_MAX_CONCURRENCY,
 ) -> tuple[list[MetaculusQuestion], dict[int, GroundTruth], dict[int, str]]:
-    research_provider, _ = choose_provider_with_name(is_benchmarking=True)
+    research_provider, _ = choose_provider_with_name()
     # temperature=None defers reasoning models to provider defaults; redundant on
     # ft 0.2.92 (GeneralLlm ctor default is already None). No top_p. 2026-09-22: effort
     # low->high and max_tokens=500 removed (operator: this backtest-only screen is not

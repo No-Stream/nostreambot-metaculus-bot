@@ -54,11 +54,9 @@ class ProviderResult:
     # outcome nor a failure (see :func:`_counts_suffix`).
     # ``asdict(r)`` serializes this straight into the research archive.
     details: dict = field(default_factory=dict)
-    # On ``status == "fallback"``, the vendor that actually answered ("openrouter" /
-    # "perplexity" / "exa"). ``name`` deliberately keeps the PRIMARY's identity so the
-    # diagnostics line and ``providers_succeeded`` still read ``asknews: fallback``; this
-    # field is what lets the research SECTION HEADER name the real source, instead of
-    # labelling Perplexity prose as AskNews articles in the published comment and archive.
+    # Historical: on ``status == "fallback"``, the vendor that answered when AskNews failed
+    # ("openrouter" / "perplexity" / "exa"). That fallback was removed on 2026-10-27, so new
+    # records always carry None; the field stays so the archive schema keeps its shape.
     fallback_provider: str | None = None
 
 

@@ -98,9 +98,8 @@ jobs:
           PYTHONUNBUFFERED: '1'
           FORECAST_RUN_STATUS_PATH: run_logs/status.json
           METACULUS_TOKEN: ${{ secrets.METACULUS_TOKEN }} # replace this with the name of the variable under which you stored your own Metaculus token
-          PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
-          # Exa semantic search (gap-fill v2's search_web tool; also the legacy
-          # SmartSearcher fallback path). Secret name is lowercase exa_key
+          # Exa search for agentic gap-fill v2's search_web tool only. Secret
+          # name is lowercase exa_key
           # (funded 2026-07-16).
           EXA_API_KEY: ${{ secrets.exa_key }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

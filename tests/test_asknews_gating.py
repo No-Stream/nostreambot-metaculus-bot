@@ -123,7 +123,7 @@ async def test_global_semaphore_serializes_concurrent_requests(
     monkeypatch.setattr(rp, "_asknews_rate_gate", noop_gate, raising=True)
     monkeypatch.setattr(rp.asyncio, "sleep", noop_sleep, raising=True)
 
-    provider, _ = rp.choose_provider_with_name(_forced_provider := None)  # type: ignore[arg-type]
+    provider, _ = rp.choose_provider_with_name()
     # Launch multiple requests concurrently; each request does 2 sequential calls
     await __import__("asyncio").gather(*(provider(_make_q(f"Q{i}")) for i in range(4)))
 

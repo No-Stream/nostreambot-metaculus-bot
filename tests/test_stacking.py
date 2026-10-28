@@ -953,7 +953,6 @@ class TestStackingBenchmarkConfiguration:
             research_provider=None,
             max_questions_per_run=None,
             is_benchmarking=True,
-            allow_research_fallback=False,
             research_cache={},
             aggregation_strategy=AggregationStrategy.STACKING,
             llms=cast(

@@ -441,7 +441,7 @@ class TestAcceptedPath:
         markdown = md_path.read_text(encoding="utf-8")
         assert "# Gap-fill resolver probe: question 44267 (post 44256)" in markdown
         assert (
-            "| current:high | openai/gpt-6.1-sol | high | low | 3 | 0 | $0.3000 | $0.1000 | 240000 | 1800 | 0 | 600 |"
+            f"| current:high | {GAP_FILL_RESOLVER_MODEL} | high | low | 3 | 0 | $0.3000 | $0.1000 | 240000 | 1800 | 0 | 600 |"
             in markdown
         )
         assert "| luna:low | openai/gpt-6-luna | low | low | 0 | 3 | n/a | n/a | 0 | 0 | 0 | 0 |" in markdown

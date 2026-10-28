@@ -26,32 +26,18 @@ from metaculus_bot.research import providers as research_providers
             id="asknews-before-others",
         ),
         pytest.param(
-            {"EXA_API_KEY": "exa-key", "PERPLEXITY_API_KEY": "perplexity-key"},
-            "exa",
-            "Exa research",
-            "## Web Research (Exa)",
-            id="exa-before-perplexity",
+            {"EXA_API_KEY": "exa-key", "PERPLEXITY_API_KEY": "perplexity-key", "OPENROUTER_API_KEY": "openrouter-key"},
+            "none",
+            "",
+            "",
+            id="other-credentials-do-not-select-primary",
         ),
         pytest.param(
             {"ASKNEWS_CLIENT_ID": "asknews-client", "EXA_API_KEY": "exa-key"},
-            "exa",
-            "Exa research",
-            "## Web Research (Exa)",
-            id="missing-asknews-secret-falls-through",
-        ),
-        pytest.param(
-            {"PERPLEXITY_API_KEY": "perplexity-key", "OPENROUTER_API_KEY": "openrouter-key"},
-            "perplexity",
-            "Perplexity research",
-            "## Web Research (Perplexity)",
-            id="perplexity-before-openrouter",
-        ),
-        pytest.param(
-            {"OPENROUTER_API_KEY": "openrouter-key"},
-            "openrouter",
-            "OpenRouter research",
-            "## Web Research (OpenRouter)",
-            id="openrouter",
+            "none",
+            "",
+            "",
+            id="missing-asknews-secret",
         ),
         pytest.param({}, "none", "", "", id="no_provider"),
     ],
@@ -110,32 +96,18 @@ async def test_run_research_uses_real_provider_priority(
         "_summarize_asknews",
         AsyncMock(return_value="AskNews briefing"),
     )
-    exa_call = AsyncMock(return_value="Exa research")
-    direct_perplexity_call = AsyncMock(return_value="Perplexity research")
-    openrouter_call = AsyncMock(return_value="OpenRouter research")
-    monkeypatch.setattr(forecaster._research, "_call_exa_smart_searcher", exa_call)
-    monkeypatch.setattr(forecaster._research, "_call_perplexity_direct", direct_perplexity_call)
-    monkeypatch.setattr(forecaster._research, "_call_perplexity_openrouter", openrouter_call)
-
     research = await forecaster.run_research(question)
 
-    selected_calls = {
-        "asknews": asknews_call,
-        "exa": exa_call,
-        "perplexity": direct_perplexity_call,
-        "openrouter": openrouter_call,
-    }
     if expected_provider == "none":
         assert research == ""
         diagnostics = forecaster._research.pop_provider_diagnostics(question.id_of_question)
         assert "- none: empty | 0 chars |" in diagnostics
     else:
-        selected_calls[expected_provider].assert_awaited_once_with(question)
+        asknews_call.assert_awaited_once_with(question)
         assert expected_text in research
         assert expected_header in research
 
-    for provider_name, provider_call in selected_calls.items():
-        if provider_name != expected_provider:
-            provider_call.assert_not_awaited()
     if expected_provider == "asknews":
         asknews_factory.assert_called_once_with()
+    else:
+        asknews_call.assert_not_awaited()

@@ -128,9 +128,8 @@ jobs:
           # The bot's personal Mantic token (bot user nostreambot-bot). The only platform
           # credential in this workflow; there is deliberately no Metaculus token.
           MANTIC_TOKEN: ${{ secrets.MANTIC_TOKEN }}
-          PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
-          # Exa semantic search (gap-fill v2's search_web tool; also the legacy
-          # SmartSearcher fallback path). Secret name is lowercase exa_key
+          # Exa search for agentic gap-fill v2's search_web tool only. Secret
+          # name is lowercase exa_key
           # (funded 2026-07-16).
           EXA_API_KEY: ${{ secrets.exa_key }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
