@@ -31,7 +31,7 @@ dependencies = [
     "ijson>=3.5.1",
     "pypdf>=6.19.0",
     "certifi>=2026.5.20",
-    "brotli>=1.2.0",                                        # aiohttp's optional `br` decoder; see [tool.deptry] DEP002
+    "brotli>=1.2.1",                                        # aiohttp's optional `br` decoder; see [tool.deptry] DEP002
     "backports-zstd>=1.7.0 ; python_full_version < '3.14'", # aiohttp's optional `zstd` decoder; stdlib from 3.14 on
     "curl-cffi>=0.15.0",
     "openpyxl>=3.1.5",
@@ -72,6 +72,14 @@ dev = [
 [tool.uv]
 required-version = ">=0.12.10"
 exclude-newer = "1 week"
+# brotli 1.2.1 (2026-10-22) fixes PYSEC-2026-4322 (CVSS 9.2) in the decoder aiohttp runs on
+# `br` responses from arbitrary research hosts. Delete this entry once 1.2.1 ages past the
+# window above (after 2026-10-29).
+exclude-newer-package = { brotli = false }
+# forecasting-tools 0.2.92 caps pillow <13, but 13.0.0 fixes ~40 advisories and
+# research/image_assets.py decodes untrusted web images. Same mechanism as commit bda148c;
+# delete when forecasting-tools lifts the cap.
+override-dependencies = ["pillow>=13.0.0"]
 exclude-dependencies = [
     # gitpython arrives only as streamlit <- forecasting-tools, and nothing we run
     # imports it: streamlit's sole use is a lazy `import git` inside
