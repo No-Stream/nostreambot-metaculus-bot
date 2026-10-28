@@ -370,9 +370,9 @@ CONDITIONAL_STACKING_NUMERIC_NORMALIZED_THRESHOLD: float = 0.15
 NATIVE_SEARCH_ENABLED_ENV: str = "NATIVE_SEARCH_ENABLED"
 NATIVE_SEARCH_MODEL_ENV: str = "NATIVE_SEARCH_MODEL"
 # Critical-path research; sol->terra 2026-07-17, terra->sol (GPT-6, no Terra successor) 2026-09-22.
-# gpt-6-sol -> gpt-6.1-sol 2026-09-29; sol -> gpt-6.1-terra 2026-10-26 (Terra tier returned); settings unchanged.
+# gpt-6-sol -> gpt-6.1-sol 2026-09-29; request settings unchanged.
 # Receipt: docs/constants.md "NATIVE_SEARCH_DEFAULT_MODEL".
-NATIVE_SEARCH_DEFAULT_MODEL: str = "openai/gpt-6.1-terra"
+NATIVE_SEARCH_DEFAULT_MODEL: str = "openai/gpt-6.1-sol"
 NATIVE_SEARCH_MAX_TOKENS: int = 16_000  # no temperature / top_p: temperature=None, so litellm omits it
 # The litellm per-request timeout, 240->360 on 2026-05-17. Receipt: docs/constants.md "NATIVE_SEARCH_TIMEOUT".
 NATIVE_SEARCH_TIMEOUT: int = 360
@@ -555,9 +555,9 @@ GAP_FILL_V2_READER_HTTP_ATTEMPTS: int = 2
 # Analyzer then parallel resolvers, failing soft to first-pass research alone.
 GAP_FILL_ENABLED_ENV: str = "GAP_FILL_ENABLED"
 # Non-grounded decomposition under a tight wall. terra->sol (GPT-6, no Terra successor) 2026-09-22.
-# gpt-6-sol -> gpt-6.1-sol 2026-09-29; sol -> gpt-6.1-terra 2026-10-26 (Terra tier returned); settings unchanged.
+# gpt-6-sol -> gpt-6.1-sol 2026-09-29; request settings unchanged.
 # Receipt: docs/constants.md "GAP_FILL_ANALYZER_MODEL".
-GAP_FILL_ANALYZER_MODEL: str = "openrouter/openai/gpt-6.1-terra"
+GAP_FILL_ANALYZER_MODEL: str = "openrouter/openai/gpt-6.1-sol"
 # 5 -> 4 on 2026-07-20; do NOT go below 4. Receipt: docs/constants.md "GAP_FILL_MAX_GAPS".
 GAP_FILL_MAX_GAPS: int = 4
 GAP_FILL_ANALYZER_TIMEOUT: int = 120  # tight, so a hung analyzer cannot hold a research slot

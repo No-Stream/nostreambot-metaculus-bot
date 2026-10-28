@@ -37,7 +37,7 @@ and planning docs named here may have moved out of the public repo. Neither is a
   ran at xhigh; testing true `max` needs the `reasoning={"effort": ...}` form. One-question replay on 2026-09-22 (Q44229, `scratch/model_migration_2026-09-22/`): both finished inside the 540 s loop (luna 146 s, sol
   85 s, 31-32 tool calls), and a blind Opus judge called it a tie leaning luna, low confidence. Luna read 882k prompt
   tokens against sol's 711k at a twentieth of the input price, so the driver's spend drops by roughly an order of
-  magnitude. Needs a multi-question replay before switching. Since 2026-10-26 the driver runs gpt-6.1-terra at half
+  magnitude. Needs a multi-question replay before switching. Since 2026-10-27 the driver runs gpt-6.1-terra at half
   Sol's price, which narrows the saving to roughly tenfold over Terra rather than twentyfold over Sol.
   Same-day native-search probe: luna at true `max` gave the brief a blind judge preferred, but took 278 s against
   sol-low's 30 s; luna at `high` or `xhigh` there is the untested middle.

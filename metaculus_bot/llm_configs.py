@@ -320,9 +320,8 @@ MARKET_QUERY_AUTHOR_LLM_CONFIG: dict = {
 # 2026-09-22: terra -> gpt-6-sol. Terra has no GPT-6 successor, so every Terra role
 # moves to Sol 6 at the same (low) effort it ran at.
 # 2026-09-29: gpt-6-sol -> gpt-6.1-sol; role settings unchanged.
-# 2026-10-26: gpt-6.1-sol -> gpt-6.1-terra (half Sol's price) now that GPT-6.1 has a Terra tier; effort unchanged.
 DISAGREEMENT_ANALYZER_LLM: GeneralLlm = build_llm_with_openrouter_fallback(
-    "openrouter/openai/gpt-6.1-terra",
+    "openrouter/openai/gpt-6.1-sol",
     role="crux_analyzer",
     reasoning={"effort": "low"},
     **{**UTILITY_MODEL_CONFIG, "allowed_tries": 1},
