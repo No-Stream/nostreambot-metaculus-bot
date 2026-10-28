@@ -194,7 +194,7 @@ RESEARCH_SECTION_CHAR_LIMIT: int = 44_999
 SUMMARY_SECTION_CHAR_LIMIT: int = 13_999
 COMMENT_CHAR_LIMIT: int = 149_999
 
-RESEARCH_PROVIDER_ENV: str = "RESEARCH_PROVIDER"  # auto|asknews|exa|perplexity|openrouter, case-insensitive
+RESEARCH_PROVIDER_ENV: str = "RESEARCH_PROVIDER"  # auto|asknews|none, case-insensitive
 
 # A URL list here replaces cli.py's EXAMPLE_QUESTIONS. Receipt: docs/constants.md "TEST_QUESTIONS_OVERRIDE_ENV".
 TEST_QUESTIONS_OVERRIDE_ENV: str = "TEST_QUESTIONS_OVERRIDE"
@@ -205,7 +205,6 @@ OAI_ANTH_OPENROUTER_KEY_ENV: str = "OAI_ANTH_OPENROUTER_KEY"
 ASKNEWS_CLIENT_ID_ENV: str = "ASKNEWS_CLIENT_ID"
 ASKNEWS_SECRET_ENV: str = "ASKNEWS_SECRET"  # noqa: S105  # env var NAME, not a credential
 EXA_API_KEY_ENV: str = "EXA_API_KEY"
-PERPLEXITY_API_KEY_ENV: str = "PERPLEXITY_API_KEY"
 METACULUS_TOKEN_ENV: str = "METACULUS_TOKEN"  # noqa: S105  # env var NAME, not a credential
 MANTIC_TOKEN_ENV: str = "MANTIC_TOKEN"  # noqa: S105  # env var NAME, not a credential; personal, never donated
 # Master switch; a Mantic run sets it false and fails shut. Receipt: docs/constants.md "donated_openrouter_key_enabled".
@@ -385,15 +384,6 @@ NATIVE_SEARCH_VERBOSITY_ENV: str = "NATIVE_SEARCH_VERBOSITY"
 NATIVE_SEARCH_VERBOSITY_DEFAULT: str = "low"
 NATIVE_SEARCH_MAX_RESULTS: int = 20  # web options passed to the OpenRouter plugins
 NATIVE_SEARCH_CONTEXT_SIZE: str = "high"  # "low", "medium", "high"
-
-# --- Perplexity (fallback research provider; dormant while AskNews wins the ladder) ---
-
-# One constant; the two call sites drifted apart. Receipt: docs/constants.md "PERPLEXITY_RESEARCH_MODEL".
-PERPLEXITY_RESEARCH_MODEL: str = "perplexity/sonar-reasoning-pro"
-PERPLEXITY_RESEARCH_MODEL_VIA_OPENROUTER: str = f"openrouter/{PERPLEXITY_RESEARCH_MODEL}"
-
-# Both call sites had NO wall bound at all. Receipt: docs/constants.md "PERPLEXITY_WALL_TIMEOUT".
-PERPLEXITY_WALL_TIMEOUT: float = 300.0
 
 # --- Resolution-Source Fetcher (Tier 1) ---
 

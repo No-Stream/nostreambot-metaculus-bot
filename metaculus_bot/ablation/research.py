@@ -1,11 +1,7 @@
 """Gemini-only research for the probabilistic-tools ablation benchmark.
 
-The bot's production ``run_research`` falls through to an empty stub when the
-AskNews/Exa/Perplexity/OpenRouter primary providers are all unconfigured —
-which short-circuits Gemini entirely. This module bypasses that by calling
-``gemini_search_provider`` directly, then a bounded second-pass via
-``run_gap_fill_pass``, and persists the concatenated blob in
-``AblationCache``.
+This module calls ``gemini_search_provider`` directly, runs a bounded second pass via
+``run_gap_fill_pass``, and persists the concatenated blob in ``AblationCache``.
 
 Concatenation format and gap-fill threshold mirror ``main.run_research`` so
 downstream code paths see the same shape they'd see in production.

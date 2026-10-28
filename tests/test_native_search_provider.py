@@ -440,7 +440,7 @@ class TestParallelExecution:
         from metaculus_bot.research.orchestrator import ResearchOrchestrator
 
         mock_llm = GeneralLlm(model="test/model", temperature=0.0)
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
 
         provider1 = AsyncMock(return_value="Research from provider 1")
         provider2 = AsyncMock(return_value="Research from provider 2")
@@ -461,7 +461,7 @@ class TestParallelExecution:
         from metaculus_bot.research.orchestrator import ResearchOrchestrator
 
         mock_llm = GeneralLlm(model="test/model", temperature=0.0)
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
 
         failing_provider = AsyncMock(side_effect=RuntimeError("Provider failed"))
         working_provider = AsyncMock(return_value="Research from working provider")
@@ -479,7 +479,7 @@ class TestParallelExecution:
         from metaculus_bot.research.orchestrator import ResearchOrchestrator
 
         mock_llm = GeneralLlm(model="test/model", temperature=0.0)
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
 
         execution_order: list[str] = []
         completion_order: list[str] = []
@@ -525,7 +525,7 @@ class TestAskNewsSubscriptionErrorHandling:
         from metaculus_bot.research.orchestrator import ResearchOrchestrator
 
         mock_llm = GeneralLlm(model="test/model", temperature=0.0)
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
 
         class ForbiddenError(Exception):
             pass
@@ -560,7 +560,7 @@ class TestAskNewsSubscriptionErrorHandling:
         from metaculus_bot.research.orchestrator import ResearchOrchestrator
 
         mock_llm = GeneralLlm(model="test/model", temperature=0.0)
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
 
         asknews_provider = AsyncMock(side_effect=RuntimeError("connection timeout"))
 

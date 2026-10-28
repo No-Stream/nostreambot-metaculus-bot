@@ -235,15 +235,14 @@ def _mc_options_line(options: Sequence[str] | None) -> str:
     return "Options (in resolution order): " + " | ".join(names)
 
 
-# One policy, two renderings: a column-0 line defeats the Perplexity dedent. Receipt: docs/prompts.md "OUTSIDE_VENUE_MARKET_ODDS_POLICY".
-OUTSIDE_VENUE_MARKET_ODDS_POLICY = (
-    "Market-implied or crowd odds from sources OTHER than Polymarket, Kalshi, Manifold, or PredictIt "
+# Receipt: docs/prompts.md "_OUTSIDE_VENUE_MARKET_ODDS_BULLET".
+_OUTSIDE_VENUE_MARKET_ODDS_BULLET = (
+    "- Market-implied or crowd odds from sources OTHER than Polymarket, Kalshi, Manifold, or PredictIt "
     "(e.g. Metaculus, Good Judgment Open, CME FedWatch, bookmakers) — always name the market and the date "
     "you observed the price. Do NOT report Polymarket/Kalshi/Manifold/PredictIt prices from search results: "
     "a dedicated live snapshot of those venues is provided separately, and search-indexed copies of their "
     "prices are usually days stale."
 )
-_OUTSIDE_VENUE_MARKET_ODDS_BULLET = f"- {OUTSIDE_VENUE_MARKET_ODDS_POLICY}"
 
 
 # Gemini only. Receipt: docs/prompts.md "_SEARCH_LINK_CITATION_CLAUSE".

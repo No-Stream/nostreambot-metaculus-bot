@@ -218,7 +218,7 @@ def _route_general_llm(kwargs: dict[str, Any]) -> str:
     if "intelligence briefing" in lower or "<research>" in lower:
         return _CANNED_SUMMARY_PROSE
 
-    # Native / targeted web search, the gap-fill resolver and the perplexity fallback: no block.
+    # Native / targeted web search and the gap-fill resolver: no block.
     return _CANNED_NATIVE_SEARCH_PROSE
 
 

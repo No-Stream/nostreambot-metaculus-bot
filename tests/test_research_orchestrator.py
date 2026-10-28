@@ -24,7 +24,6 @@ from metaculus_bot.research.asknews_summarization import summarize_asknews
 from metaculus_bot.research.gap_fill_stages import run_gap_fill_passes
 from metaculus_bot.research.orchestrator import ResearchOrchestrator
 from metaculus_bot.research.provider_diagnostics import (
-    _is_lost_source,
     format_provider_diagnostics_block,
     pop_provider_detail,
     record_provider_detail,
@@ -400,7 +399,7 @@ class TestAskNewsSummarization:
     async def test_soft_fail_surfaces_as_asknews_source_loss_in_diagnostics(self, mock_llm, question):
         """AskNews reads ``ok`` (post-summarizer text is non-empty), so the loss has to
         ride the per-source details seam or it stays invisible in comment + archive."""
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
         asknews = AsyncMock(return_value="raw asknews articles")
 
         with (
@@ -450,31 +449,72 @@ class TestAskNewsSummarization:
         assert "native search prose" in result
 
     @pytest.mark.asyncio
-    async def test_asknews_fallback_prose_is_not_summarized(self, orchestrator, question, monkeypatch):
-        """When AskNews fails and falls back to Perplexity/Exa, the fallback is
-        already LLM prose, so it must NOT be summarized (no double-summarization)."""
-        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
-        asknews = AsyncMock(side_effect=RuntimeError("asknews down"))
-
-        with (
-            patch.object(
-                orchestrator,
-                "_select_research_providers",
-                return_value=[(asknews, "asknews")],
-            ),
-            patch.object(
-                orchestrator,
-                "_call_perplexity",
-                new_callable=AsyncMock,
-                return_value="perplexity fallback prose",
-            ),
-            patch.object(orchestrator._summarizer_llm, "invoke", new_callable=AsyncMock) as invoke,
+    async def test_asknews_failure_keeps_other_research_without_fallback(self, mock_llm, question, monkeypatch):
+        for key in ("ASKNEWS_CLIENT_ID", "ASKNEWS_SECRET", "OPENROUTER_API_KEY", "PERPLEXITY_API_KEY", "EXA_API_KEY"):
+            monkeypatch.setenv(key, "fake-key")
+        for key in (
+            "NATIVE_SEARCH_ENABLED",
+            "GEMINI_SEARCH_ENABLED",
+            "PREDICTION_MARKETS_ENABLED",
+            "GAP_FILL_ENABLED",
+            "GAP_FILL_V2_ENABLED",
         ):
-            result = await orchestrator.run_research(question)
+            monkeypatch.setenv(key, "true")
+        for key in ("FINANCIAL_DATA_ENABLED", "TS_ANCHOR_ENABLED", "RESOLUTION_SOURCE_ENABLED"):
+            monkeypatch.setenv(key, "false")
 
-        # Fallback prose passes through verbatim; summarizer never runs.
-        invoke.assert_not_awaited()
-        assert "perplexity fallback prose" in result
+        captured: dict = {}
+        orch = ResearchOrchestrator(
+            default_llm=mock_llm, summarizer_llm=mock_llm, research_sink=lambda **kw: captured.update(kw)
+        )
+        asknews = AsyncMock(side_effect=RuntimeError("asknews down"))
+        native = AsyncMock(return_value="native search prose " * 20)
+        gemini = AsyncMock(return_value="gemini search prose")
+        markets = AsyncMock(return_value="market research prose")
+        with (
+            patch("metaculus_bot.research.providers._asknews_provider", return_value=asknews),
+            patch("metaculus_bot.research.orchestrator.native_search_provider", return_value=native),
+            patch("metaculus_bot.research.gemini_search.gemini_search_provider", return_value=gemini),
+            patch("metaculus_bot.research.prediction_market.prediction_market_provider", return_value=markets),
+            patch(
+                "metaculus_bot.research.targeted.run_gap_fill_pass",
+                new_callable=AsyncMock,
+                return_value="targeted findings",
+            ) as targeted,
+            patch(
+                "metaculus_bot.research.agentic_gap_fill.run_gap_fill_v2",
+                new_callable=AsyncMock,
+                return_value="## Agentic Research Findings\n\nagentic findings",
+            ) as agentic,
+            patch.object(mock_llm, "invoke", new_callable=AsyncMock) as summarize,
+        ):
+            text = await orch.run_research(question)
+
+        assert captured["providers_attempted"] == ["asknews", "native_search", "gemini_search", "prediction_market"]
+        assert captured["providers_succeeded"] == ["native_search", "gemini_search", "prediction_market"]
+        assert {result["name"]: result["status"] for result in captured["provider_results"]} == {
+            "asknews": "errored",
+            "native_search": "ok",
+            "gemini_search": "ok",
+            "prediction_market": "ok",
+        }
+        for expected in (
+            "native search prose",
+            "gemini search prose",
+            "market research prose",
+            "targeted findings",
+            "agentic findings",
+        ):
+            assert expected in text
+        assert "News Articles (AskNews)" not in text
+        assert orch.provider_failure_count == 1
+        assert "asknews: errored" in captured["provider_diagnostics_block"]
+        assert captured["asknews_raw"] == ""
+        assert not hasattr(orch, "_attempt_research_fallback")
+        asknews.assert_awaited_once()
+        targeted.assert_awaited_once()
+        agentic.assert_awaited_once()
+        summarize.assert_not_awaited()
 
 
 class TestProviderSelection:
@@ -564,50 +604,6 @@ class TestProviderSelection:
         providers = orch._select_research_providers()
         names = [n for _, n in providers]
         assert "resolution_source" not in names
-
-    @pytest.mark.parametrize(
-        ("present_key", "expected_name", "expect_openrouter_slug"),
-        [
-            ("PERPLEXITY_API_KEY", "perplexity", False),
-            ("OPENROUTER_API_KEY", "openrouter", True),
-        ],
-    )
-    async def test_perplexity_rungs_route_to_their_own_vendor(
-        self, mock_llm, question, monkeypatch, present_key, expected_name, expect_openrouter_slug
-    ):
-        """The two Perplexity rungs of the priority ladder must not collapse into one.
-
-        Priority 3 is direct Perplexity (billed to PERPLEXITY_API_KEY); priority 4 is
-        Perplexity via OpenRouter (billed to OPENROUTER_API_KEY). The orchestrator
-        injects one bound method as both selector callbacks, so a default argument on
-        that method decides which vendor each rung actually reaches — and with only
-        PERPLEXITY_API_KEY set, routing to OpenRouter passes api_key=None and the rung
-        is broken outright, not merely mis-billed.
-        """
-        for env_var in (
-            "ASKNEWS_CLIENT_ID",
-            "ASKNEWS_SECRET",
-            "EXA_API_KEY",
-            "PERPLEXITY_API_KEY",
-            "OPENROUTER_API_KEY",
-            "RESEARCH_PROVIDER",
-        ):
-            monkeypatch.delenv(env_var, raising=False)
-        monkeypatch.setenv(present_key, "fake-key")
-
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
-        provider, provider_name = orch._select_research_provider()
-        assert provider_name == expected_name
-
-        built = MagicMock()
-        built.invoke = AsyncMock(return_value="perplexity prose")
-        with patch("metaculus_bot.research.providers.GeneralLlm", return_value=built) as general_llm:
-            assert await provider(question) == "perplexity prose"
-
-        model_slug = general_llm.call_args.kwargs["model"]
-        assert model_slug.startswith("openrouter/") is expect_openrouter_slug, model_slug
-        # An OpenRouter route needs a key; the direct route must not smuggle one in.
-        assert (general_llm.call_args.kwargs["api_key"] is not None) is expect_openrouter_slug
 
     def test_resolution_source_body_composes_with_header_and_demoted_headings(self):
         """Body written by the resolution_source provider composes with the
@@ -772,7 +768,7 @@ class TestProviderDiagnosticsCapture:
 
     @pytest.mark.asyncio
     async def test_status_ok_for_nonempty_provider(self, mock_llm, question):
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
         provider = AsyncMock(return_value="some research prose")
 
         _, results, _ = await orch._run_providers_parallel(question, [(provider, "native_search")])
@@ -794,7 +790,7 @@ class TestProviderDiagnosticsCapture:
         This is the seam that makes partial degradation visible: the provider knows
         its per-source outcome but can only return a str, so it records to the
         (qid, provider) registry and _run_one pops it into details."""
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
 
         async def provider(q):
             record_provider_detail(
@@ -815,7 +811,7 @@ class TestProviderDiagnosticsCapture:
     async def test_registry_drained_even_when_provider_errors(self, mock_llm, question):
         """If a provider records detail then raises, _run_one still drains the registry
         (so it can't leak into a later call) — the errored result carries the error, not details."""
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
 
         async def provider(q):
             record_provider_detail(q.id_of_question, "resolution_source", {"sources": {"a.gov": "blocked"}})
@@ -831,7 +827,7 @@ class TestProviderDiagnosticsCapture:
         """The partial-loss signal rides the stashed diagnostics block (comment path) only —
         it must never reach the forecaster-facing research text. The diagnostics seam that
         withholds the whole block from research holds for the per-source detail too."""
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
 
         async def provider(q):
             record_provider_detail(
@@ -854,7 +850,7 @@ class TestProviderDiagnosticsCapture:
 
     @pytest.mark.asyncio
     async def test_status_empty_for_blank_provider(self, mock_llm, question):
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
         provider = AsyncMock(return_value="   ")
 
         _, results, _ = await orch._run_providers_parallel(question, [(provider, "native_search")])
@@ -864,7 +860,7 @@ class TestProviderDiagnosticsCapture:
 
     @pytest.mark.asyncio
     async def test_status_errored_for_raising_provider(self, mock_llm, question):
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
         provider = AsyncMock(side_effect=RuntimeError("boom"))
 
         _, results, _ = await orch._run_providers_parallel(question, [(provider, "native_search")])
@@ -878,7 +874,7 @@ class TestProviderDiagnosticsCapture:
 
     @pytest.mark.asyncio
     async def test_raising_provider_emits_a_parseable_failure_marker(self, mock_llm, question, caplog):
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
         overloaded = litellm_exc.APIError(
             status_code=502, message="overloaded", llm_provider="openrouter", model="openai/gpt-6.1-sol"
         )
@@ -898,7 +894,7 @@ class TestProviderDiagnosticsCapture:
 
     @pytest.mark.asyncio
     async def test_status_inactive_for_asknews_subscription_error(self, mock_llm, question):
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
 
         class ForbiddenError(Exception):
             pass
@@ -914,61 +910,8 @@ class TestProviderDiagnosticsCapture:
         assert orch.provider_failure_count == 0
 
     @pytest.mark.asyncio
-    async def test_status_fallback_when_asknews_falls_back_to_prose(self, mock_llm, question, monkeypatch):
-        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=True)
-        asknews = AsyncMock(side_effect=RuntimeError("asknews down"))
-
-        with patch.object(
-            orch,
-            "_call_perplexity",
-            new_callable=AsyncMock,
-            return_value="perplexity fallback prose",
-        ):
-            text, results, _ = await orch._run_providers_parallel(question, [(asknews, "asknews")])
-
-        assert results[0].status == "fallback"
-        assert results[0].name == "asknews"
-        assert results[0].chars == len("perplexity fallback prose")
-        assert "perplexity fallback prose" in text
-
-    @pytest.mark.asyncio
-    async def test_fallback_records_a_loss_token_and_labels_the_real_source(self, mock_llm, question, monkeypatch):
-        """A vendor swap on the PRIMARY provider is degradation, and used to read as success.
-
-        It bumps no counter (the orchestrator caught the failure and produced output), so
-        provider_failure_count and alertable_count both stay flat and CI stays green. That
-        part is intended — this asserts the two things that were genuinely missing: a
-        per-source `lost=` token so the diagnostics line and schema-v2 archive show the
-        swap, and a section header naming the vendor that actually answered. The header
-        matters because the fallback skips the AskNews summarizer pass (the text is already
-        prose), so the briefing loses the relevance gate, [PRE-WINDOW] labeling, and
-        recency reordering — while being labelled "News Articles (AskNews)".
-        """
-        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=True)
-        asknews = AsyncMock(side_effect=RuntimeError("asknews down"))
-
-        with patch.object(orch, "_call_perplexity", new_callable=AsyncMock, return_value="perplexity fallback prose"):
-            text, results, _ = await orch._run_providers_parallel(question, [(asknews, "asknews")])
-
-        sources = results[0].details["sources"]
-        assert _is_lost_source(sources["asknews"]), f"the primary's failure must read as a LOST source; got {sources}"
-        assert "RuntimeError" in sources["asknews"]
-        assert sources["fallback"].startswith("ok"), "the fallback that answered is a contributing source"
-
-        # The vendor that answered, not the primary whose name the ProviderResult keeps.
-        assert results[0].fallback_provider == "openrouter"
-        assert "## Web Research (OpenRouter)" in text
-        assert "## News Articles (AskNews)" not in text, (
-            "Perplexity prose must not be labelled as AskNews articles in the comment or archive"
-        )
-        # Counters deliberately unchanged — see the docstring.
-        assert orch.provider_failure_count == 0
-
-    @pytest.mark.asyncio
     async def test_fallback_provider_is_none_on_the_normal_path(self, mock_llm, question):
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
         provider = AsyncMock(return_value="native prose")
 
         _, results, _ = await orch._run_providers_parallel(question, [(provider, "native_search")])
@@ -978,7 +921,7 @@ class TestProviderDiagnosticsCapture:
 
     @pytest.mark.asyncio
     async def test_one_result_per_provider_mixed_statuses(self, mock_llm, question):
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
         ok = AsyncMock(return_value="native prose")
         failing = AsyncMock(side_effect=RuntimeError("timeout"))
 
@@ -996,7 +939,7 @@ class TestProviderDiagnosticsCapture:
         carry the block, but it must still be (a) logged at INFO and (b) stashed for the
         comment path via pop_provider_diagnostics."""
 
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
         ok = AsyncMock(return_value="native prose")
         failing = AsyncMock(side_effect=RuntimeError("timeout"))
 
@@ -1033,7 +976,7 @@ class TestProviderDiagnosticsCapture:
     @pytest.mark.asyncio
     async def test_gap_fill_research_stays_clean_of_diagnostics(self, mock_llm, question, monkeypatch):
         monkeypatch.setenv("GAP_FILL_ENABLED", "true")
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
         provider = AsyncMock(return_value="A" * 200)
 
         with (
@@ -1059,8 +1002,7 @@ class TestProviderDiagnosticsCapture:
         is ONLY the ok/fallback ones. This pins the exclusion of ``empty``, ``errored``, AND —
         most importantly — ``inactive`` (AskNews off-season), so a regression that derived
         ``providers_succeeded`` from the attempted list, or included ``inactive``, would fail here.
-        Fallback is None-free in this orchestrator (allow_research_fallback=False), so the inactive
-        AskNews subscription error coerces to status=``inactive`` rather than triggering a fallback.
+        The AskNews subscription error is classified as ``inactive``.
         """
         monkeypatch.delenv("GAP_FILL_ENABLED", raising=False)
 
@@ -1072,7 +1014,6 @@ class TestProviderDiagnosticsCapture:
         orch = ResearchOrchestrator(
             default_llm=mock_llm,
             summarizer_llm=mock_llm,
-            allow_research_fallback=False,
             research_sink=sink,
         )
 
@@ -1113,39 +1054,6 @@ class TestProviderDiagnosticsCapture:
         }
 
     @pytest.mark.asyncio
-    async def test_sink_counts_fallback_as_succeeded(self, mock_llm, question, monkeypatch):
-        """A ``fallback`` provider (AskNews failed, prose fallback supplied the result) counts as
-        succeeded — it contributed usable research. Pins the second member of SUCCEEDED_STATUSES."""
-        monkeypatch.delenv("GAP_FILL_ENABLED", raising=False)
-        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
-
-        captured: dict = {}
-
-        def sink(**kwargs) -> None:
-            captured.update(kwargs)
-
-        orch = ResearchOrchestrator(
-            default_llm=mock_llm,
-            summarizer_llm=mock_llm,
-            allow_research_fallback=True,
-            research_sink=sink,
-        )
-        asknews = AsyncMock(side_effect=RuntimeError("asknews down"))
-
-        with (
-            patch.object(orch, "_select_research_providers", return_value=[(asknews, "asknews")]),
-            patch.object(orch, "_call_perplexity", new_callable=AsyncMock, return_value="perplexity fallback prose"),
-        ):
-            await orch.run_research(question)
-
-        assert captured["providers_attempted"] == ["asknews"]
-        assert captured["providers_succeeded"] == ["asknews"]  # fallback status counts as succeeded
-        assert captured["provider_results"][0]["status"] == "fallback"
-        # Fallback prose is not AskNews articles — no raw capture (empty string,
-        # which the persistence writer omits from the record).
-        assert captured["asknews_raw"] == ""
-
-    @pytest.mark.asyncio
     async def test_sink_receives_raw_asknews_text_pre_summarization(self, mock_llm, question, monkeypatch):
         """2026-07-18 audit hygiene: the archive stores only the post-summarization
         briefing, so the sink must also receive the raw pre-summarization AskNews
@@ -1161,7 +1069,6 @@ class TestProviderDiagnosticsCapture:
         orch = ResearchOrchestrator(
             default_llm=mock_llm,
             summarizer_llm=mock_llm,
-            allow_research_fallback=False,
             research_sink=sink,
         )
         asknews = AsyncMock(return_value="raw asknews articles")

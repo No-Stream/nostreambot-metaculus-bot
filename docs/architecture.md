@@ -149,7 +149,7 @@ forecaster fan-out, aggregation, and publish all draw from that one budget.
         ┌────────────────────────────────────────────────┐
         │  1. RESEARCH  (ResearchOrchestrator.run_research)│
         │  Providers fan out in parallel:                  │
-        │    - AskNews (primary, summarized to a briefing) │
+        │    - AskNews (only primary, summarized)          │
         │    - OpenAI native search                        │
         │    - Gemini grounded search                      │
         │    - financial data (yfinance / FRED)            │
@@ -249,9 +249,13 @@ floor's counter alone.
 ### 1. Research fan-out
 
 `run_research` (`forecaster.py`) delegates to a `ResearchOrchestrator`
-(`research/orchestrator.py`). It picks one primary provider by priority (AskNews in
-prod, then Exa, then Perplexity, then a stub) and runs several additional providers
-alongside it in parallel, each behind its own env flag. AskNews returns raw article
+(`research/orchestrator.py`). AskNews is the only primary provider. Auto mode
+uses an empty primary stub when its credentials are unavailable, and
+`RESEARCH_PROVIDER=none` selects that stub even when they are present; forcing
+AskNews without its credentials raises an error. A failed AskNews request does
+not switch to Perplexity or Exa. Several add-on providers run alongside it in
+parallel, each behind its own env flag. Exa remains available to agentic gap-fill
+v2's `search_web` tool. AskNews returns raw article
 text and gets summarized into an analyst briefing inline; the other providers write
 their own prose and pass through as-is. See [research.md](research.md) for provider
 selection, gating, and the shared-vs-personal API-key routing.
@@ -702,7 +706,8 @@ What the bot takes from the framework, and the one place it overrides it:
   (forecast on its epoch-seconds view, `numeric/date_axis.py`; `ConditionalQuestion` stays
   unsupported).
 - Prediction types: `ReasonedPrediction`, `BinaryPrediction`, and friends.
-- Research helpers: `AskNewsSearcher`, `SmartSearcher`.
+- Research helpers: `AskNewsSearcher` for the AskNews primary; Exa search is used by
+  the agentic gap-fill v2 tool backend.
 - Numeric: `NumericDistribution`, `Percentile`. We subclass `NumericDistribution` as
   `PchipNumericDistribution` (`numeric/pchip_processing.py`) to override `get_cdf()` (the
   method ft 0.2.92's publish and aggregate paths call, with `.cdf` a deprecated property that

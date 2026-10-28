@@ -565,7 +565,7 @@ class TestOrchestratorBothFlags:
         monkeypatch.setenv("GAP_FILL_ENABLED", "true")
         monkeypatch.setenv("GAP_FILL_V2_ENABLED", "true")
 
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
         provider = AsyncMock(
             # Long enough to clear GAP_FILL_MIN_RESEARCH_CHARS (200) so the v1 gate opens.
             return_value="First-pass research prose long enough to pass the gap-fill min-chars gate. " * 4
@@ -600,7 +600,7 @@ class TestOrchestratorBothFlags:
         monkeypatch.setenv("GAP_FILL_ENABLED", "true")
         monkeypatch.delenv("GAP_FILL_V2_ENABLED", raising=False)
 
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
         provider = AsyncMock(
             # Long enough to clear GAP_FILL_MIN_RESEARCH_CHARS (200) so the v1 gate opens.
             return_value="First-pass research prose long enough to pass the gap-fill min-chars gate. " * 4
@@ -638,7 +638,7 @@ class TestOrchestratorBothFlags:
         monkeypatch.setenv("GAP_FILL_ENABLED", "true")
         monkeypatch.setenv("GAP_FILL_V2_ENABLED", "true")
 
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
         provider = AsyncMock(
             return_value="First-pass research prose long enough to pass the gap-fill min-chars gate. " * 4
         )
@@ -667,7 +667,7 @@ class TestOrchestratorBothFlags:
         monkeypatch.setenv("GAP_FILL_ENABLED", "true")
         monkeypatch.setenv("GAP_FILL_V2_ENABLED", "true")
 
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
         provider = AsyncMock(
             return_value="First-pass research prose long enough to pass the gap-fill min-chars gate. " * 4
         )
@@ -697,7 +697,7 @@ class TestOrchestratorBothFlags:
         monkeypatch.setenv("GAP_FILL_ENABLED", "true")
         monkeypatch.setenv("GAP_FILL_V2_ENABLED", "true")
 
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
         provider = AsyncMock(
             return_value="First-pass research prose long enough to pass the gap-fill min-chars gate. " * 4
         )
@@ -735,7 +735,6 @@ class TestOrchestratorBothFlags:
         orch = ResearchOrchestrator(
             default_llm=mock_llm,
             summarizer_llm=mock_llm,
-            allow_research_fallback=False,
             research_sink=sink,
         )
         provider = AsyncMock(return_value="research prose")
@@ -771,7 +770,6 @@ class TestOrchestratorBothFlags:
         orch = ResearchOrchestrator(
             default_llm=mock_llm,
             summarizer_llm=mock_llm,
-            allow_research_fallback=False,
             research_sink=sink,
         )
         provider = AsyncMock(return_value="research prose")
@@ -860,7 +858,7 @@ class TestGapFillV2CrashCounter:
         monkeypatch.delenv("GAP_FILL_ENABLED", raising=False)
         monkeypatch.setenv("GAP_FILL_V2_ENABLED", "true")
 
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
         provider = AsyncMock(return_value="research prose")
 
         with (
@@ -885,7 +883,7 @@ class TestGapFillV2CrashCounter:
         monkeypatch.delenv("GAP_FILL_ENABLED", raising=False)
         monkeypatch.setenv("GAP_FILL_V2_ENABLED", "true")
 
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
         provider = AsyncMock(return_value="research prose")
 
         async def _fake_v2(
@@ -915,7 +913,7 @@ class TestGapFillV2CrashCounter:
         monkeypatch.delenv("GAP_FILL_ENABLED", raising=False)
         monkeypatch.setenv("GAP_FILL_V2_ENABLED", "true")
 
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
         provider = AsyncMock(return_value="research prose")
 
         with (
@@ -938,7 +936,7 @@ class TestGapFillV2CrashCounter:
         monkeypatch.delenv("GAP_FILL_ENABLED", raising=False)
         monkeypatch.setenv("GAP_FILL_V2_ENABLED", "true")
 
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
         provider = AsyncMock(return_value="research prose")
 
         async def _fake_v2(
@@ -973,7 +971,7 @@ class TestGapFillV2CrashCounter:
             await asyncio.sleep(30)  # cancelled by the outer wait_for deadline
             raise AssertionError("driver should have been cancelled by the deadline")
 
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
         telemetry = await _run_v2_through_orchestrator_with_driver(orch, _sleeping_driver)
 
         assert telemetry.deadline_hit is True
@@ -997,7 +995,7 @@ class TestGapFillV2CrashCounter:
         async def _timeout_driver(_messages: Any, _tools: Any) -> Any:
             raise TimeoutError("simulated connection-level timeout")
 
-        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm, allow_research_fallback=False)
+        orch = ResearchOrchestrator(default_llm=mock_llm, summarizer_llm=mock_llm)
         telemetry = await _run_v2_through_orchestrator_with_driver(orch, _timeout_driver)
 
         assert telemetry.deadline_hit is False

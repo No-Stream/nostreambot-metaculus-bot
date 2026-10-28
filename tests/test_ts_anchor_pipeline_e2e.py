@@ -55,15 +55,11 @@ _OTHER_PROVIDER_FLAGS = (
     "RAW_RESEARCH_LOG_ENABLED",
 )
 
-# Credentials that would otherwise select a PRIMARY provider (AskNews / Exa / Perplexity /
-# Perplexity-via-OpenRouter). Deleted so the anchor is the only provider in the bundle and the
+# AskNews credentials are deleted so the anchor is the only provider in the bundle and the
 # assertions read the anchor's own text rather than a stub's.
 _PRIMARY_PROVIDER_KEYS = (
     "ASKNEWS_CLIENT_ID",
     "ASKNEWS_SECRET",
-    "EXA_API_KEY",
-    "PERPLEXITY_API_KEY",
-    "OPENROUTER_API_KEY",
 )
 
 
@@ -106,7 +102,7 @@ def anchor_only_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Anchor on, every other provider off, no primary-provider credentials.
 
     Deleting the credentials matters and is not paranoia: ``metaculus_bot.config`` calls
-    ``load_dotenv()`` at import, so a developer's real AskNews / Exa / Perplexity keys are in
+    ``load_dotenv()`` at import, so a developer's real AskNews credentials are in
     ``os.environ`` by the time any test runs. Left in place, the primary provider would be
     selected here, try to reach a real host, get refused by conftest's egress guard, and land in
     the bundle as a soft-fail banner — the assertions below would still pass while reading a

@@ -18,14 +18,15 @@ Every question goes through `ResearchOrchestrator.run_research`
    question id so a replayed backtest doesn't re-pay for the same pull. Live runs
    don't cache (`_lookup_research_cache`, `research/orchestrator.py`).
 2. **Provider selection.** `_select_research_providers`
-   (`research/orchestrator.py`) picks exactly one **primary** provider, then
-   appends every enabled **add-on** provider. Each add-on is behind its own env
-   flag, so the set that actually runs depends on configuration.
+   (`research/orchestrator.py`) selects AskNews as the only possible **primary**
+   provider, then appends every enabled **add-on** provider. Each add-on is
+   behind its own env flag, so the set that actually runs depends on configuration.
 3. **Parallel fan-out.** `_run_providers_parallel`
    (`research/orchestrator.py`) runs all selected providers concurrently via
    `asyncio.gather`. One provider failing never kills the phase; the failure is
-   recorded as a per-provider result and the rest proceed. Global concurrency is
-   bounded by a semaphore sized by `DEFAULT_MAX_CONCURRENT_RESEARCH`.
+   recorded as a per-provider result and the rest proceed. A failed AskNews
+   primary does not trigger a Perplexity or Exa replacement. Global concurrency
+   is bounded by a semaphore sized by `DEFAULT_MAX_CONCURRENT_RESEARCH`.
 4. **Assembly.** Each provider's output is prefixed with a fixed `##` section
    header (`provider_header`, `research/section_format.py`) and the sections
    are joined with `---` rules. Any stray `#`/`##` heading inside a provider's
@@ -112,12 +113,10 @@ the published comment, stashed per question id in `run_research` and popped by
 **`run_research`: the sink's two provider lists.** `provider_results` is the authoritative
 per-provider outcome; `providers_used` is kept only for legacy archive readers.
 
-**`_select_research_provider`: the two Perplexity callbacks.** Each rung gets the vendor its env var
-pays for. Binding the bare `_call_perplexity` here would hand priority 3 the method's
-OpenRouter-first default, which is deliberate on the AskNews-fallback path (where
-`_attempt_research_fallback` prefers the cheap route) and wrong here, because it collapses the
-ladder's two Perplexity rungs into one and passes `api_key=None` whenever only `PERPLEXITY_API_KEY`
-is set.
+**`_select_research_provider`: AskNews is the only primary.** The selector returns AskNews when
+its credentials are available and the configured provider mode allows it; otherwise it returns an
+empty provider. Exa remains available to agentic gap-fill v2's `search_web` tool, not as a primary
+or replacement provider.
 
 **`_select_research_providers`: what the fast path can and cannot shed.** The optional providers all
 run CONCURRENTLY with the primary, whose own worst case (AskNews 300 s plus summarizer 300 s,
@@ -136,7 +135,7 @@ Chromium launch and the paid reader, decline instead, while its direct fetch and
 pre-summarization AskNews article text for the research archive, added as 2026-07-18 audit hygiene:
 the archive otherwise stores only the post-summarization briefing, so FETCH-versus-SUMMARIZE
 attribution and summarizer replays required fresh paid pulls. It stays empty when AskNews did not
-run, errored, or fell back to an already-prose provider.
+run or errored; the primary provider has no replacement path.
 
 **`_run_one`: draining the provider-detail registry.** A multi-source provider records its
 per-source outcome into the (question id, provider) registry during the call, so the question id is
@@ -145,11 +144,10 @@ over the size cap being the worked example, ride into `ProviderResult.details` i
 behind a healthy `ok`.
 
 **`_run_one`: which providers are summarized.** AskNews returns raw article markdown with no LLM
-prose, so it is summarized into an analyst briefing. Every other provider already emits LLM-written
-prose (native search, Gemini, Perplexity, Exa) or deterministic tables (financial data, prediction
-markets), so they pass through raw and take no lossy second-pass summarization. When AskNews fails
-and the run falls back to Perplexity or Exa, that fallback is already prose, so summarization is
-skipped there too.
+prose, so it is summarized into an analyst briefing. The add-on providers already emit LLM-written
+prose (native search, Gemini) or deterministic tables (financial data, prediction markets), so they
+pass through raw and take no lossy second-pass summarization. Exa is used by agentic gap-fill v2,
+outside this provider fan-out.
 
 **`_run_one`: empty raw skips the summarizer entirely.** There is nothing to brief from, and asking
 anyway spends a call to get either a refusal or an invented briefing, since the summarizer prompt
@@ -165,92 +163,28 @@ so the caller still records the cancellation as `status="deadline"`.
 recorded before raising: an errored result carries the error, not source detail, and a stale entry
 must not leak into a later same-key call.
 
-**`_fetch_research_with_fallback`: a vendor swap is degradation.** A swap on the PRIMARY provider is
-real degradation rather than a success: a different index, a different recency profile, and, because
-the fallback is already prose, no AskNews summarizer pass, so the briefing loses the per-article
-relevance gate, the `[PRE-WINDOW]` labeling and the recency reordering that the 2026-07-18 audit
-made load-bearing. It used to bump no counter and record no detail, so it read as healthy; a
-per-source loss token is now recorded so the diagnostics line and the schema-v2 archive carry it.
-Deliberately NOT a new alertable counter: folding one into `alertable_count` changes what CI treats
-as red, which is the operator's call.
-
-**`_attempt_research_fallback`: the ordering and the header keys.** The cost-ordered fallback list
-and why it diverges from the primary ladder are in "AskNews fallback (primary-only)" above. One
-further detail: the names this function returns are the same keys `provider_header` maps, so the
-section header follows the vendor that actually answered, automatically.
-
-**`_call_perplexity`: the market-odds policy.** This prompt carries the same narrowed market-odds
-policy as `web_research_prompt` and the direct-Perplexity provider, interpolated from the one
-definition in `prompts` rather than restated, because this copy kept the retired blanket "briefly
-research prediction markets" ask after that policy had been narrowed to the venues the live snapshot
-cannot cover. The no-speculation tail is this prompt's own and stays: it is an anti-fabrication rule
-about an empty result, not a second opinion on which venues to read.
-
-**`_call_perplexity`: explicit credential routing.** Keep this call site's routing explicit. Direct
-Perplexity passes `None`, while the OpenRouter route resolves its key before construction.
-
 **The degradation-counter property surface.** The research side's degradation counters live in
 `degradation_views`, along with their long "why is this alertable" rationales. The five one-line
 members at the bottom of `ResearchOrchestrator` are the orchestrator-attribute surface that
 `forecaster.py`, `cli.py` and `degradation_counters.py` read them through.
 
-## Primary provider: a priority ladder
+## Primary provider: AskNews only
 
-There is always exactly one primary provider, chosen by
-`choose_provider_with_name` (`research/providers.py`). It walks a fixed
-priority order and returns the first provider whose credentials are present:
+`choose_provider_with_name` (`research/providers.py`) selects AskNews when
+`ASKNEWS_CLIENT_ID` and `ASKNEWS_SECRET` are available and `RESEARCH_PROVIDER`
+allows it. `RESEARCH_PROVIDER=auto` uses AskNews when configured and otherwise
+selects the empty primary provider. `RESEARCH_PROVIDER=asknews` requires both
+AskNews credentials and fails if either is missing. `RESEARCH_PROVIDER=none`
+always selects the empty primary provider, even when the AskNews credentials are
+present. Unsupported override values behave like `auto`.
 
-1. **AskNews** if `ASKNEWS_CLIENT_ID` and `ASKNEWS_SECRET` are set. This is the
-   production case.
-2. **Exa.ai** (`SmartSearcher`) if `EXA_API_KEY` is set: a generic rundown
-   (`_exa_provider`, `research/providers.py`).
-3. **Perplexity direct** if `PERPLEXITY_API_KEY` is set. Model:
-   `PERPLEXITY_RESEARCH_MODEL` (`constants.py`); the function is
-   `_perplexity_provider` (`research/providers.py`), and its prompt explicitly
-   asks for prediction-market consideration unless the run is benchmarking.
-4. **Perplexity via OpenRouter** if `OPENROUTER_API_KEY` is set. Same function
-   called with `use_open_router=True`, same model, prefixed for the OpenRouter
-   route: `PERPLEXITY_RESEARCH_MODEL_VIA_OPENROUTER`.
-5. **Empty stub** if none of the above: research is just the add-on providers.
-
-In production the AskNews credentials are present, so Exa and the two Perplexity
-routes never run as the primary. They are fallbacks, not peers. To force a
-specific primary regardless of credentials, set `RESEARCH_PROVIDER=<name>`
-(`asknews` / `exa` / `perplexity` / `openrouter`); any other value behaves as
-auto. Forcing `asknews` without the AskNews creds fails loudly rather than
-silently picking a different provider.
-
-Exa and Perplexity client construction and invocation live in
-`research/providers.py` (`_invoke_exa_research` and
-`_invoke_perplexity_research`). Both the standalone provider factories and the
-orchestrator use these helpers. Each caller retains its existing prompt and
-constructor options: the Exa factory explicitly disables citation formatting,
-while the orchestrator uses SDK defaults; the Perplexity factory omits `api_key`,
-while the orchestrator passes `None` for direct access or resolves the OpenRouter
-key. These distinctions remain part of the call contract.
-
-The Perplexity prompt interpolates `OUTSIDE_VENUE_MARKET_ODDS_POLICY` rather than restating the
-market-odds ask, because a second copy of it drifted once. This provider is the primary whenever
-the AskNews credentials are absent, so its copy is live policy, and it kept the retired blanket
-"consider all relevant prediction markets" wording after the first-pass prompt had been narrowed
-to the venues the live market snapshot does not cover. Both helpers also pass `temperature=None`
-to pin provider-default sampling against a future `GeneralLlm` default flip, and the Perplexity
-model is built at `allowed_tries=1` so the elapsed-gated `invoke_with_transient_retry` wrapper is
-the only retry owner on that path. On the Exa side `temperature` is ignored outright when the
-model is a preconfigured `GeneralLlm`; `None` is what keeps litellm from applying a sampling
-param on the fallback string path.
-
-### AskNews fallback (primary-only)
-
-AskNews is the only primary that gets a runtime fallback. If the AskNews fetch
-raises, `_fetch_research_with_fallback` (`research/orchestrator.py`) tries a
-prose provider instead, in a **different** order than the primary ladder:
-OpenRouter-Perplexity first (cheapest, prose-returning), then direct Perplexity,
-then Exa last (its `SmartSearcher` spins up its own multi-search loop, the most
-expensive path). The primary ladder orders by index quality; this fallback list
-orders by cost, because it only ever fires after AskNews has already failed.
-It selects the first fallback with credentials; failure of that selected provider
-does not advance to another fallback.
+AskNews is the only primary provider. Exa remains available to agentic gap-fill
+v2's `search_web` tool, where it participates in the bounded research loop; it is
+not a primary provider or a replacement when AskNews fails. Perplexity is no
+longer part of the primary-provider path. If the AskNews request fails, its
+provider result records the failure and the remaining add-on providers and
+gap-fill stages continue with the evidence they collected. The failed AskNews
+request does not advance to another provider.
 
 One AskNews error is treated specially: a `403011` "subscription is not currently
 active" signature (`is_asknews_subscription_error`, `research/providers.py`) is
@@ -372,7 +306,7 @@ The 2026-07-18 revision to this prompt added three things worth calling out:
 
 ## Add-on providers (parallel, each independently gated)
 
-On top of the single primary, every enabled add-on provider runs in parallel.
+Alongside AskNews when it is selected, every enabled add-on provider runs in parallel.
 Each is behind its own env flag and produces its own `##` section. In production
 all of these are on.
 
@@ -2391,8 +2325,8 @@ time-budget step for how the budget is granted and what it cuts.
 
 ## Cost note
 
-The research providers hit live, paid APIs (AskNews, Exa, Perplexity, OpenRouter
-credits, Google grounding, FRED). Running the bot or a backtest spends real money
+The research providers hit live, paid APIs (AskNews, Exa, OpenRouter credits,
+Google grounding, FRED). Running the bot or a backtest spends real money
 and, in live modes, publishes to the platform it forecasts (Metaculus, or
 competitions.mantic.com in `--mode mantic`). Do not launch a paid run without the
 operator's approval; see `AGENTS.md` "Cost discipline". The unit/integration test

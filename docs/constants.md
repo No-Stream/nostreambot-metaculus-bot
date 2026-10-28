@@ -221,8 +221,9 @@ on the wall clock.
 
 ### DEFAULT_MAX_CONCURRENT_RESEARCH
 
-Concurrency ceiling for research providers such as AskNews and Exa. Deliberately conservative for
-AskNews; adjust after observing rate limits.
+Per-run concurrency ceiling for the parallel research providers. This is separate from AskNews's
+process-wide rate and concurrency limits, which are configured deliberately conservatively and
+adjusted after observing rate limits.
 
 ### BENCHMARK_BATCH_SIZE
 
@@ -244,8 +245,10 @@ last rendering drops the disclosures too when they alone exceed the limit, so th
 
 ### RESEARCH_PROVIDER_ENV
 
-Optional environment variable that forces research provider selection. Accepted values, case
-insensitive: "auto", "asknews", "exa", "perplexity", "openrouter".
+Optional environment variable that selects the primary research provider. Accepted values, case
+insensitive: "auto", "asknews", "none". Auto uses AskNews when its credentials are configured;
+asknews requires those credentials; none skips the primary even when credentials are present.
+Unsupported values behave like auto. Exa is reserved for the agentic gap-fill v2 search tool.
 
 ### TEST_QUESTIONS_OVERRIDE_ENV
 
@@ -530,24 +533,6 @@ also at low, in `llm_configs.py`, while the forecaster slots set their own effor
 
 Native search web options, passed to the OpenRouter plugins. Context size accepts "low", "medium" or
 "high".
-
-## Perplexity (fallback research provider; dormant while AskNews wins the ladder)
-
-### PERPLEXITY_RESEARCH_MODEL, PERPLEXITY_RESEARCH_MODEL_VIA_OPENROUTER
-
-The model both Perplexity call sites use: the provider factory in `research/providers.py` and the
-orchestrator's AskNews-failure fallback. A single constant because the two sites each carried their
-own literal and silently drifted, with `providers.py` pinned to Perplexity's non-reasoning tier while
-the orchestrator used the reasoning one. The direct-provider route takes the bare slug; the
-OpenRouter route takes it prefixed, which is what `get_openrouter_api_key` keys its routing on.
-
-### PERPLEXITY_WALL_TIMEOUT
-
-A wall-clock cap for the two Perplexity call sites. Both previously had no wall bound at all: unlike
-native search and resolution-source, neither was ever migrated to the gated retry wrapper, so a
-stalled reasoning-tier call could run as long as litellm let it. Sized between
-`GEMINI_SEARCH_TIMEOUT` and the research phase's own budget, generous enough for a reasoning search
-and bounded enough that a stall cannot dominate the phase.
 
 ## Resolution-Source Fetcher (Tier 1)
 

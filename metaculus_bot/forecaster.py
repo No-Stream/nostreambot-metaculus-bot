@@ -149,7 +149,6 @@ class TemplateForecaster(CompactLoggingForecastBot):
         max_questions_per_run: int | None = 10,
         is_benchmarking: bool = False,
         max_concurrent_research: int = DEFAULT_MAX_CONCURRENT_RESEARCH,
-        allow_research_fallback: bool = True,
         research_cache: dict[int, str] | None = None,
         stacking_fallback_on_failure: bool = True,
         stacking_randomize_order: bool = True,
@@ -176,7 +175,6 @@ class TemplateForecaster(CompactLoggingForecastBot):
             raise ValueError("max_questions_per_run must be a positive integer if provided")
         self.max_questions_per_run: int | None = max_questions_per_run
         self.is_benchmarking: bool = is_benchmarking
-        self.allow_research_fallback: bool = allow_research_fallback
         self.research_cache: dict[int, str] | None = research_cache
         # Tests and harnesses override the prod constant; a 2-model ensemble would otherwise always fail the guard.
         self.min_forecasters_to_publish: int = (
@@ -251,7 +249,6 @@ class TemplateForecaster(CompactLoggingForecastBot):
             custom_provider=research_provider,
             research_cache=research_cache,
             is_benchmarking=is_benchmarking,
-            allow_research_fallback=allow_research_fallback,
             max_concurrent_research=max_concurrent_research,
             research_sink=research_sink,
         )

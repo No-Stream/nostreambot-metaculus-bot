@@ -324,7 +324,7 @@ class TestScreenResearchForLeakage:
     @pytest.mark.asyncio
     @patch("metaculus_bot.backtest.leakage.GeneralLlm")
     @patch("metaculus_bot.backtest.leakage.choose_provider_with_name")
-    async def test_choose_provider_called_with_is_benchmarking(self, mock_choose_provider_with_name, mock_llm_class):
+    async def test_choose_provider_called_for_leakage_screen(self, mock_choose_provider_with_name, mock_llm_class):
         mock_choose_provider_with_name.return_value = (AsyncMock(return_value="research"), "mock")
         mock_detector = AsyncMock()
         mock_detector.invoke.return_value = "NO"
@@ -336,7 +336,7 @@ class TestScreenResearchForLeakage:
 
         await screen_research_for_leakage(_as_questions(questions), ground_truths)
 
-        mock_choose_provider_with_name.assert_called_once_with(is_benchmarking=True)
+        mock_choose_provider_with_name.assert_called_once_with()
 
     @pytest.mark.asyncio
     @patch("metaculus_bot.backtest.leakage.GeneralLlm")

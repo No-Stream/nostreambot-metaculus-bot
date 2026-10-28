@@ -36,7 +36,6 @@ BENCHMARK_BOT_CONFIG: dict[str, Any] = {
     "research_provider": None,
     "max_questions_per_run": None,
     "is_benchmarking": True,
-    "allow_research_fallback": False,
 }
 
 DEFAULT_HELPER_LLMS: dict[str, GeneralLlm] = {
