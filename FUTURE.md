@@ -56,6 +56,13 @@ and planning docs named here may have moved out of the public repo. Neither is a
 
 ## Open, recorded and not built
 
+**Low priority: retry AskNews on transient errors, not only rate limits.** `_is_asknews_retryable`
+(`research/providers.py`) retries only 429 and concurrency errors, so a 401 or 5xx during an AskNews auth blip drops
+the AskNews section for that question. On 2026-10-27 two local posts lost it to a few minutes of 401s from
+`auth.asknews.app` while credentials were valid. Since that date there is no Perplexity or Exa fallback, and native
+search, Gemini search and both gap-fill passes cover the loss, so this is a nicety. Any retry adds time on the
+research critical path, so keep it to one short retry inside the existing time budget.
+
 **Dispatcher execution timeout, blocked on a paid cron-job.org account.** The 2026-10-03 timeout mails matched
 dispatches that arrived and completed, so GitHub acknowledged slowly rather than work going missing. Setting
 `requestTimeout: 300` in `scripts/cronjob_dispatch_setup.py` would tolerate that, but the free tier caps execution at
