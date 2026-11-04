@@ -428,7 +428,7 @@ bot published its comment) and return the fields a round's tagging pass writes:
 |---|---|---|---|
 | `config_era` | `era_of` | `pre_flip`, `post_flip`, `triple_era`, `no_ts` | `era_gap` (its default `ERA_FIELD`), the clip sweep's era windows |
 | `triple_subera` | `triple_subera_of` | `triple_pre_market`, `triple_ranked_market`, `triple_time_budget`, `triple_fall_config` | the coarse pooling, where every fall merge is one bucket |
-| `triple_subera_fine` | `triple_subera_fine_of` | `pre_ft_unfreeze`, `ft_0292`, `july25`, `post_dry_key_fix`, `ranked_markets`, `time_budget`, `fall_config` | `era_gap --era-field triple_subera_fine`, which is how the fall read selects its arms |
+| `triple_subera_fine` | `triple_subera_fine_of` | `pre_ft_unfreeze`, `ft_0292`, `july25`, `post_dry_key_fix`, `ranked_markets`, `time_budget`, `fall_config`, `fall_gpt6_opus55`, `fall_gpt61_sol`, `fall_gemini4_argon`, `fall_terra_research` | per-merge labels; the fall season's pooled read selects on the coarse field instead (below) |
 | `ft_unfreeze_side` | `ft_unfreeze_side_of` | `pre_ft_0292`, `ft_0292` | the MC-clamp cuts |
 | `post_linters_merge` | `post_linters_merge_of` | `True` / `False` | provenance only |
 
@@ -694,6 +694,21 @@ uv run python -m metaculus_bot.performance_analysis.era_gap --dataset <round>/pe
 Run before the first `fall_config` question resolves (on 2026-09-09 six were forecast and none had
 closed) it exits with `era arm 'fall_config' has no scoreable records; nothing to compare yet` plus
 the field's value counts, and prints no report.
+
+**The fall roster did not stay frozen.** Four merges after the preregistration changed models:
+021e059 (gpt-6-sol and claude-opus-5.5, 2026-09-24), PR #73 (gpt-6.1-sol, 2026-09-29), PR #77
+(gemini-4-argon plus delivered-evidence research publication, 2026-10-14) and PR #79 (Terra
+research roles, 2026-10-28). Each is a labelled fine sub-era, so the fine `fall_config` value now
+covers only the handful of questions forecast between 2026-09-07 and 2026-09-24. The operator
+ruled (2026-11-04) to pool the whole fall season as one arm and break out a roster sub-era only
+when a finding justifies it. The pooled read selects on the coarse field, where
+`triple_ranked_market` spans exactly the fine `ranked_markets` window:
+
+```bash
+uv run python -m metaculus_bot.performance_analysis.era_gap --dataset <round>/perf_all_tagged.json \
+    --era-field triple_subera --treated-era triple_fall_config --comparison-era triple_ranked_market \
+    --strict --clusters <round>/cluster_structure.json
+```
 
 ## Building a round's cluster structure
 

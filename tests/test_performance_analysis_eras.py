@@ -24,7 +24,11 @@ from metaculus_bot.performance_analysis.eras import (
     B4E9DF0_MERGED_AT,
     DRY_KEY_FIX_MERGED_AT,
     FALL_CONFIG_MERGED_AT,
+    FALL_GEMINI4_ARGON_MERGED_AT,
+    FALL_GPT6_OPUS55_MERGED_AT,
+    FALL_GPT61_SOL_MERGED_AT,
     FALL_TARGET_MERGED_AT,
+    FALL_TERRA_RESEARCH_MERGED_AT,
     FT_0292_MERGED_AT,
     GRID_SCALED_MAX_STEP_MERGED_AT,
     IMPERSONATE_RUNG_MERGED_AT,
@@ -55,6 +59,10 @@ BOUNDARY_MERGES: tuple[tuple[str, str, datetime], ...] = (
     ("8d5a082", "FALL_CONFIG_MERGED_AT", FALL_CONFIG_MERGED_AT),
     ("a9cbe03", "IMPERSONATE_RUNG_MERGED_AT", IMPERSONATE_RUNG_MERGED_AT),
     ("660fd35", "FALL_TARGET_MERGED_AT", FALL_TARGET_MERGED_AT),
+    ("021e059", "FALL_GPT6_OPUS55_MERGED_AT", FALL_GPT6_OPUS55_MERGED_AT),
+    ("6489289", "FALL_GPT61_SOL_MERGED_AT", FALL_GPT61_SOL_MERGED_AT),
+    ("28e82b6", "FALL_GEMINI4_ARGON_MERGED_AT", FALL_GEMINI4_ARGON_MERGED_AT),
+    ("2c45ed7", "FALL_TERRA_RESEARCH_MERGED_AT", FALL_TERRA_RESEARCH_MERGED_AT),
 )
 
 # b8d730f authored the widening flip six days before 0e85e1b merged it: the trap this file guards.
@@ -198,6 +206,10 @@ class TestSuberaTags:
             ("2026-09-05T01:59:24Z", "triple_fall_config", "fall_config"),
             ("2026-09-05T15:31:40Z", "triple_fall_config", "fall_config"),
             ("2026-09-07T05:52:20Z", "triple_fall_config", "fall_config"),
+            ("2026-09-24T20:50:53Z", "triple_fall_config", "fall_gpt6_opus55"),
+            ("2026-09-29T21:36:57Z", "triple_fall_config", "fall_gpt61_sol"),
+            ("2026-10-14T15:14:09Z", "triple_fall_config", "fall_gemini4_argon"),
+            ("2026-10-28T20:03:31Z", "triple_fall_config", "fall_terra_research"),
         ],
     )
     def test_subera_at_literal_instants(self, created_at: str, coarse: str, fine: str):
@@ -218,6 +230,11 @@ class TestSuberaTags:
         september = ["2026-09-05T01:59:24Z", "2026-09-05T15:31:40Z", "2026-09-07T05:52:20Z"]
         assert {triple_subera_of({"bot_comment_created_at": raw}) for raw in september} == {"triple_fall_config"}
 
+    def test_the_fall_roster_merges_pool_into_one_coarse_bucket(self):
+        """The four fall roster/research merges are labelled finely but pooled for the season's reads."""
+        fall = ["2026-09-24T20:50:53Z", "2026-09-29T21:36:57Z", "2026-10-14T15:14:09Z", "2026-10-28T20:03:31Z"]
+        assert {triple_subera_of({"bot_comment_created_at": raw}) for raw in fall} == {"triple_fall_config"}
+
     def test_the_tag_vocabulary_the_standing_instruments_read(self):
         """``era_gap`` selects arms on these fine names and the clip sweep slices on the coarse eras."""
         assert eras.ERAS == ("pre_flip", "post_flip", "triple_era", "no_ts")
@@ -235,8 +252,19 @@ class TestSuberaTags:
             "ranked_markets",
             "time_budget",
             "fall_config",
+            "fall_gpt6_opus55",
+            "fall_gpt61_sol",
+            "fall_gemini4_argon",
+            "fall_terra_research",
         )
-        assert eras.POST_TIME_BUDGET_FINE == ("time_budget", "fall_config")
+        assert eras.POST_TIME_BUDGET_FINE == (
+            "time_budget",
+            "fall_config",
+            "fall_gpt6_opus55",
+            "fall_gpt61_sol",
+            "fall_gemini4_argon",
+            "fall_terra_research",
+        )
 
     def test_each_subera_table_is_ordered_and_distinct(self):
         """``_subera_of`` takes the latest open row, so a duplicate or out-of-order row mis-tags."""
