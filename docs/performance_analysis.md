@@ -5,7 +5,8 @@ make a number trustworthy, and the receipts behind each one. It covers the round
 and the `--prior` rescoring diff, what the archives hold and which of their fields are
 historically unreadable, era bucketing and the merge-to-main dating rule, the standing
 exclusion cohorts, the scoring conventions (spot peer, and `spot_peer_delta` for
-counterfactuals), the clip-threshold sweep, per-model forecast recovery, how to read the
+counterfactuals), the clip-threshold sweep, partially pooled type and era estimates,
+per-model forecast recovery, how to read the
 width monitor's era table, the PIT convention for out-of-range resolutions, starved outer
 tails, and question-supply / forfeit accounting.
 
@@ -725,6 +726,39 @@ uv run python -m metaculus_bot.performance_analysis.era_gap --dataset <round>/pe
     --era-field triple_subera --treated-era triple_fall_config --comparison-era triple_ranked_market \
     --strict --clusters <round>/cluster_structure.json
 ```
+
+## Partial pooling across type and era
+
+`metaculus_bot.performance_analysis.type_pooling` fits a Bayesian Student-t model to spot-peer scores. The model
+partially pools question-type, selected-era, type-by-era interaction, and UTC resolution-day effects. It estimates
+type-by-era cells with information shared across the dataset, while the day effect accounts for questions resolved
+on the same UTC date. The model also includes the standardized `log(horizon_days)` covariate, where horizon is the
+elapsed time from `bot_comment_created_at` to `metadata.actual_resolve_time`. It complements the standing `era_gap`
+read with a different adjusted estimate and does not replace the preregistered type-adjusted, horizon-matched watch
+row.
+
+Run it on the tagged round dataset with the exclusion cohorts removed:
+
+```bash
+uv run python -m metaculus_bot.performance_analysis.type_pooling \
+    --dataset scratch/residual_2026-11-04/perf_all_tagged.json --era-field config_era --strict \
+    --output /tmp/residual_2026-11-04/type_pooling/config_era
+```
+
+Omit `--strict` to retain the exclusion cohorts. Select a finer era field with `--era-field`; `--eras` can restrict
+the fit to selected labels in that field. The sampler
+controls are `--draws`, `--tune`, `--chains`, and `--seed`. Each output directory contains `type_pooling.md` and
+`type_pooling.json`. The Markdown table reports raw and posterior type-by-era means, 90% and 95% posterior intervals,
+and raw-minus-posterior shrinkage; it also reports within-era type contrasts. These cell estimates are at the mean
+observed log horizon and set the day effect to zero. The JSON includes those summaries, counts, horizon standardizing
+values, sampler diagnostics, and posterior-predictive summaries. Records without a submission timestamp remain in
+the score model, are counted as missing horizon, and receive no horizon adjustment; the report records when the
+horizon term has no variation and is omitted.
+
+Diagnostics include maximum R-hat, minimum bulk and tail effective sample sizes, and the divergence count and draw
+count. By default, a missing R-hat, any R-hat above 1.01, or a divergence rate above 1% raises an error before the
+reports are written. `--allow-diagnostics-warnings` allows the Markdown and JSON reports to be written with the
+failed diagnostics recorded; it does not make the fit reliable.
 
 ## Building a round's cluster structure
 

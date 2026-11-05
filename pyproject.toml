@@ -67,6 +67,7 @@ dev = [
     "deptry>=0.25.1",
     "import-linter>=2.13",
     "pytest-timeout>=2.4.0",
+    "pymc>=6.3.2",
 ]
 
 [tool.uv]
@@ -239,6 +240,7 @@ max-nested-blocks = 4
 pythonpath = ["."]
 testpaths = ["tests"]
 markers = [
+    "slow: computationally intensive tests",
     "live: requires real API keys and makes real LLM calls (deselected by default)",
     "e2e: end-to-end pipeline tests with mocked LLMs",
     "integration: cross-component contract tests",
@@ -359,7 +361,8 @@ DEP003 = ["urllib3", "httpx"]
 #     uv.lock and cannot see the libcurl (8.15.0 in the 0.15.0 wheel) and BoringSSL binaries
 #     VENDORED inside the curl_cffi wheel, and curl upstream is well past that release, so a
 #     libcurl CVE would not be reported by that gate. A curl_cffi bump is how one gets picked up.
-DEP004 = ["matplotlib"]
+#   arviz and pymc. The type-pooling CLI is an offline analysis tool, not part of live bot runs.
+DEP004 = ["matplotlib", "arviz", "pymc"]
 
 # Import-direction contracts. Every contract below was derived from the real graph (grimp).
 # The first five passed as written, with no code change; the scoring one is the exception —

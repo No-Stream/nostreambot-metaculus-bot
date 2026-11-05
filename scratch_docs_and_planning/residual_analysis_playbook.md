@@ -118,6 +118,8 @@ The standing set, each reconciling explicitly with the prior round's same-named 
   type-adjusted gap without the horizon-matched one beside it (2026-09-09: +10.71 became +8.19), and never
   reopen an underperformance flag on a positive gap. `docs/performance_analysis.md` "The era gap and the
   horizon confound".
+- partially pooled spot-peer estimates by question type and era: run `performance_analysis.type_pooling` on the
+  tagged dataset and review its sampler diagnostics; see `docs/performance_analysis.md` "Partial pooling across type and era".
 
 ## Phase 4 — Per-question tracing (the centerpiece; often the highest-value output)
 
