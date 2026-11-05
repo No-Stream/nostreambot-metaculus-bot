@@ -32,6 +32,11 @@ from metaculus_bot.prompts import (
     numeric_prompt,
 )
 
+_COUNT_WINDOW_RESEARCH_NUDGE = (
+    "If the question asks how many events happen in a window, find counts for several past windows of the same "
+    "length from an authoritative source, so the forecasters can see how much the count varies."
+)
+
 _SYSTEM_PROMPT_TEMPLATE = """\
 You are a research analyst supporting a forecasting panel. The panel will
 forecast the question below. Your job is NOT to forecast — it is to make sure
@@ -125,6 +130,7 @@ through the dry run, note:
   - Numeric: the most recent authoritative measurement of the quantity — with
     its exact as-of date and units — is almost always a verify target; the
     panel anchors on it.
+  - {_COUNT_WINDOW_RESEARCH_NUDGE}
   - Multiple choice: check the briefing carries evidence on every option, not
     just the favorite; an option with no evidence either way is a fill target.
   - If the briefing carries a prediction-market snapshot whose match to this
@@ -281,7 +287,7 @@ _TEMPLATE_RESEARCH_PLACEHOLDER = (
 
 def build_system_prompt(today: str) -> str:
     """Return the driver system prompt with ``{today}`` filled in (YYYY-MM-DD)."""
-    return _SYSTEM_PROMPT_TEMPLATE.format(today=today)
+    return _SYSTEM_PROMPT_TEMPLATE.format(today=today, _COUNT_WINDOW_RESEARCH_NUDGE=_COUNT_WINDOW_RESEARCH_NUDGE)
 
 
 def build_ghost_prompt() -> str:

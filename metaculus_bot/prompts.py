@@ -491,6 +491,18 @@ _COUNT_IN_PERIOD_REFERENCE_CLASS = """
                  about the pipeline and updates that rate; it does not replace it."""
 
 
+# Binary, MC and numeric/discrete count questions. Receipt: docs/prompts.md "_COUNT_PROCESS_RULE".
+_COUNT_PROCESS_RULE = """
+               • When the answer is a count of events in a window (launches, cases, filings, incidents), set the
+                 count's spread from how the events arise. Scheduled or capacity-limited events (launch manifests,
+                 meeting calendars, regular releases) vary less than a Poisson model with the same mean, so Poisson
+                 tails are too wide; independent arrivals are close to Poisson; clustered or contagious events
+                 (outbreaks, copycat events, storm seasons) vary more, so use a wider, negative-binomial-style
+                 spread. If the research gives counts for past windows of the same length, base the distribution
+                 on them, adjusted for trend, rather than on a formula, and check both tails against their minimum
+                 and maximum."""
+
+
 # Binary + MC and the date axis; same pre-indent contract. Receipt: docs/prompts.md "_SOFT_CLOCK_RULE".
 _SOFT_CLOCK_RULE = """
                • A target date the responsible actor has not bound itself to — no statute, no contract, no
@@ -770,6 +782,7 @@ def binary_prompt(question: BinaryQuestion, research: str) -> str:
                • Attempt an explicit calculation if the data supports it: historical frequency, rate extrapolation, z-score, or probability union (for "at least one of N" questions, compute 1 - product of (1-p_i) — union only over paths that cannot be the same event, since an overlapping term double-counts it). A rough quantitative estimate from data is more reliable than an intuitive guess.
                • {_BINARY_CONDITIONAL_HAZARD_BULLET}
 {_COUNT_IN_PERIOD_REFERENCE_CLASS}
+{_COUNT_PROCESS_RULE}
 {_SOFT_CLOCK_RULE}
 {_HISTORY_DISCHARGED_RULE}
 
@@ -899,6 +912,7 @@ def multiple_choice_prompt(question: MultipleChoiceQuestion, research: str) -> s
             • Outside-view distribution over options; discuss the historical rate of upsets/unexpected outcomes in this domain and how that affects the distribution.
             • {_REMAINING_EXPOSURE_SENTENCE}
 {_COUNT_IN_PERIOD_REFERENCE_CLASS}
+{_COUNT_PROCESS_RULE}
 {_SOFT_CLOCK_RULE}
 {_HISTORY_DISCHARGED_RULE}
 
@@ -1222,7 +1236,7 @@ def _numeric_axis(question: NumericQuestion) -> _ContinuousAxis:
             "qualifying event or measurement is so recent that resolution simply lags, treat that recent value as "
             "the anchor and weight your distribution accordingly."
         ),
-        reference_class_rules=_COUNT_IN_PERIOD_REFERENCE_CLASS,
+        reference_class_rules=f"{_COUNT_IN_PERIOD_REFERENCE_CLASS}{_COUNT_PROCESS_RULE}",
         tail_scenarios=(
             "            - Coherent pathway for unusually low results.\n"
             "            - Coherent pathway for unusually high results."

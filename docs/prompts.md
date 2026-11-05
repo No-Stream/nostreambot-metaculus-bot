@@ -312,6 +312,15 @@ On qid 44561 all six members built a "no failure announced yet, so Poisson(1.0)"
 instead of the pooled FDIC bank-failure rate, and published far too low. Same pre-indent contract as
 `_NULL_RESULT_READING`.
 
+### `_COUNT_PROCESS_RULE`
+
+Shipped by operator decision on 2026-11-04. Mechanism reasoning distinguishes scheduled or capacity-limited events,
+independent arrivals and clustered events, while the residual round's dispersion audit found Falcon variance-to-mean
+0.098, with a Poisson model putting 19.2% on a tail seen in 0 of 32 windows; usable window counts appeared in only
+2 of 26 count bundles. This departs, by operator choice, from the fall preregistration's clause that a new prompt rule
+ships only on a cohort measurement. The rule reaches binary, multiple-choice, numeric and discrete count questions
+through one shared constant; stacking prompts omit it. Same pre-indent contract as `_COUNT_IN_PERIOD_REFERENCE_CLASS`.
+
 ### `_SOFT_CLOCK_RULE`
 
 The soft-clock rule: a target date the responsible actor is not BOUND to is evidence that a target
