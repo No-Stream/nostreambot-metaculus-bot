@@ -1,0 +1,18 @@
+{
+  "list_comment": {
+    "id": 1123134,
+    "on_post": 45670,
+    "created_at": "2026-10-01T12:00:00Z",
+    "text": "# SUMMARY\n*Question*: Which party will win the most seats in the 2026 Israeli election?\n*Final Prediction*: \n- Likud: 37.0%\n- Yashar: 61.0%\n- Other: 2.0%\n\n*Total Cost*: extra_metadata_in_explanation i... \n\n### WARNING: Content Truncated\nThis comment has been archived to save space.\nTo retrieve full content, please visit [https://www.metaculus.com/api/comments/1123134/]"
+  },
+  "detail_comment": {
+    "id": 1123134,
+    "on_post": 45670,
+    "text": "# SUMMARY\n*Question*: Which party will win the most seats in the 2026 Israeli election?\n*Final Prediction*: Likud 37%\n\n### Forecasts\n*Forecaster 1 (model-one)*: Likud 37%\n\n<!-- FORECASTERS_USED=1/3 -->\n"
+  },
+  "list_comment_with_markdown_link": {
+    "id": 1133195,
+    "on_post": 45671,
+    "text": "# SUMMARY\n*Question*: What will be the total spending by all Senate candidates in the 2026 US election cycle?\n*Final Prediction*: Probability distribution:\n- 10.00% chance of value below 1428159844.76... \n\n### WARNING: Content Truncated\nThis comment has been archived to save space.\nTo retrieve full content, please visit [https://www.metaculus.com/api/comments/1133195/](https://www.metaculus.com/api/comments/1133195/)"
+  }
+}

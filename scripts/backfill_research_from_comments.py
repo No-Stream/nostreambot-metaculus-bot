@@ -18,6 +18,7 @@ from typing import TextIO
 import requests
 
 from metaculus_bot.api_preflight import verify_metaculus_api_identity
+from metaculus_bot.performance_analysis.collector import expand_truncated_comment
 from metaculus_bot.research.section_format import detect_gap_fill, detect_providers
 
 logger = logging.getLogger(__name__)
@@ -88,7 +89,7 @@ def fetch_all_comments(token: str) -> list[dict]:
 
     n_public, n_private, n_unique = len(public), len(private), len(merged)
     logger.info(f"Fetched bot comments: {n_public=} {n_private=} {n_unique=}")
-    return list(merged.values())
+    return [expand_truncated_comment(comment, token) for comment in merged.values()]
 
 
 def get_question_id_for_post(post_id: int, token: str) -> int | None:

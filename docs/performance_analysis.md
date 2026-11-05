@@ -959,6 +959,11 @@ field names are a data contract with the research archive, so a field is added r
 renamed or repurposed in place. What each one means, and the trap behind it where there is
 one:
 
+The comments list can return an archived stub for a long comment, ending with `Content Truncated`
+and a link to `/api/comments/<id>/`. The collector fetches that comment detail
+endpoint before parsing, and requires its top-level `text` field to be a non-empty string.
+The research archive backfill uses the same recovery before extracting research text.
+
 - `per_model_forecasts` carries one entry per ensemble member on a non-stacked comment. On a
   stacked comment it collapses to the stacker's single aggregate, so any median or spread
   computation has to read `per_base_model_forecasts` instead, which is what
