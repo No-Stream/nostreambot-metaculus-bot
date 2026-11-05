@@ -51,6 +51,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -74,6 +75,7 @@ STORE_META_FILENAME = "_meta.json"
 # other artifacts still process), and the artifacts enumeration can't block forever.
 GH_API_TIMEOUT_S = 120
 ARTIFACT_DOWNLOAD_TIMEOUT_S = 180
+ARTIFACT_DOWNLOAD_WORKERS = 6
 
 
 def verify_gh_cli() -> None:
@@ -381,25 +383,32 @@ def ensure_store_current(
     """Persist every selected artifact that isn't already in the store.
 
     Skip-if-present (uploaded artifacts are immutable) makes a re-run cheap: only new
-    artifacts and dirs left incomplete by an earlier interruption are fetched. A
-    per-artifact download that fails is counted and skipped so one hung `gh` never
-    aborts the pull. Progress prints every 25 fetches so a long first pull isn't silent.
+    artifacts and dirs left incomplete by an earlier interruption are fetched. Missing
+    artifacts are submitted oldest-first to a bounded worker pool; completion order may
+    differ. A per-artifact download that fails is counted and skipped so one hung `gh`
+    never aborts the pull. Progress prints every 25 successful downloads.
     """
     store_dir = _resolve_store_dir(store_dir)
     store_dir.mkdir(parents=True, exist_ok=True)
     ordered = _ordered_artifacts(selection)
     stats = StoreSyncStats()
 
+    missing: list[dict] = []
     for art in ordered:
         if is_persisted(store_dir, str(art.get("name", ""))):
             stats.already_present += 1
             continue
-        if persist_artifact(art, repo, store_dir) is None:
-            stats.failed += 1
-            continue
-        stats.downloaded += 1
-        if stats.downloaded % 25 == 0:
-            print(f"  persisted {stats.downloaded} new {progress_noun}", flush=True)
+        missing.append(art)
+
+    with ThreadPoolExecutor(max_workers=ARTIFACT_DOWNLOAD_WORKERS) as executor:
+        futures = [executor.submit(persist_artifact, art, repo, store_dir) for art in missing]
+        for future in as_completed(futures):
+            if future.result() is None:
+                stats.failed += 1
+                continue
+            stats.downloaded += 1
+            if stats.downloaded % 25 == 0:
+                print(f"  persisted {stats.downloaded} new {progress_noun}", flush=True)
 
     logger.info(
         f"Artifact store {store_dir}: {len(ordered)} selected -> {stats.already_present} already persisted, "
