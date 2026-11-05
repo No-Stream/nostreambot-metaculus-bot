@@ -177,7 +177,7 @@ after clustering (same-day resolutions share a world state).
 
 ## Standing gotchas (each has burned a round at least once)
 
-- **The tournament ranks on SPOT PEER; `peer_score` is `spot_peer_score × coverage`.**
+- **The tournament ranks on SPOT PEER; `peer_score` is roughly `spot_peer_score × coverage` on 3-hour bot windows only** (on weeks-long Cup windows it diverges, q45920: spot −0.69, peer −11.56).
   Never rank, aggregate, or headline on the coverage-scaled figure — the bot submits once
   and never revises, so its coverage is mostly submission timing, and the scaling flatters
   misses (q44872: peer −15.0 vs spot peer −38.8). Read platform scores through

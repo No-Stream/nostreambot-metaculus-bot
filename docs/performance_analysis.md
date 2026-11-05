@@ -513,6 +513,12 @@ crowd movement in the 1.5-3h window between our submit and the close rather than
 anything the bot did. Those are that round's numbers, not a repo constant; re-derive
 with `scratch/residual_2026-08-31/dossiers/44798_peer_vs_spot.py`.
 
+The identity is only an approximation for short windows. Metaculus computes `peer_score` as a
+time-average of our forecast against the evolving field over the question's open window
+(`scoring/score_math.py` in the Metaculus repo), so on a Metaculus Cup question, open for weeks
+while the human field keeps updating, it breaks: q45920 (Brazil runoff margin, open 19 days)
+scored spot peer −0.69 and peer −11.56 at coverage 0.998 (2026-11-04 round).
+
 Because the bot submits exactly once and never revises (forecast history length 1 on
 157 of 158), its coverage is mostly a function of how early it submitted. So coverage
 scaling FLATTERS misses and dulls hits: q44872 scored peer −15.0 against spot peer
