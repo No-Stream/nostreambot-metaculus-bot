@@ -738,8 +738,8 @@ def render_report(report: EraGapReport) -> str:
     return "\n".join(lines)
 
 
-def _era_records(data: list[dict], era: str, field: str) -> list[dict]:
-    return [r for r in data if r.get(field) == era]
+def _era_records(data: list[dict], eras: Sequence[str], field: str) -> list[dict]:
+    return [r for r in data if r.get(field) in eras]
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -749,8 +749,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--dataset", required=True, help=f"A tagged performance dataset JSON whose records carry `{ERA_FIELD}`."
     )
-    parser.add_argument("--treated-era", required=True, help="The era under evaluation (the live roster).")
-    parser.add_argument("--comparison-era", required=True, help="The era it is measured against.")
+    parser.add_argument(
+        "--treated-era", required=True, nargs="+", help="One or more eras under evaluation (the live roster)."
+    )
+    parser.add_argument("--comparison-era", required=True, nargs="+", help="One or more eras it is measured against.")
     parser.add_argument(
         "--era-field",
         default=ERA_FIELD,
@@ -781,14 +783,16 @@ def main(argv: list[str] | None = None) -> None:
     data = load_dataset(args.dataset)
     cluster_map = ClusterMap.load(args.clusters) if args.clusters else None
     convention = cluster_map.convention if cluster_map else RESOLUTION_DAY_CONVENTION
+    treated_label = "+".join(args.treated_era)
+    comparison_label = "+".join(args.comparison_era)
     treated = build_arm(
-        args.treated_era,
+        treated_label,
         _era_records(data, args.treated_era, args.era_field),
         strict=args.strict,
         clusters=cluster_map,
     )
     comparison = build_arm(
-        args.comparison_era,
+        comparison_label,
         _era_records(data, args.comparison_era, args.era_field),
         strict=args.strict,
         clusters=cluster_map,

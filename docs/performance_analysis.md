@@ -575,7 +575,9 @@ uv run python -m metaculus_bot.performance_analysis.era_gap --dataset <round>/pe
 
 Run it twice per round, once with `--strict` (the exclusion cohorts from `cohorts.py` dropped
 from BOTH arms, the count shown in the `excl` column) and once unfiltered, the same pairing the
-clip sweep uses. The dataset is the round's tagged pull: every record carries `config_era`,
+clip sweep uses. Each arm accepts one or more labels from the selected field and pools records
+whose value matches any supplied label; the report joins those labels with `+`. The dataset is the
+round's tagged pull: every record carries `config_era`,
 written by the round's tagging pass off `bot_comment_created_at` against the merge-date era map,
 and the treated and comparison eras are whatever values that field holds. The pass writes only
 the coarse eras there; sub-eras go to their own fields (`triple_subera` holds
@@ -587,6 +589,14 @@ has resolved yet, is a clean non-zero exit rather than a bootstrap over an empty
 message names the arm and lists the values the field does hold, so a mistyped era name is
 diagnosed on the spot, and the same condition raises `EmptyArmError` in the library. Every number
 is spot peer through `platform_scores.spot_peer_score`. The report prints four blocks:
+
+The fall secondary read pools the full summer three-model era with the `triple_subera` field:
+
+```bash
+uv run python -m metaculus_bot.performance_analysis.era_gap --dataset <round>/perf_all_tagged.json \
+    --era-field triple_subera --treated-era triple_fall_config \
+    --comparison-era triple_pre_market triple_ranked_market triple_time_budget --strict
+```
 
 - **Arms.** n, effective n (distinct UTC resolution days), exclusions, unscoreable records
   (no spot peer, submit time or resolve time), spot mean and median, fraction negative, lag

@@ -462,6 +462,90 @@ class TestCli:
         with pytest.raises(SystemExit, match="no scoreable records"):
             main(["--dataset", path, "--treated-era", "triple_ranked_market", "--comparison-era", "triple_pre_market"])
 
+    def test_multiple_comparison_labels_pool_like_a_manually_relabelled_run(self, tmp_path, capsys):
+        records = [_record(i, spot=10.0 + i, lag_days=2 + i, era="treated_a") for i in range(3)]
+        records += [_record(i, spot=10.0 + i, lag_days=2 + i, era="treated_b") for i in range(3, 6)]
+        records += [_record(100 + i, spot=4.0 + i, lag_days=3 + i, era="pre") for i in range(5)]
+        records += [_record(200 + i, spot=8.0 + i, lag_days=4 + i, era="ranked") for i in range(4)]
+        records += [_record(300 + i, spot=2.0 + i, lag_days=5 + i, era="time") for i in range(3)]
+        pooled_path = self._write(tmp_path, records)
+        pooled_json = tmp_path / "pooled.json"
+        main(
+            [
+                "--dataset",
+                pooled_path,
+                "--treated-era",
+                "treated_a",
+                "treated_b",
+                "--comparison-era",
+                "pre",
+                "ranked",
+                "time",
+                "--output-json",
+                str(pooled_json),
+            ]
+        )
+        pooled_text = capsys.readouterr().out
+
+        comparison_labels = {"pre", "ranked", "time"}
+        treated_labels = {"treated_a", "treated_b"}
+        relabelled = [
+            dict(record, config_era="comparison")
+            if record[ERA_FIELD] in comparison_labels
+            else dict(record, config_era="treated")
+            if record[ERA_FIELD] in treated_labels
+            else record
+            for record in records
+        ]
+        relabelled_path = self._write(tmp_path, relabelled)
+        relabelled_json = tmp_path / "relabelled.json"
+        main(
+            [
+                "--dataset",
+                relabelled_path,
+                "--treated-era",
+                "treated",
+                "--comparison-era",
+                "comparison",
+                "--output-json",
+                str(relabelled_json),
+            ]
+        )
+        relabelled_text = capsys.readouterr().out
+        pooled_report_text = pooled_json.read_text().replace("pre+ranked+time", "comparison")
+        pooled_report_text = pooled_report_text.replace("treated_a+treated_b", "treated")
+        pooled_report = json.loads(pooled_report_text)
+        relabelled_report = json.loads(relabelled_json.read_text())
+        assert pooled_report == relabelled_report
+        normalized_text = pooled_text.replace("pre+ranked+time", "comparison")
+        normalized_text = normalized_text.replace("treated_a+treated_b", "treated")
+        assert normalized_text == relabelled_text
+        assert "# Era gap: treated_a+treated_b vs pre+ranked+time" in pooled_text
+
+    def test_single_label_cli_report_text_is_unchanged(self, tmp_path, capsys):
+        path = self._write(tmp_path, self._records())
+        main(["--dataset", path, "--treated-era", "triple_era", "--comparison-era", "post_flip"])
+        text = capsys.readouterr().out
+        assert "# Era gap: triple_era vs post_flip" in text
+        assert "| post_flip | 9 |" in text
+
+    def test_empty_multi_label_arm_message_names_joined_labels(self, tmp_path, capsys):
+        path = self._write(tmp_path, self._records())
+        with pytest.raises(SystemExit) as exc_info:
+            main(
+                [
+                    "--dataset",
+                    path,
+                    "--treated-era",
+                    "triple_era",
+                    "--comparison-era",
+                    "missing_one",
+                    "missing_two",
+                ]
+            )
+        assert "era arm 'missing_one+missing_two' has no scoreable records" in str(exc_info.value)
+        assert capsys.readouterr().out == ""
+
     def test_fall_read_before_its_first_resolution_exits_cleanly(self, tmp_path, capsys):
         """The preregistered fall invocation, run while every `fall_config` question is still open: the
         treated arm selects nothing, and the module must say so rather than bootstrap an empty array."""
