@@ -1026,6 +1026,28 @@ The research section header is `## Prediction Market Snapshot`, and the prompts
 import it from `prompts.py` as `MARKET_SNAPSHOT_SECTION_HEADER` to decide whether to
 render their market-reading rules at all.
 
+#### Market metadata
+
+The `metadata` cell gives the facts a forecaster needs to judge how far to trust a price, as labelled
+tokens with unavailable ones omitted (a lone `-` means none): `v24` 24-hour volume, `liq` liquidity
+(Polymarket only), `bt` Manifold bettors, `trd` time since the last trade, `upd` time since the last
+update (shown only when no trade time exists, because an update is not necessarily a trade), and `1d` /
+`1w` price changes in percentage points, or `prev` on Kalshi. Volumes are approximately USD; Kalshi's
+24-hour and lifetime contract counts are converted with the quote midpoint or last trade. Kalshi's
+`prev` compares the last trade with `previous_price_dollars`, whose window its API documentation does
+not specify, so it is not labelled a day change; Polymarket's day change is documented as 24 hours and
+its week change and Manifold's day/week windows are not documented. Manifold's `totalLiquidity` is past
+subsidy rather than current depth and is not shown. PredictIt supplies no volume, and its contract bid
+and ask render as the quoted range beside the last price. The legend tells forecasters that a stale
+last trade or a wide bid-ask range makes a price less reliable and that a large recent move often
+means news. Ages are measured against the snapshot's forecast time.
+
+Labelled tokens cost characters, so the worst-case render test (`test_market_metadata.py`) fills each
+venue's real field set at maximal values rather than every field at once, which no venue produces, and
+still has to fit `MARKET_SNAPSHOT_MAXED_RENDER_CHAR_BUDGET`. Replaying 419 archived snapshots, the
+column dropped no market or outcome row and raised the largest snapshot from 8,450 to about 9,400
+characters. The budget guards the published comment's research section, not the forecasters' prompt.
+
 #### Liquidity tiers
 
 `liquidity_label_from_fields` (`market_retrieval/types.py`) labels every row and sub-row. On the

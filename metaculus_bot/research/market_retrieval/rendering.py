@@ -63,6 +63,7 @@ changes how a row is chosen, not what a forecaster is told to verify.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -222,6 +223,7 @@ TABLE_COLUMNS: tuple[str, ...] = (
     "total_vol",
     "OI",
     "signal",
+    "metadata",
     "close",
     "status",
     "relation",
@@ -245,31 +247,31 @@ TITLE_MAX_CHARS = 80
 # than a measurement of thinness, and a forecaster that collapses it into "thin" discounts a
 # market for the wrong reason.
 MARKET_SIGNAL_LEGEND = (
-    "The `signal` column labels each market's liquidity/participation: on real-money venues by the larger of "
-    f"`total_vol` and `OI`, thin under ${LIQUIDITY_DECENT_USD:,.0f}, decent to ${LIQUIDITY_STRONG_USD:,.0f}, strong "
-    f"to ${LIQUIDITY_DEEP_USD:,.0f}, deep above; on Manifold by play-money bettor count, thin/decent/high. "
-    "`total_vol` and `OI` are traded volume and open interest in approximate USD on the real-money venues, and "
-    "play-money mana on Manifold. "
-    "`no-liquidity-data` means PredictIt publishes no volume; treat liquidity as unknown, not thin. "
-    "Rows are ordered by EVIDENTIAL VALUE, best first, and `relation` grades how each bears on THIS question — "
-    "`same_quantity_same_date`, then `same_quantity_other_cut`, then `driver_or_consequence`, then `weak` "
-    "(`unspecified` if ungraded); only the first two measure the quantity asked about, and `why` is the "
-    "one-phrase reason. A `why` cell opening `demoted from same-date:` means our arithmetic withdrew the ranker's "
-    "top grade from that row: treat that price as background evidence, not an anchor. "
-    "`status` is `open` or `RESOLVED`; a RESOLVED price is a realized outcome, not a forecast. "
-    "`close` is the venue's TRADING close, not its settlement date (on Kalshi the two are months apart), so never "
-    "read it as this market's resolution date. `(Nd ago)` means the close date had already passed when this forecast "
-    "was made: treat that price as stale even where `status` still reads open. "
-    "A `↳` row is one OUTCOME of the market above it (strike, bracket, ballot line) with its own price; the parent "
-    "row has none, so anchor on the outcome that matches this question. "
-    "A `↳ [remaining N]` row names every one of that market's remaining outcomes with its own price, so no outcome "
-    "is hidden — a `+N unquoted` / `+N settled` / `+N under X` / `+N off certainty by under X` group is a counted "
-    "set with its summed price, not a silent cut (the last one groups a threshold ladder's near-certain AND "
-    "near-impossible rungs, keeping those nearest its crossing). "
-    "`PRICE [LO-HI]` is a price with the venue's bid-ask range; `LO-HI` alone means a book but no usable price, "
-    "not 50/50. "
-    "A `prob` cell prefixed `value` is a SCALAR market's estimate of the quantity itself, in the market's own units "
-    "on the scale shown beside it — not a probability."
+    "`metadata`: v24 24h volume, liq liquidity, tr/bt traders/bettors, "
+    "trd time since last trade (upd: last update, shown only without a trade time), 1d/1w price change in points, prev Kalshi change vs its previous "
+    "price (window unspecified); k/M = thousands/millions in USD (Kalshi converted) or Manifold tokens; - = none. "
+    "A stale last trade or wide bid-ask range makes a price less reliable; a large recent move often means news. "
+    "`signal` uses the larger of `total_vol` and `OI` on real-money venues: "
+    f"thin under ${LIQUIDITY_DECENT_USD:,.0f}, decent to ${LIQUIDITY_STRONG_USD:,.0f}, strong to "
+    f"${LIQUIDITY_DEEP_USD:,.0f}, deep above. Manifold uses bettors: thin/decent/high. "
+    "`total_vol` and `OI` use approximate USD or Manifold tokens (mana or CASH). "
+    "`no-liquidity-data`: PredictIt publishes no volume; liquidity is unknown, not thin. "
+    "Rows are ordered by EVIDENTIAL VALUE; `relation`: `same_quantity_same_date`, "
+    "`same_quantity_other_cut`, `driver_or_consequence`, `weak`, or `unspecified`. "
+    "Only the first two measure the quantity asked. `why` explains. "
+    "`demoted from same-date:` means our arithmetic withdrew the ranker's top grade; "
+    "treat it as background evidence, not an anchor. "
+    "`RESOLVED` prices are outcomes, not forecasts. "
+    "`close` is the venue's TRADING close, not its settlement date (on Kalshi the two are months apart); "
+    "never read it as this market's resolution date. `(Nd ago)` means close passed before forecast; "
+    "treat that price as stale even where `status` still reads open. "
+    "`↳` is one OUTCOME of the market above it, with its own price; the parent row has none. "
+    "`↳ [remaining N]` lists other outcomes and prices; `+N unquoted`, `+N settled`, `+N under X`, "
+    "and `+N off certainty by under X` group outcomes with summed prices. The last groups "
+    "near-certain and near-impossible rungs near the crossing. "
+    "`PRICE [LO-HI]` is a price with the venue's bid-ask range; `LO-HI` alone means a book "
+    "but no usable price, not 50/50. "
+    "`prob` prefixed `value` is a scalar estimate in the market's units and scale, not a probability."
 )
 
 # Strong-evidence framing — used when at least one rendered row measures the same quantity
@@ -458,6 +460,52 @@ def _why_cell(match: MarketMatch) -> str:
     return f"{note}. {label}" if label else note
 
 
+def _metadata_number(value: float | None, *, signed: bool = False) -> str:
+    if value is None or not math.isfinite(value):
+        return "-"
+    suffix = ""
+    if abs(value) >= 1_000_000:
+        value /= 1_000_000
+        suffix = "M"
+    elif abs(value) >= 1_000:
+        value /= 1_000
+        suffix = "k"
+    return (f"{value:+.3g}" if signed else f"{value:.3g}") + suffix
+
+
+def _metadata_age(timestamp: datetime | None, forecast_time: datetime | None) -> str:
+    if timestamp is None or forecast_time is None:
+        return "-"
+    seconds = (_as_utc(forecast_time) - _as_utc(timestamp)).total_seconds()
+    if seconds < 0:
+        return "-"
+    if seconds < 3600:
+        return f"{int(seconds // 60)}m"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)}h"
+    return f"{int(seconds // 86400)}d"
+
+
+def _metadata_cell(platform: str, row: MarketMatch | MarketChild, forecast_time: datetime | None) -> str:
+    change_label = "prev" if platform == "kalshi" else "1d"
+    change = row.price_change_since_previous if platform == "kalshi" else row.price_change_1d
+    labelled = (
+        ("v24", _metadata_number(row.volume_24h)),
+        ("liq", _metadata_number(row.liquidity)),
+        ("tr", _metadata_number(row.num_traders)),
+        ("bt", _metadata_number(row.num_bettors)),
+        ("trd", _metadata_age(row.last_trade_time, forecast_time)),
+        ("upd", "-" if row.last_trade_time is not None else _metadata_age(row.last_update_time, forecast_time)),
+        (change_label, _metadata_number(change * 100 if change is not None else None, signed=True)),
+        ("1w", _metadata_number(row.price_change_1w * 100 if row.price_change_1w is not None else None, signed=True)),
+    )
+    present = [f"{label} {value}" for label, value in labelled if value != "-"]
+    if not present:
+        return "-"
+    currency = f"{row.currency}: " if platform == "manifold" and row.currency else ""
+    return currency + " ".join(present)
+
+
 def _row_cells(match: MarketMatch, forecast_time: datetime | None) -> dict[str, str]:
     return {
         "platform": match.platform,
@@ -475,6 +523,7 @@ def _row_cells(match: MarketMatch, forecast_time: datetime | None) -> dict[str, 
             quote_low=match.bid,
             quote_high=match.ask,
         ),
+        "metadata": _metadata_cell(match.platform, match, forecast_time),
         "relation": _cell(match.relation_tier) or TIER_UNSPECIFIED,
         "why": _why_cell(match),
     }
@@ -502,6 +551,7 @@ def _child_cells(platform: str, child: MarketChild, forecast_time: datetime | No
             quote_low=child.quote_low,
             quote_high=child.quote_high,
         ),
+        "metadata": _metadata_cell(platform, child, forecast_time),
         "relation": "-",
         "why": "-",
     }
@@ -541,7 +591,7 @@ def _child_allowances(matches: Sequence[MarketMatch]) -> list[int]:
 def _table_row(cells: dict[str, str]) -> str:
     """One markdown row, columns in ``TABLE_COLUMNS`` order. A ``KeyError`` here is the point:
     every row shape — parent, sub-row, marker — must fill every column or the table skews."""
-    return "| " + " | ".join(cells[column] for column in TABLE_COLUMNS) + " |"
+    return "| " + "|".join(cells[column] for column in TABLE_COLUMNS) + " |"
 
 
 def _open_priced(children: Sequence[MarketChild]) -> list[MarketChild]:
@@ -968,7 +1018,7 @@ def render_snapshot_with_stats(
         lines.append("")
     lines.append(_preamble(matches) + MARKET_SIGNAL_LEGEND)
     lines.append("")
-    lines.append("| " + " | ".join(TABLE_COLUMNS) + " |")
+    lines.append("| " + "|".join(TABLE_COLUMNS) + " |")
     lines.append("|" + "---|" * len(TABLE_COLUMNS))
     for index, match in enumerate(matches):
         lines.append(_table_row(_row_cells(match, snapshot.forecast_time)))

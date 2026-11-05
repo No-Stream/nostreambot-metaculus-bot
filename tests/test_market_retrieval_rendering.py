@@ -219,10 +219,10 @@ def _table_rows(text: str) -> list[dict[str, str]]:
     index-based reader would keep passing while asserting on the wrong cell.
     """
     lines = [line for line in text.split("\n") if line.startswith("| ")]
-    header = [cell.strip() for cell in lines[0].strip("| ").split(" | ")]
+    header = [cell.strip() for cell in lines[0].strip("| ").split("|")]
     out: list[dict[str, str]] = []
     for line in lines[1:]:
-        cells = [cell.strip() for cell in line.strip("| ").split(" | ")]
+        cells = [cell.strip() for cell in line.strip("| ").split("|")]
         if set("".join(cells)) <= {"-"}:
             continue  # the |---|---| separator
         out.append(dict(zip(header, cells, strict=False)))
@@ -270,7 +270,7 @@ class TestColumns:
         rendered = render_snapshot(MarketSnapshot(matches=[_row()]))
 
         header = next(line for line in rendered.split("\n") if line.startswith("| platform"))
-        assert header == "| platform | title | prob | total_vol | OI | signal | close | status | relation | why |"
+        assert header == "| platform|title|prob|total_vol|OI|signal|metadata|close|status|relation|why |"
         assert TABLE_COLUMNS == (
             "platform",
             "title",
@@ -278,6 +278,7 @@ class TestColumns:
             "total_vol",
             "OI",
             "signal",
+            "metadata",
             "close",
             "status",
             "relation",
@@ -785,6 +786,9 @@ class TestLegend:
         a claim the expensive forecaster models read on every rendered snapshot."""
         assert "real-money venues" in MARKET_SIGNAL_LEGEND
         assert "mana" in MARKET_SIGNAL_LEGEND
+        assert "v24 24h volume" in MARKET_SIGNAL_LEGEND
+        assert "Kalshi 24h vol is contracts" not in MARKET_SIGNAL_LEGEND
+        assert "USD (Kalshi converted)" in MARKET_SIGNAL_LEGEND
 
     def test_the_legend_explains_the_new_columns_and_not_the_retired_one(self) -> None:
         assert "`relation`" in MARKET_SIGNAL_LEGEND

@@ -112,9 +112,8 @@ class TestKalshiLiquidityFieldNames:
         notional = float(raw["notional_value_dollars"])
         assert match.total_volume == pytest.approx(float(raw["volume_fp"]) * price)
         assert match.open_interest == pytest.approx(float(raw["open_interest_fp"]) * notional)
-        # volume_24h is reported as-is (it is a display column, not a threshold input),
-        # and it is the one field name that was always correct.
-        assert match.volume_24h == pytest.approx(float(raw["volume_24h_fp"]))
+        # The displayed 24-hour turnover uses the same USD conversion as lifetime volume.
+        assert match.volume_24h == pytest.approx(float(raw["volume_24h_fp"]) * price)
 
     def test_deep_market_is_labelled_deep_not_no_data(self, kalshi_live_events):
         """735k contracts at $0.83 is the single deepest market in the live catalogue.

@@ -823,7 +823,7 @@ class TestQuoteRangeCell:
         assert "`PRICE [LO-HI]`" in rendered
         assert "`LO-HI` alone means a book but no usable price, not 50/50" in rendered
         assert "[remaining N]" in rendered
-        assert "counted set with its summed price" in rendered
+        assert "group outcomes with summed prices" in rendered
 
     def test_a_compacted_outcome_keeps_its_price_without_its_book(self) -> None:
         children = tuple(

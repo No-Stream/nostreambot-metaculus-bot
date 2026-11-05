@@ -43,6 +43,17 @@ from metaculus_bot.research.market_retrieval.venues._shared import RULES_TEXT_MA
 
 logger = logging.getLogger(__name__)
 
+
+def _timestamp_ms(value: Any) -> datetime | None:
+    milliseconds = safe_float(value)
+    if milliseconds is None:
+        return None
+    try:
+        return datetime.fromtimestamp(milliseconds / 1000, tz=UTC)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
 MANIFOLD_SEARCH_URL = "https://api.manifold.markets/v0/search-markets"
 MANIFOLD_MARKET_URL = "https://api.manifold.markets/v0/market"
 
@@ -229,8 +240,10 @@ def parse_manifold_matches(payload: Any, *, width: int) -> list[MarketMatch] | N
                 match_confidence=100.0 - rank,
                 raw_rules=manifold_rules_text(market),
                 total_volume=safe_float(market.get("volume")),
-                liquidity=safe_float(market.get("totalLiquidity")),
                 num_bettors=safe_int(market.get("uniqueBettorCount")),
+                currency=str(market.get("token") or ""),
+                last_trade_time=_timestamp_ms(market.get("lastBetTime")),
+                last_update_time=_timestamp_ms(market.get("lastUpdatedTime")),
                 venue_market_id=str(market.get("id") or ""),
                 retrieval_channel="venue_search",
                 scalar_estimate=scalar_estimate,
@@ -402,6 +415,7 @@ def manifold_answer_children(detail: dict[str, Any]) -> tuple[MarketChild, ...]:
         if not text or raw_probability is None:
             continue
         probability = _priced_or_none(raw_probability, volume=volume)
+        changes = answer.get("probChanges") or {}
         children.append(
             MarketChild(
                 title=text[:MANIFOLD_ANSWER_TEXT_MAX_CHARS],
@@ -413,6 +427,9 @@ def manifold_answer_children(detail: dict[str, Any]) -> tuple[MarketChild, ...]:
                 # stays open, so this is per-answer rather than the market's own flag.
                 is_resolved=bool(answer.get("resolution")),
                 price_withheld=probability is None,
+                currency=str(detail.get("token") or ""),
+                price_change_1d=safe_float(changes.get("day")),
+                price_change_1w=safe_float(changes.get("week")),
             )
         )
     return tuple(children)

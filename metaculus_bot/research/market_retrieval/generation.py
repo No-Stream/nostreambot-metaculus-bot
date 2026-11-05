@@ -50,7 +50,7 @@ from datetime import datetime
 from typing import Any
 
 from metaculus_bot.research.market_retrieval import venues
-from metaculus_bot.research.market_retrieval.http import flatten_results
+from metaculus_bot.research.market_retrieval.http import flatten_results, safe_float
 from metaculus_bot.research.market_retrieval.queries import fuzzy_best, fuzzy_best_many
 from metaculus_bot.research.market_retrieval.ranking import RULES_CHARS
 from metaculus_bot.research.market_retrieval.settlement_join import question_domains, settlement_domain_index
@@ -472,6 +472,10 @@ async def enrich_manifold(
         # because the two consumers want different slices of it: `top_answers` is the ranker's
         # one-line segment (three leaders, no volume) and `children` is the render's sub-rows
         # (every answer, with its own volume).
+        if detail.get("outcomeType") == "BINARY":
+            changes = detail.get("probChanges") or {}
+            row.price_change_1d = safe_float(changes.get("day"))
+            row.price_change_1w = safe_float(changes.get("week"))
         row.top_answers = venues.manifold_top_answers(detail)
         row.children = venues.manifold_answer_children(detail)
 

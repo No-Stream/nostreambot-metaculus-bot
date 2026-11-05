@@ -167,6 +167,15 @@ class TestArchiveRoundTrip:
             "quote_low": None,
             "quote_high": None,
             "price_withheld": False,
+            "volume_24h": None,
+            "liquidity": None,
+            "currency": "",
+            "num_traders": None,
+            "last_trade_time": None,
+            "last_update_time": None,
+            "price_change_1d": None,
+            "price_change_since_previous": None,
+            "price_change_1w": None,
         }
         assert encoded["matches"][0]["children"][0]["close_time"].startswith("2026-08-31")
         withheld = encoded["matches"][0]["children"][2]

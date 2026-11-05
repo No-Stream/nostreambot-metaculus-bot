@@ -38,6 +38,7 @@ import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from metaculus_bot.research.market_retrieval.http import http_get_with_backoff, parse_iso, safe_float
@@ -164,6 +165,13 @@ def polymarket_event_children(markets: Sequence[dict[str, Any]]) -> tuple[Market
                 quote_low=bid,
                 quote_high=ask,
                 price_withheld=price is None and raw_price is not None,
+                volume_24h=safe_float(market.get("volume24hr")),
+                liquidity=safe_float(
+                    market.get("liquidityNum") if market.get("liquidityNum") is not None else market.get("liquidity")
+                ),
+                last_update_time=parse_iso(market.get("updatedAt")),
+                price_change_1d=safe_float(market.get("oneDayPriceChange")),
+                price_change_1w=safe_float(market.get("oneWeekPriceChange")),
             )
         )
     return tuple(children)
@@ -187,6 +195,9 @@ class _EventLegs:
     open_interest: float | None = None
     price_withheld: bool = False
     children: tuple[MarketChild, ...] = ()
+    last_update_time: datetime | None = None
+    price_change_1d: float | None = None
+    price_change_1w: float | None = None
 
 
 def _polymarket_single_market_legs(
@@ -222,6 +233,9 @@ def _polymarket_single_market_legs(
         bid=bid,
         ask=ask,
         vol_24h=safe_float(market.get("volume24hr")),
+        last_update_time=parse_iso(market.get("updatedAt")),
+        price_change_1d=safe_float(market.get("oneDayPriceChange")),
+        price_change_1w=safe_float(market.get("oneWeekPriceChange")),
         total_volume=total_volume,
         liquidity=liquidity,
         open_interest=open_interest,
@@ -249,6 +263,7 @@ def _polymarket_event_legs(event: dict[str, Any]) -> _EventLegs:
     if len(markets) > 1:
         return _EventLegs(
             vol_24h=safe_float(event.get("volume24hr")),
+            last_update_time=parse_iso(event.get("updatedAt")),
             total_volume=volume,
             liquidity=safe_float(event.get("liquidity")),
             open_interest=event_open_interest,
@@ -256,7 +271,9 @@ def _polymarket_event_legs(event: dict[str, Any]) -> _EventLegs:
         )
     if markets:
         return _polymarket_single_market_legs(markets[0], event_volume=volume, event_open_interest=event_open_interest)
-    return _EventLegs(total_volume=volume, open_interest=event_open_interest)
+    return _EventLegs(
+        total_volume=volume, open_interest=event_open_interest, last_update_time=parse_iso(event.get("updatedAt"))
+    )
 
 
 def _polymarket_event_match(event: dict[str, Any], rank: int) -> MarketMatch:
@@ -294,6 +311,9 @@ def _polymarket_event_match(event: dict[str, Any], rank: int) -> MarketMatch:
         retrieval_channel="venue_search",
         children=legs.children,
         price_withheld=legs.price_withheld,
+        last_update_time=legs.last_update_time,
+        price_change_1d=legs.price_change_1d,
+        price_change_1w=legs.price_change_1w,
     )
 
 
@@ -330,6 +350,9 @@ def _polymarket_market_match(market: dict[str, Any], rank: int) -> MarketMatch:
         venue_market_id=slug,
         retrieval_channel="venue_search",
         price_withheld=implied is None and raw_price is not None,
+        last_update_time=parse_iso(market.get("updatedAt")),
+        price_change_1d=safe_float(market.get("oneDayPriceChange")),
+        price_change_1w=safe_float(market.get("oneWeekPriceChange")),
     )
 
 
