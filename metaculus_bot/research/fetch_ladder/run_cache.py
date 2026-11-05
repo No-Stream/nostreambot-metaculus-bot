@@ -128,7 +128,7 @@ class HtmlRead:
     image_leads: tuple[ImageLead, ...] = ()
 
     def _prepare(self, policy: LadderPolicy, *, route: FetchRoute) -> tuple[HtmlVerdict, bool] | FetchResult | None:
-        if policy.verdict.body_route(self.content_type or "", self.routing_body) != "html":
+        if policy.verdict.body_route(self.content_type or "", self.routing_body, self.url) != "html":
             return None
         candidate = _html_body_text(self.extraction, self.chart_block)
         phrase = matched_throttle_phrase(candidate)
@@ -315,7 +315,7 @@ class TextRead:
 
     def present(self, policy: LadderPolicy, *, query: str, route: FetchRoute, now: datetime) -> FetchResult | None:
         del query, now
-        if policy.verdict.body_route(self.content_type or "", self.routing_body) != "text":
+        if policy.verdict.body_route(self.content_type or "", self.routing_body, self.url) != "text":
             return None
         phrase = matched_throttle_phrase(self.text)
         if phrase is not None:
@@ -355,7 +355,7 @@ class PdfRead:
 
     def present(self, policy: LadderPolicy, *, query: str, route: FetchRoute, now: datetime) -> FetchResult | None:
         del now
-        if policy.verdict.body_route(self.content_type or "", b"%PDF-") != "document":
+        if policy.verdict.body_route(self.content_type or "", b"%PDF-", self.url) != "document":
             return None
         pdf = document_cache.cached_document(self.url)
         if pdf is None:

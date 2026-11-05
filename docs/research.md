@@ -1097,6 +1097,9 @@ call, six questions citing one host each held their own semaphore and hit it six
 at once). Content is extracted with trafilatura (HTML), or read raw (JSON / text /
 CSV). A PDF is read locally with pypdf and rendered as a passage digest (below);
 anything else is left unread as `unsupported_type`.
+When a server labels a `.csv` or `.tsv` response `application/octet-stream` or
+`binary/octet-stream`, the final URL suffix routes it through the existing raw-text parser.
+Other octet-stream responses keep their existing content-type classification.
 
 **Which extraction publishes** is a policy, not a flag (`_extract_page_text`,
 calibrated 2026-09-03 on 118 re-fetched bodies with five extractor variants run on identical

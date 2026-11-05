@@ -829,7 +829,7 @@ async def _classify_body(
     the meta-refresh hop belongs to :func:`_classify_body_or_hop`, whose caller owns a redirect
     loop to follow it with.
     """
-    route = ctx.policy.verdict.body_route(content_type, body)
+    route = ctx.policy.verdict.body_route(content_type, body, current_url)
     if route == "html":
         classified = await _classify_html_body(
             body,
@@ -915,7 +915,7 @@ async def _classify_body_or_hop(
     refresh chain is bounded by the same ``MAX_REDIRECTS`` cap with the same per-hop SSRF
     re-guard. A rung with no redirect loop of its own calls :func:`_classify_body` instead.
     """
-    if ctx.policy.verdict.body_route(content_type, body) != "html":
+    if ctx.policy.verdict.body_route(content_type, body, current_url) != "html":
         return await _classify_body(body, current_url, content_type, ctx, http_status=http_status)
     classified = await _classify_html_body(
         body,

@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Literal, Protocol
+from urllib.parse import urlparse
 
 from metaculus_bot.constants import (
     DOCUMENT_DIGEST_TOP_K,
@@ -63,6 +64,14 @@ def _is_strict_json_octet_stream(content_type: str, body: bytes) -> bool:
     except (UnicodeDecodeError, json.JSONDecodeError):
         return False
     return True
+
+
+def _is_octet_delimited_file(content_type: str, source_url: str | None) -> bool:
+    return (
+        content_type.partition(";")[0].strip().lower() in {"application/octet-stream", "binary/octet-stream"}
+        and source_url is not None
+        and urlparse(source_url).path.lower().endswith((".csv", ".tsv"))
+    )
 
 
 def looks_like_js_wall(text: str) -> bool:
@@ -179,7 +188,7 @@ class LadderVerdict(Protocol):
         """The branch this content type earns without reading the body, or None to read it."""
         ...
 
-    def body_route(self, content_type: str, body: bytes) -> BodyRoute:
+    def body_route(self, content_type: str, body: bytes, source_url: str | None = None) -> BodyRoute:
         """Which branch a body this caller has read takes."""
         ...
 
@@ -201,7 +210,7 @@ class ResolutionSourceVerdict:
         del content_type
         return None
 
-    def body_route(self, content_type: str, body: bytes) -> BodyRoute:
+    def body_route(self, content_type: str, body: bytes, source_url: str | None = None) -> BodyRoute:
         if is_local_source(body, content_type):
             return "source"
         if _is_svg(content_type, body):
@@ -210,6 +219,8 @@ class ResolutionSourceVerdict:
             return "image"
         if _is_image_content_type(content_type):
             return "invalid_image"
+        if _is_octet_delimited_file(content_type, source_url):
+            return "text"
         if _is_strict_json_octet_stream(content_type, body):
             return "text"
         if any(ct in content_type for ct in _HTML_CONTENT_TYPES):
@@ -253,7 +264,7 @@ class GapFillVerdict:
         del content_type
         return None
 
-    def body_route(self, content_type: str, body: bytes) -> BodyRoute:
+    def body_route(self, content_type: str, body: bytes, source_url: str | None = None) -> BodyRoute:
         if _is_pdf_content_type(content_type) or body.lstrip().startswith(b"%PDF-"):
             return "document"
         if is_local_source(body, content_type):
@@ -264,6 +275,8 @@ class GapFillVerdict:
             return "image"
         if _is_image_content_type(content_type):
             return "invalid_image"
+        if _is_octet_delimited_file(content_type, source_url):
+            return "text"
         if any(ct in content_type for ct in _HTML_CONTENT_TYPES) or b"<html" in body.lower():
             return "html"
         if (

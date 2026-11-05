@@ -73,7 +73,7 @@ async def test_cache_hit_reapplies_the_current_verdict_and_presentation(
         def unread_route(self, _content_type: str) -> None:
             return None
 
-        def body_route(self, _content_type: str, _body: bytes) -> str:
+        def body_route(self, _content_type: str, _body: bytes, _source_url: str | None = None) -> str:
             return "html"
 
         def html(self, extraction: PageExtraction, *, chart_block: str, unreadable_embeds: list[str]) -> HtmlVerdict:
@@ -170,7 +170,7 @@ async def test_cached_pdf_reuses_parse_and_applies_new_query_off_event_loop(
             del content_type
             return None
 
-        def body_route(self, content_type: str, body: bytes) -> BodyRoute:
+        def body_route(self, content_type: str, body: bytes, _source_url: str | None = None) -> BodyRoute:
             del content_type, body
             return "document"
 

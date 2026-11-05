@@ -395,6 +395,72 @@ async def test_octet_stream_routes_to_text_only_for_strict_utf8_json_and_replays
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("url", "body", "content_type"),
+    [
+        ("https://example.com/results.csv", b"date,value\n2026-11-01,947\n", "application/octet-stream"),
+        ("https://example.com/results.tsv", b"date\tvalue\n2026-11-01\t947\n", "binary/octet-stream"),
+    ],
+)
+@pytest.mark.parametrize("policy", [GAP_FILL_FETCH_POLICY, RESOLUTION_SOURCE_POLICY])
+async def test_octet_stream_csv_and_tsv_are_classified_by_final_url_suffix(
+    url: str, body: bytes, content_type: str, policy: LadderPolicy
+) -> None:
+    session = FakeSession({url: FakeResponse(200, body=body, content_type=content_type)})
+
+    result = await fetch_url(
+        url,
+        policy=replace(policy, rungs_enabled=frozenset()),
+        ctx=LadderContext(session=session, host_sems={}),
+    )
+
+    assert result.status == "success"
+    assert result.text == body.decode()
+    assert result.content_type == content_type
+
+
+@pytest.mark.asyncio
+async def test_octet_stream_csv_redirect_uses_the_final_url_suffix_and_cache() -> None:
+    start_url = "https://example.com/results.bin"
+    final_url = "https://cdn.example.com/results.csv"
+    body = b"date,value\n2026-11-01,947\n"
+    session = FakeSession(
+        {
+            start_url: FakeResponse(302, headers={"Location": final_url}),
+            final_url: FakeResponse(200, body=body, content_type="application/octet-stream"),
+        }
+    )
+    policy = replace(RESOLUTION_SOURCE_POLICY, rungs_enabled=frozenset())
+
+    first = await fetch_url(start_url, policy=policy, ctx=LadderContext(session=session, host_sems={}))
+    cached = await fetch_url(start_url, policy=policy, ctx=LadderContext(session=session, host_sems={}))
+
+    assert first.status == "success"
+    assert first.url == final_url
+    assert cached.status == "success"
+    assert cached.text == body.decode()
+    assert cached.cache_hit is True
+    assert session.requested == [start_url, final_url]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("policy", [GAP_FILL_FETCH_POLICY, RESOLUTION_SOURCE_POLICY])
+async def test_octet_stream_without_csv_or_tsv_suffix_remains_unsupported(policy: LadderPolicy) -> None:
+    url = "https://example.com/results.bin"
+    session = FakeSession(
+        {url: FakeResponse(200, body=b"date,value\n2026-11-01,947\n", content_type="application/octet-stream")}
+    )
+
+    result = await fetch_url(
+        url,
+        policy=replace(policy, rungs_enabled=frozenset()),
+        ctx=LadderContext(session=session, host_sems={}),
+    )
+
+    assert result.status == "unsupported_type"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("content_type", ["text/tab-separated-values", "text/tsv"])
 async def test_standard_tsv_mime_is_text_without_html_stripping(content_type: str) -> None:
     body = b"label\tvalue\n<hospitalizations>\t947\n"
