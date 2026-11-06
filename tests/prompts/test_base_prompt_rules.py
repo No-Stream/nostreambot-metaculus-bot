@@ -432,7 +432,7 @@ class TestSoftClockAndHistoryDischargedRules:
     names a reason the historical cadence has been discharged and keeps it as the center anyway:
     12.1% of rationales, about 7 spot per flagged record (95% CI 2.7 to 12.2), the pattern failed
     in 13 of 13 live-triple fires; coder agreement 0.59 and partly hindsight-contaminated, so
-    upper bounds. Shipped on the plan's recommendation with the operator's final say pending.
+    upper bounds. Shipped on the plan's recommendation; operator-approved 2026-11-05.
 
     Both ship to binary and MC only and sit in Phase 1 beside the reference-class bullets."""
 

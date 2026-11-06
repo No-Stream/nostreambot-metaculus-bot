@@ -515,7 +515,7 @@ _SOFT_CLOCK_RULE = """
                  the time.)"""
 
 
-# Binary + MC, operator's final say pending; same pre-indent contract. Receipt: docs/prompts.md "_HISTORY_DISCHARGED_RULE".
+# Binary + MC, operator-approved 2026-11-05; same pre-indent contract. Receipt: docs/prompts.md "_HISTORY_DISCHARGED_RULE".
 _HISTORY_DISCHARGED_RULE = """
                • If your own analysis names a reason the historical cadence has been discharged (its driver was
                  met, the deadline passed, the rule changed), that cadence is a bound on your estimate, not its
