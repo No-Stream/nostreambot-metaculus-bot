@@ -205,7 +205,9 @@ class TestKalshi:
 
         result = await backends.market_snapshot(venue="polymarket", market="anything", session=object())
 
-        assert result.content_markdown.count("| polymarket |") == backends.MARKET_SNAPSHOT_ROWS
+        assert sum(line.startswith("| polymarket|") for line in result.content_markdown.splitlines()) == (
+            backends.MARKET_SNAPSHOT_ROWS
+        )
 
 
 class TestPredictIt:

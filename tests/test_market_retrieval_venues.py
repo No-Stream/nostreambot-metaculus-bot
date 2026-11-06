@@ -453,6 +453,30 @@ class TestKalshiEventProjection:
 class TestKalshiEventDerivations:
     """The four event-level derivations, none of which may read ``nested[0]``."""
 
+    def test_24_hour_contract_counts_convert_to_usd_like_lifetime_volume(self) -> None:
+        market = {
+            "ticker": "EXAMPLE-YES",
+            "yes_sub_title": "Yes",
+            "yes_bid_dollars": "0.40",
+            "yes_ask_dollars": "0.50",
+            "last_price_dollars": "0.30",
+            "notional_value_dollars": "1.00",
+            "volume_fp": "1000",
+            "volume_24h_fp": "200",
+            "open_interest_fp": "500",
+            "status": "active",
+        }
+        event = {"event_ticker": "EXAMPLE", "title": "Example", "markets": [market]}
+
+        match = venues.kalshi_event_match(event, match_confidence=1.0, channel="venue_search")
+        children = venues.kalshi_strike_children([market, {**market, "ticker": "EXAMPLE-NO"}])
+
+        assert match is not None
+        assert match.total_volume == pytest.approx(450.0)
+        assert match.volume_24h == pytest.approx(90.0)
+        assert children[0].total_volume == pytest.approx(450.0)
+        assert children[0].volume_24h == pytest.approx(90.0)
+
     def test_close_time_is_the_max_over_nested_markets(self, multi_close_page: dict[str, Any]) -> None:
         event = _event(multi_close_page, "KXMARRIAGESTYLESKRAVITZ-HSZK")
         nested_closes = [market["close_time"] for market in event["markets"]]
@@ -2329,6 +2353,44 @@ class TestPredictIt:
 
         assert match is not None
         assert _rendered_child_prices(MarketSnapshot(matches=[match])) == ["0.21", "0.09 [0.08-0.09]"]
+
+    @pytest.mark.parametrize(
+        ("bid", "ask"),
+        [(None, None), (0.20, 0.21), (0.20, 0.80)],
+        ids=["no-book", "narrow-book", "wide-book"],
+    )
+    def test_predictit_quotes_and_missing_metadata_never_claim_strong_liquidity(
+        self, captured_payloads: dict[str, Any], bid: float | None, ask: float | None
+    ) -> None:
+        """PredictIt publishes prices and quotes but no volume, OI, or participation metadata.
+
+        A quote range is useful uncertainty context; it is not evidence of trading depth. Missing
+        venue metadata must therefore stay explicitly unknown across absent, narrow, and wide books.
+        """
+        market = copy.deepcopy(captured_payloads["predictit_all"]["markets"][0])
+        contract = market["contracts"][0]
+        contract["bestSellYesCost"] = bid
+        contract["bestBuyYesCost"] = ask
+        match = venues.predictit_market_match(market, match_confidence=1.0, channel="universe_fuzzy")
+
+        assert match is not None
+        assert match.total_volume is None
+        assert match.open_interest is None
+        assert match.volume_24h is None
+        assert match.num_bettors is None
+        child = match.children[0]
+        assert child.total_volume is None
+        assert child.open_interest is None
+        assert child.volume_24h is None
+        assert child.num_bettors is None
+
+        rows = _table_rows(render_snapshot(MarketSnapshot(matches=[match])))
+        parent_row = next(row for row in rows if row["platform"] == "predictit")
+        child_row = next(row for row in rows if row["platform"] == CHILD_ROW_MARKER)
+        assert parent_row["signal"] == "no-liquidity-data"
+        assert child_row["signal"] == "no-liquidity-data"
+        assert parent_row["signal"] not in {"strong", "deep"}
+        assert child_row["signal"] not in {"strong", "deep"}
 
     def test_the_contract_children_keep_ballot_order(self, captured_payloads: dict[str, Any]) -> None:
         """Unsorted, unlike the real-money venues: PredictIt's dump carries no per-contract volume to

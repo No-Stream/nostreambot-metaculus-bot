@@ -22,6 +22,8 @@ REFERENCE_COPY_OF_*
 # Scratch, plans, audits, handoffs -- local research state, never committed.
 # `scratch*/` covers both scratch/ and scratch_docs_and_planning/ in one rule.
 scratch*/
+# Backlog.md task queue: internal notes, kept out of the public repo like scratch*/.
+.backlog/
 # The `scratch` symlink itself, which `scratch*/` cannot match (see the /backtests note above).
 /scratch
 notes/

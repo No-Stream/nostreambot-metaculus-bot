@@ -87,10 +87,12 @@ KALSHI_MARKET_FIELDS: tuple[str, ...] = (
     "yes_bid_dollars",
     "yes_ask_dollars",
     "last_price_dollars",
+    "previous_price_dollars",
     "notional_value_dollars",
     "volume_fp",
     "open_interest_fp",
     "volume_24h_fp",
+    "updated_time",
     "status",
     # The per-strike LABEL, kept only since 2026-08-05, when a multi-strike family started
     # rendering one sub-row per strike and each row needed a title of its own. `yes_sub_title` is
@@ -108,8 +110,8 @@ KALSHI_MARKET_FIELDS: tuple[str, ...] = (
 # new field joins the tail by default. Every field but the rules text IS read across nested markets:
 # `close_time` by the max-over-nested derivation, `status` by the all-resolved one and by
 # `kalshi_tradeable_strikes`, and the money fields by the per-strike conversion the liquidity sum runs
-# over the family (`volume_24h_fp` included — it rides with whichever strike the price legs quote,
-# often not the first). `rules_primary` earns head-only status twice over: every strike shares one
+# over the family. Recent volume, update time and trade price change are needed for each child.
+# `rules_primary` earns head-only status twice over: every strike shares one
 # settlement rule, so tail copies say nothing new, and it is by far the largest field.
 #
 # The tail was `("close_time", "status")` until 2026-08-05, when the liquidity legs moved off
@@ -481,6 +483,21 @@ async def kalshi_prefetch_events(
     return CataloguePull(events=all_events, token=token, tally=_FetchTally(pages_ok, pages_failed), complete=complete)
 
 
+def _kalshi_contract_count_usd(market: dict[str, Any], count_field: str) -> float | None:
+    """Convert one Kalshi contract count to USD using the quote midpoint or last trade."""
+    contract_count = safe_float(market.get(count_field))
+    if contract_count is None:
+        return None
+
+    # Kalshi prices every market in dollars-per-contract. Prefer the live bid/ask midpoint
+    # and fall back to the last trade, matching lifetime-volume conversion.
+    bid, ask = safe_float(market.get("yes_bid_dollars")), safe_float(market.get("yes_ask_dollars"))
+    price = (bid + ask) / 2.0 if (bid is not None and ask is not None) else None
+    if not price:
+        price = safe_float(market.get("last_price_dollars"))
+    return None if price is None else contract_count * price
+
+
 def kalshi_usd_liquidity(market: dict[str, Any]) -> tuple[float | None, float | None]:
     """Convert a Kalshi market's contract counts to the USD the thresholds expect.
 
@@ -494,13 +511,15 @@ def kalshi_usd_liquidity(market: dict[str, Any]) -> tuple[float | None, float | 
     Field names and units are from the Kalshi OpenAPI spec (docs.kalshi.com, re-read 2026-08-03).
     Two details drive the arithmetic:
 
-    - ``volume_fp`` and ``open_interest_fp`` are ``FixedPointCount`` — "market volume in contracts"
-      and "number of contracts bought ... disconsidering netting". They are COUNTS, not dollars. The
-      bare names ``volume`` / ``open_interest`` appear nowhere in the spec and were absent from every
-      archived payload, which is why reading them blanked the label on 100% of Kalshi rows.
-    - The two counts convert with DIFFERENT multipliers, because they measure different things.
-      Volume is turnover, so it scales by trade price. Open interest is collateral: both sides of a
-      contract together post the full settlement value, so it scales by ``notional_value_dollars``.
+    - ``volume_fp``, ``volume_24h_fp`` and ``open_interest_fp`` are ``FixedPointCount`` — contract
+      counts, not dollars. The bare names ``volume`` / ``open_interest`` appear nowhere in the spec
+      and were absent from every archived payload, which is why reading them blanked the label on
+      100% of Kalshi rows. Both lifetime and 24-hour volume convert with the same quote-midpoint or
+      last-trade price.
+    - Volume and open-interest counts use DIFFERENT multipliers because they measure different things.
+      Volume is turnover, so it scales by the quote midpoint or last trade. Open interest is collateral:
+      both sides of a contract together post the full settlement value, so it scales by
+      ``notional_value_dollars``.
       Using trade price for both would call a market holding 119k contracts of open interest at
       $0.001 "thin" when ~$119k of capital is locked in it.
 
@@ -535,16 +554,9 @@ def kalshi_usd_liquidity(market: dict[str, Any]) -> tuple[float | None, float | 
     if volume is None and open_interest is None:
         return None, None
 
-    # Kalshi prices every market in dollars-per-contract. Prefer the live bid/ask midpoint
-    # (what the row already reports as its implied probability) and fall back to the last
-    # trade, so a market with quotes but no trades still converts.
-    bid, ask = safe_float(market.get("yes_bid_dollars")), safe_float(market.get("yes_ask_dollars"))
-    price = (bid + ask) / 2.0 if (bid is not None and ask is not None) else None
-    if not price:
-        price = safe_float(market.get("last_price_dollars"))
     notional = safe_float(market.get("notional_value_dollars")) or 1.0
 
-    volume_usd = None if (volume is None or price is None) else volume * price
+    volume_usd = _kalshi_contract_count_usd(market, "volume_fp")
     open_interest_usd = None if open_interest is None else open_interest * notional
     return volume_usd, open_interest_usd
 
@@ -621,6 +633,14 @@ def kalshi_strike_price(market: dict[str, Any]) -> float | None:
     return None if ask - bid >= NO_PRICE_SPREAD else (bid + ask) / 2.0
 
 
+def _kalshi_price_change_since_previous(market: dict[str, Any]) -> float | None:
+    last_price = safe_float(market.get("last_price_dollars"))
+    previous_price = safe_float(market.get("previous_price_dollars"))
+    if last_price is None or previous_price is None:
+        return None
+    return last_price - previous_price
+
+
 def kalshi_strike_children(nested: Sequence[dict[str, Any]]) -> tuple[MarketChild, ...]:
     """Each tradeable strike as its own sub-row, in ``kalshi_tradeable_strikes`` order. ``()`` for a
     one-strike family.
@@ -673,6 +693,9 @@ def kalshi_strike_children(nested: Sequence[dict[str, Any]]) -> tuple[MarketChil
                 # A two-sided book we declined to midpoint, as opposed to a strike the venue quotes
                 # nothing for. Only the first is this repo's refusal, and only it is worth counting.
                 price_withheld=price is None and bid is not None and ask is not None,
+                volume_24h=_kalshi_contract_count_usd(market, "volume_24h_fp"),
+                last_update_time=parse_iso(market.get("updated_time")),
+                price_change_since_previous=_kalshi_price_change_since_previous(market),
             )
         )
     return tuple(children)
@@ -720,9 +743,9 @@ def kalshi_event_match(event: dict[str, Any], *, match_confidence: float, channe
     EVERY field here is derived across the whole strike family, because the row's title is the
     EVENT's: ``close_time`` is the max, ``is_resolved`` the all-resolved conjunction, the liquidity
     legs the per-strike USD sum, and the price legs one tradeable strike's or nothing
-    (``kalshi_event_usd_liquidity`` and ``kalshi_price_strike`` carry the reasoning). ``volume_24h``
-    rides with the price legs rather than the sum: it is a display column saying how much traded
-    lately, so it belongs to the quoted strike and is ``None`` on the families that quote none.
+    (``kalshi_event_usd_liquidity`` and ``kalshi_price_strike`` carry the reasoning). Recent
+    volume, update time and price movement are shown on the parent only for a single-strike event;
+    a multi-strike family cannot inherit one strike's metadata.
 
     A family that quotes none carries ``children`` instead, one sub-row per strike, so the prices the
     family level cannot state are stated where they are true rather than dropped.
@@ -745,6 +768,7 @@ def kalshi_event_match(event: dict[str, Any], *, match_confidence: float, channe
     )
 
     priced = kalshi_price_strike(nested) or {}
+    metadata_strike = priced if len(nested) == 1 else {}
     yes_bid = safe_float(priced.get("yes_bid_dollars"))
     yes_ask = safe_float(priced.get("yes_ask_dollars"))
     implied = kalshi_strike_price(priced)
@@ -760,7 +784,7 @@ def kalshi_event_match(event: dict[str, Any], *, match_confidence: float, channe
         bid=yes_bid,
         ask=yes_ask,
         spread=spread,
-        volume_24h=safe_float(priced.get("volume_24h_fp")),
+        volume_24h=_kalshi_contract_count_usd(metadata_strike, "volume_24h_fp"),
         close_time=max(closes) if closes else None,
         is_resolved=is_resolved,
         match_confidence=match_confidence,
@@ -773,4 +797,6 @@ def kalshi_event_match(event: dict[str, Any], *, match_confidence: float, channe
         settlement_sources=settlement_sources(event.get("settlement_sources")),
         children=kalshi_strike_children(nested),
         price_withheld=implied is None and yes_bid is not None and yes_ask is not None,
+        last_update_time=parse_iso(metadata_strike.get("updated_time")),
+        price_change_since_previous=_kalshi_price_change_since_previous(metadata_strike),
     )

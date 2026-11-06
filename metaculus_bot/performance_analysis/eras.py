@@ -40,6 +40,15 @@ FALL_CONFIG_MERGED_AT = datetime(2026, 9, 5, 1, 59, 24, tzinfo=UTC)
 IMPERSONATE_RUNG_MERGED_AT = datetime(2026, 9, 5, 15, 31, 40, tzinfo=UTC)
 # 660fd35, PR #68: the fall tournament target, pooled into the fall_config bucket.
 FALL_TARGET_MERGED_AT = datetime(2026, 9, 7, 5, 52, 20, tzinfo=UTC)
+# Fall roster and research-role merges: labelled as fine sub-eras, pooled into triple_fall_config for reads.
+# 021e059: gpt-5.6-sol -> gpt-6-sol (xhigh), claude-opus-4.8 -> claude-opus-5.5 (first real xhigh).
+FALL_GPT6_OPUS55_MERGED_AT = datetime(2026, 9, 24, 20, 50, 53, tzinfo=UTC)
+# 6489289, PR #73: gpt-6-sol -> gpt-6.1-sol in every Sol role.
+FALL_GPT61_SOL_MERGED_AT = datetime(2026, 9, 29, 21, 36, 57, tzinfo=UTC)
+# 28e82b6, PR #77: gemini-3.1-pro-preview -> gemini-4-argon, plus delivered-evidence research publication.
+FALL_GEMINI4_ARGON_MERGED_AT = datetime(2026, 10, 14, 15, 14, 9, tzinfo=UTC)
+# 2c45ed7, PR #79: gap resolver, gap-fill driver and AskNews summarizer -> gpt-6.1-terra; AskNews-only primary.
+FALL_TERRA_RESEARCH_MERGED_AT = datetime(2026, 10, 28, 20, 3, 31, tzinfo=UTC)
 
 # 9f1175c (grid-scaled max-step for discrete CDF resampling) rode b4e9df0: one instant, two gates.
 GRID_SCALED_MAX_STEP_MERGED_AT = B4E9DF0_MERGED_AT
@@ -56,6 +65,10 @@ BOUNDARIES_UTC: dict[str, str] = {
     "fall_config_8d5a082": FALL_CONFIG_MERGED_AT.isoformat(),
     "impersonate_rung_a9cbe03_inside_fall_config": IMPERSONATE_RUNG_MERGED_AT.isoformat(),
     "fall_target_660fd35_inside_fall_config": FALL_TARGET_MERGED_AT.isoformat(),
+    "fall_gpt6_opus55_021e059": FALL_GPT6_OPUS55_MERGED_AT.isoformat(),
+    "fall_gpt61_sol_6489289": FALL_GPT61_SOL_MERGED_AT.isoformat(),
+    "fall_gemini4_argon_28e82b6": FALL_GEMINI4_ARGON_MERGED_AT.isoformat(),
+    "fall_terra_research_2c45ed7": FALL_TERRA_RESEARCH_MERGED_AT.isoformat(),
     "linters_eded193_not_a_boundary": LINTERS_MERGED_AT.isoformat(),
 }
 
@@ -77,7 +90,11 @@ FINE_SUBERA_TABLE: SuberaTable = (
     ("ranked_markets", RANKED_MARKET_MERGED_AT),
     ("time_budget", TIME_BUDGET_MERGED_AT),
     ("fall_config", FALL_CONFIG_MERGED_AT),
-    # A new sub-era is one appended row: ("cost_pass", <merge-to-main committer timestamp>).
+    ("fall_gpt6_opus55", FALL_GPT6_OPUS55_MERGED_AT),
+    ("fall_gpt61_sol", FALL_GPT61_SOL_MERGED_AT),
+    ("fall_gemini4_argon", FALL_GEMINI4_ARGON_MERGED_AT),
+    ("fall_terra_research", FALL_TERRA_RESEARCH_MERGED_AT),
+    # A new sub-era is one appended row: (<name>, <merge-to-main committer timestamp>).
 )
 
 PRE_FLIP = "pre_flip"
@@ -87,7 +104,7 @@ NO_TS = "no_ts"
 ERAS: tuple[str, ...] = (PRE_FLIP, POST_FLIP, TRIPLE_ERA, NO_TS)
 TRIPLE_SUBERAS: tuple[str, ...] = tuple(name for name, _ in TRIPLE_SUBERA_TABLE)
 FINE_SUBERAS: tuple[str, ...] = tuple(name for name, _ in FINE_SUBERA_TABLE)
-# Sub-eras whose questions were forecast at or after the time-budget merge; empty as of 2026-08-26.
+# Sub-eras whose questions were forecast at or after the time-budget merge.
 POST_TIME_BUDGET_FINE: tuple[str, ...] = tuple(
     name for name, opens in FINE_SUBERA_TABLE if opens >= TIME_BUDGET_MERGED_AT
 )

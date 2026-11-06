@@ -1,6 +1,7 @@
 """Tests for backfill_research_from_comments.py — extracting research from bot comments."""
 
 import json
+from pathlib import Path
 
 # --- Sample comment bodies mimicking real bot output ---
 
@@ -58,6 +59,32 @@ This question could not be forecasted due to errors.
 # FORECASTS
 No forecasts available.
 """
+
+
+def test_comment_backfill_expands_archived_list_comments(monkeypatch):
+    import scripts.backfill_research_from_comments as mod
+
+    fixture_path = Path(__file__).parent / "data" / "truncated_comment_payloads.json"
+    list_comment = json.loads(fixture_path.read_text())["list_comment"]
+    calls: list[tuple[str, dict | None]] = []
+
+    def fake_api_get(endpoint: str, token: str, params: dict | None = None) -> dict:
+        calls.append((endpoint, params))
+        return {"results": [list_comment], "next": None}
+
+    def expand(comment: dict, token: str) -> dict:
+        assert token == "token"
+        return {**comment, "text": SAMPLE_COMMENT_FULL}
+
+    monkeypatch.setattr(mod, "api_get", fake_api_get)
+    monkeypatch.setattr(mod, "expand_truncated_comment", expand)
+
+    comments = mod.fetch_all_comments("token")
+
+    assert len(comments) == 1
+    assert comments[0]["text"] == SAMPLE_COMMENT_FULL
+    assert [params and params.get("is_private") for _, params in calls] == [None, "true"]
+
 
 # Mirrors SAMPLE_COMMENT_FULL but carries the research blocks ADDED this session:
 # ``## Prediction Market Snapshot`` (a NEW provider header wired into

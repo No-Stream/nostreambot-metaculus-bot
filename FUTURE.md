@@ -95,7 +95,13 @@ and both halves fail in the too-NARROW direction, so `k_tail` = 1.0 holds. `widt
 untreated because it reads none of `research_tags.py`'s fields. The starved-outer-tail detector shipped but the
 publish-time WARN did not, since reading `declared_percentiles` at publish time would silently never fire on the
 discrete cohort it exists for; 68 of 417 measurable open-bound sides fire, so read a fire as "this question carries a
-cliff". MC top-band under-commitment replicates in all four eras and needs 57 questions for exact p<0.05 against 35.
+cliff". MC top-band under-commitment was re-tested 2026-11-04 on 43 strict ballots: p=0.59, reversed in the three-model era, and no aggregation alternative (mean, geometric, fitted power) beats the median, so it is closed as a lever. The Bayesian type-by-era pooling (`performance_analysis.type_pooling`) puts the three-model-era MC-minus-binary gap at −5.3 [−17.8, +3.8] (P=0.83) after MC led binary in earlier eras; re-read at the next round (`scratch/residual_2026-11-04/`).
+
+**Recorded 2026-11-04, not built.** A paired no-market replay (archived bundles with and without the
+prediction-market section, production roster) was priced at about $41 for the 35 eligible records, or $10 on the Google
+forecaster alone, by extending `scripts/probes/section_strip_bench/bundle.py` with a `minus_market` arm. The operator
+judged it not important: on all 35 records the members already sit 0.07 from deep markets and 0.32 from thin ones, and
+losses on deep liquid markets are not actionable.
 
 ## Rejected: do not re-propose without new evidence
 

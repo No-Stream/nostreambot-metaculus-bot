@@ -2446,6 +2446,9 @@ dir, which is the point: 90 days is a hard ceiling for this repo
 disk is the source of truth the moment an artifact is grabbed. An artifact
 already in the store is never re-downloaded: uploads are immutable, so only
 absent or half-extracted dirs are fetched.
+Missing artifacts are downloaded oldest-first with up to six workers; progress is
+reported from the main thread every 25 successful downloads. Archive harvesting
+still follows the existing oldest-first order.
 
 ```bash
 make resync_from_store    # rebuild all three archives from local disk, zero network

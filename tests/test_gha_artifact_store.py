@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
@@ -238,6 +239,38 @@ class TestSkipIfPresentIdempotency:
         assert (dl.call_count, stats.downloaded) == (1, 1)
         assert is_persisted(store, "research-100")
         assert not (interrupted / "half_written.jsonl").exists(), "the incomplete copy is replaced, not merged"
+
+
+class TestConcurrentStoreDownloads:
+    def test_missing_artifacts_download_concurrently_and_stats_are_exact(self, tmp_path: Path) -> None:
+        store = tmp_path / "store"
+        now = datetime.now(UTC)
+        present = _artifact("research-100", 100, now - timedelta(days=4))
+        _persist_one(present, store)
+        selection = _selection(
+            present,
+            _artifact("research-200", 200, now - timedelta(days=3)),
+            _artifact("research-300", 300, now - timedelta(days=2)),
+            _artifact("research-400", 400, now - timedelta(days=1)),
+        )
+        barrier = threading.Barrier(3)
+        attempted: list[str] = []
+        attempted_lock = threading.Lock()
+
+        def persist(art: dict, repo: str, store_dir: Path | str | None = None) -> Path | None:
+            name = str(art["name"])
+            with attempted_lock:
+                attempted.append(name)
+            barrier.wait(timeout=5)
+            return None if name == "research-300" else store_run_dir(store_dir, name)
+
+        with mock.patch("scripts.gha_artifacts.persist_artifact", side_effect=persist):
+            stats = ensure_store_current(selection, REPO, store_dir=store)
+
+        assert stats.already_present == 1
+        assert stats.downloaded == 2
+        assert stats.failed == 1
+        assert set(attempted) == {"research-200", "research-300", "research-400"}
 
 
 class TestAFailedGrabDamagesNothing:

@@ -186,6 +186,15 @@ class MarketChild:
     quote_low: float | None = None
     quote_high: float | None = None
     price_withheld: bool = False
+    volume_24h: float | None = None
+    liquidity: float | None = None
+    currency: str = ""
+    num_traders: int | None = None
+    last_trade_time: datetime | None = None
+    last_update_time: datetime | None = None
+    price_change_1d: float | None = None
+    price_change_since_previous: float | None = None
+    price_change_1w: float | None = None
 
 
 @dataclass
@@ -289,6 +298,13 @@ class MarketMatch:
     # four vocabulary words, since `STRONG_TIERS` membership (which picks the preamble) and every
     # tier-conditioned residual cut test it by equality.
     tier_cap_note: str = ""
+    currency: str = ""
+    num_traders: int | None = None
+    last_trade_time: datetime | None = None
+    last_update_time: datetime | None = None
+    price_change_1d: float | None = None
+    price_change_since_previous: float | None = None
+    price_change_1w: float | None = None
 
 
 @dataclass

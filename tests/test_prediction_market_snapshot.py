@@ -100,8 +100,8 @@ def _table_row_by_platform(rendered: str, platform: str) -> dict[str, str]:
     otherwise shift every assertion onto its neighbour.
     """
     lines = [line for line in rendered.split("\n") if line.startswith("| ")]
-    header = [cell.strip() for cell in lines[0].strip("| ").split(" | ")]
-    rows = [dict(zip(header, [cell.strip() for cell in line.strip("| ").split(" | ")], strict=False)) for line in lines]
+    header = [cell.strip() for cell in lines[0].strip("| ").split("|")]
+    rows = [dict(zip(header, [cell.strip() for cell in line.strip("| ").split("|")], strict=False)) for line in lines]
     return next(row for row in rows if row["platform"] == platform)
 
 
@@ -172,7 +172,7 @@ class TestFetchMarketSnapshot:
         assert predictit_rows, "the ranker must have picked the PredictIt row"
         assert predictit_rows[0].implied_prob_yes is None, "a ballot has no single probability"
         assert [(child.title, child.implied_prob_yes) for child in predictit_rows[0].children] == [("Yes", 0.58)]
-        assert "| ↳ | Yes | 0.58 |" in rendered
+        assert "| ↳|Yes|0.58|" in rendered
         assert _RANKER_CUE not in rendered
 
     @pytest.mark.asyncio
@@ -875,7 +875,7 @@ class TestAFamilyReachesTheForecasterWhole:
         ):
             research = await pmp.prediction_market_provider()(question)
 
-        assert "| ↳ |" in research, "the ranker must have picked the ladder, or nothing below is under test"
+        assert "| ↳|" in research, "the ranker must have picked the ladder, or nothing below is under test"
         # Completeness: every bracket reaches the text, whether on a full sub-row or in the ladder row.
         for label, _ in self._BRACKETS:
             assert label in research, label

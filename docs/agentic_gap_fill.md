@@ -59,6 +59,7 @@ it notes several kinds of target:
 
 - **FILL** targets: facts the reasoning needed that the briefing doesn't
   contain, or contains only in a secondhand or stale form.
+  If the question asks how many events happen in a window, find counts for several past windows of the same length from an authoritative source, so the forecasters can see how much the count varies.
 - **VERIFY** targets: the two or three claims the reasoning leaned on hardest.
   These get checked against primary sources, because a wrong load-bearing claim
   poisons every panelist.

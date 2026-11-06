@@ -76,7 +76,7 @@ class TestFormatterDelegate:
         snapshot = MarketSnapshot(matches=[_row("Will X win?", platform="predictit")], sources={"ranking": "ok(1)"})
 
         formatted = format_snapshot_for_research(snapshot)
-        header = next(line for line in formatted.splitlines() if line.startswith("| platform |"))
+        header = next(line for line in formatted.splitlines() if line.startswith("| platform"))
         columns = [cell.strip() for cell in header.strip("|").split("|")]
         row = next(line for line in formatted.splitlines() if line.startswith("| predictit"))
         cells = dict(zip(columns, [cell.strip() for cell in row.strip("|").split("|")], strict=True))

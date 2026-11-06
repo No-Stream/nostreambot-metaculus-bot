@@ -5,7 +5,8 @@ make a number trustworthy, and the receipts behind each one. It covers the round
 and the `--prior` rescoring diff, what the archives hold and which of their fields are
 historically unreadable, era bucketing and the merge-to-main dating rule, the standing
 exclusion cohorts, the scoring conventions (spot peer, and `spot_peer_delta` for
-counterfactuals), the clip-threshold sweep, per-model forecast recovery, how to read the
+counterfactuals), the clip-threshold sweep, partially pooled type and era estimates,
+per-model forecast recovery, how to read the
 width monitor's era table, the PIT convention for out-of-range resolutions, starved outer
 tails, and question-supply / forfeit accounting.
 
@@ -428,7 +429,7 @@ bot published its comment) and return the fields a round's tagging pass writes:
 |---|---|---|---|
 | `config_era` | `era_of` | `pre_flip`, `post_flip`, `triple_era`, `no_ts` | `era_gap` (its default `ERA_FIELD`), the clip sweep's era windows |
 | `triple_subera` | `triple_subera_of` | `triple_pre_market`, `triple_ranked_market`, `triple_time_budget`, `triple_fall_config` | the coarse pooling, where every fall merge is one bucket |
-| `triple_subera_fine` | `triple_subera_fine_of` | `pre_ft_unfreeze`, `ft_0292`, `july25`, `post_dry_key_fix`, `ranked_markets`, `time_budget`, `fall_config` | `era_gap --era-field triple_subera_fine`, which is how the fall read selects its arms |
+| `triple_subera_fine` | `triple_subera_fine_of` | `pre_ft_unfreeze`, `ft_0292`, `july25`, `post_dry_key_fix`, `ranked_markets`, `time_budget`, `fall_config`, `fall_gpt6_opus55`, `fall_gpt61_sol`, `fall_gemini4_argon`, `fall_terra_research` | per-merge labels; the fall season's pooled read selects on the coarse field instead (below) |
 | `ft_unfreeze_side` | `ft_unfreeze_side_of` | `pre_ft_0292`, `ft_0292` | the MC-clamp cuts |
 | `post_linters_merge` | `post_linters_merge_of` | `True` / `False` | provenance only |
 
@@ -513,6 +514,12 @@ crowd movement in the 1.5-3h window between our submit and the close rather than
 anything the bot did. Those are that round's numbers, not a repo constant; re-derive
 with `scratch/residual_2026-08-31/dossiers/44798_peer_vs_spot.py`.
 
+The identity is only an approximation for short windows. Metaculus computes `peer_score` as a
+time-average of our forecast against the evolving field over the question's open window
+(`scoring/score_math.py` in the Metaculus repo), so on a Metaculus Cup question, open for weeks
+while the human field keeps updating, it breaks: q45920 (Brazil runoff margin, open 19 days)
+scored spot peer −0.69 and peer −11.56 at coverage 0.998 (2026-11-04 round).
+
 Because the bot submits exactly once and never revises (forecast history length 1 on
 157 of 158), its coverage is mostly a function of how early it submitted. So coverage
 scaling FLATTERS misses and dulls hits: q44872 scored peer −15.0 against spot peer
@@ -569,7 +576,9 @@ uv run python -m metaculus_bot.performance_analysis.era_gap --dataset <round>/pe
 
 Run it twice per round, once with `--strict` (the exclusion cohorts from `cohorts.py` dropped
 from BOTH arms, the count shown in the `excl` column) and once unfiltered, the same pairing the
-clip sweep uses. The dataset is the round's tagged pull: every record carries `config_era`,
+clip sweep uses. Each arm accepts one or more labels from the selected field and pools records
+whose value matches any supplied label; the report joins those labels with `+`. The dataset is the
+round's tagged pull: every record carries `config_era`,
 written by the round's tagging pass off `bot_comment_created_at` against the merge-date era map,
 and the treated and comparison eras are whatever values that field holds. The pass writes only
 the coarse eras there; sub-eras go to their own fields (`triple_subera` holds
@@ -581,6 +590,14 @@ has resolved yet, is a clean non-zero exit rather than a bootstrap over an empty
 message names the arm and lists the values the field does hold, so a mistyped era name is
 diagnosed on the spot, and the same condition raises `EmptyArmError` in the library. Every number
 is spot peer through `platform_scores.spot_peer_score`. The report prints four blocks:
+
+The fall secondary read pools the full summer three-model era with the `triple_subera` field:
+
+```bash
+uv run python -m metaculus_bot.performance_analysis.era_gap --dataset <round>/perf_all_tagged.json \
+    --era-field triple_subera --treated-era triple_fall_config \
+    --comparison-era triple_pre_market triple_ranked_market triple_time_budget --strict
+```
 
 - **Arms.** n, effective n (distinct UTC resolution days), exclusions, unscoreable records
   (no spot peer, submit time or resolve time), spot mean and median, fraction negative, lag
@@ -694,6 +711,54 @@ uv run python -m metaculus_bot.performance_analysis.era_gap --dataset <round>/pe
 Run before the first `fall_config` question resolves (on 2026-09-09 six were forecast and none had
 closed) it exits with `era arm 'fall_config' has no scoreable records; nothing to compare yet` plus
 the field's value counts, and prints no report.
+
+**The fall roster did not stay frozen.** Four merges after the preregistration changed models:
+021e059 (gpt-6-sol and claude-opus-5.5, 2026-09-24), PR #73 (gpt-6.1-sol, 2026-09-29), PR #77
+(gemini-4-argon plus delivered-evidence research publication, 2026-10-14) and PR #79 (Terra
+research roles, 2026-10-28). Each is a labelled fine sub-era, so the fine `fall_config` value now
+covers only the handful of questions forecast between 2026-09-07 and 2026-09-24. The operator
+ruled (2026-11-04) to pool the whole fall season as one arm and break out a roster sub-era only
+when a finding justifies it. The pooled read selects on the coarse field, where
+`triple_ranked_market` spans exactly the fine `ranked_markets` window:
+
+```bash
+uv run python -m metaculus_bot.performance_analysis.era_gap --dataset <round>/perf_all_tagged.json \
+    --era-field triple_subera --treated-era triple_fall_config --comparison-era triple_ranked_market \
+    --strict --clusters <round>/cluster_structure.json
+```
+
+## Partial pooling across type and era
+
+`metaculus_bot.performance_analysis.type_pooling` fits a Bayesian Student-t model to spot-peer scores. The model
+partially pools question-type, selected-era, type-by-era interaction, and UTC resolution-day effects. It estimates
+type-by-era cells with information shared across the dataset, while the day effect accounts for questions resolved
+on the same UTC date. The model also includes the standardized `log(horizon_days)` covariate, where horizon is the
+elapsed time from `bot_comment_created_at` to `metadata.actual_resolve_time`. It complements the standing `era_gap`
+read with a different adjusted estimate and does not replace the preregistered type-adjusted, horizon-matched watch
+row.
+
+Run it on the tagged round dataset with the exclusion cohorts removed:
+
+```bash
+uv run python -m metaculus_bot.performance_analysis.type_pooling \
+    --dataset scratch/residual_2026-11-04/perf_all_tagged.json --era-field config_era --strict \
+    --output /tmp/residual_2026-11-04/type_pooling/config_era
+```
+
+Omit `--strict` to retain the exclusion cohorts. Select a finer era field with `--era-field`; `--eras` can restrict
+the fit to selected labels in that field. The sampler
+controls are `--draws`, `--tune`, `--chains`, and `--seed`. Each output directory contains `type_pooling.md` and
+`type_pooling.json`. The Markdown table reports raw and posterior type-by-era means, 90% and 95% posterior intervals,
+and raw-minus-posterior shrinkage; it also reports within-era type contrasts. These cell estimates are at the mean
+observed log horizon and set the day effect to zero. The JSON includes those summaries, counts, horizon standardizing
+values, sampler diagnostics, and posterior-predictive summaries. Records without a submission timestamp remain in
+the score model, are counted as missing horizon, and receive no horizon adjustment; the report records when the
+horizon term has no variation and is omitted.
+
+Diagnostics include maximum R-hat, minimum bulk and tail effective sample sizes, and the divergence count and draw
+count. By default, a missing R-hat, any R-hat above 1.01, or a divergence rate above 1% raises an error before the
+reports are written. `--allow-diagnostics-warnings` allows the Markdown and JSON reports to be written with the
+failed diagnostics recorded; it does not make the fit reliable.
 
 ## Building a round's cluster structure
 
@@ -943,6 +1008,11 @@ three. Receipt: `scratch/residual_2026-08-31/gemini_review/RECOMMENDATION.md` §
 field names are a data contract with the research archive, so a field is added rather than
 renamed or repurposed in place. What each one means, and the trap behind it where there is
 one:
+
+The comments list can return an archived stub for a long comment, ending with `Content Truncated`
+and a link to `/api/comments/<id>/`. The collector fetches that comment detail
+endpoint before parsing, and requires its top-level `text` field to be a non-empty string.
+The research archive backfill uses the same recovery before extracting research text.
 
 - `per_model_forecasts` carries one entry per ensemble member on a non-stacked comment. On a
   stacked comment it collapses to the stacker's single aggregate, so any median or spread

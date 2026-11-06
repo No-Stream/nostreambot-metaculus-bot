@@ -133,7 +133,7 @@ class TestProviderFactory:
             out = await pmp.prediction_market_provider()(mock_question)
 
         assert "MAY be relevant" in out
-        assert "| " + " | ".join(TABLE_COLUMNS) + " |" in out
+        assert "| " + "|".join(TABLE_COLUMNS) + " |" in out
         assert "### Resolution criteria / rules" in out
 
     def test_a_timeout_below_the_stage_budget_warns_loudly_at_init(self, monkeypatch, caplog):

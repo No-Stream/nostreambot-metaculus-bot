@@ -7,6 +7,7 @@ predictions, computes scores, and returns a structured dataset.
 import json
 import logging
 import os
+import re
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -46,6 +47,12 @@ MAX_RETRIES: int = 3
 RETRY_BACKOFF_SECS: float = 5.0
 REQUEST_TIMEOUT_SECS: float = 30.0
 PAGE_SIZE: int = 100
+_TRUNCATED_COMMENT_MARKER = "### WARNING: Content Truncated"
+_TRUNCATED_COMMENT_STUB_RE = re.compile(
+    r"(?s).*\n### WARNING: Content Truncated\nThis comment has been archived to save space\.\n"
+    r"To retrieve full content, please visit \[https://www\.metaculus\.com/api/comments/(?P<comment_id>\d+)/\]"
+    r"(?:\(https://www\.metaculus\.com/api/comments/(?P<link_comment_id>\d+)/\))?$"
+)
 
 # Retried; anything else propagates (docs/performance_analysis.md "The round pull").
 _TRANSIENT_NETWORK_ERRORS = (requests.exceptions.Timeout, requests.exceptions.ConnectionError)
@@ -175,8 +182,33 @@ def fetch_bot_comments(author_id: int, token: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def _build_comment_lookup(comments: list[dict]) -> dict[int, dict]:
-    """Build post_id -> comment mapping. Takes the most recent comment per post."""
+def expand_truncated_comment(comment: dict, token: str) -> dict:
+    """Replace a Metaculus archived comment stub with its per-comment API payload."""
+    comment_text = comment.get("text") or comment.get("comment_text") or ""
+    if _TRUNCATED_COMMENT_MARKER not in comment_text:
+        return comment
+
+    match = _TRUNCATED_COMMENT_STUB_RE.fullmatch(comment_text)
+    comment_id = comment["id"]
+    linked_comment_id = match["link_comment_id"] if match is not None else None
+    if (
+        match is None
+        or int(match["comment_id"]) != comment_id
+        or (linked_comment_id is not None and int(linked_comment_id) != comment_id)
+    ):
+        raise ValueError(f"comment {comment_id} has a malformed truncation stub")
+
+    full_comment = _api_get(f"/comments/{comment_id}/", token)
+    full_text = full_comment.get("text")
+    if full_comment.get("id") != comment_id:
+        raise ValueError(f"full comment response for {comment_id} has a mismatched id")
+    if not isinstance(full_text, str) or not full_text.strip():
+        raise ValueError(f"full comment {comment_id} has no text")
+    return {**comment, "text": full_text}
+
+
+def _build_comment_lookup(comments: list[dict], token: str) -> dict[int, dict]:
+    """Build post_id -> comment mapping, expanding the most recent comment when archived."""
     lookup: dict[int, dict] = {}
     for c in comments:
         post_id = c.get("on_post")
@@ -185,7 +217,7 @@ def _build_comment_lookup(comments: list[dict]) -> dict[int, dict]:
         existing = lookup.get(post_id)
         if existing is None or c["id"] > existing["id"]:
             lookup[post_id] = c
-    return lookup
+    return {post_id: expand_truncated_comment(comment, token) for post_id, comment in lookup.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -576,7 +608,7 @@ def build_performance_dataset(
     logger.info(f"Fetching all bot comments (author_id={author_id})...")
     all_comments = fetch_bot_comments(author_id, token)
     logger.info(f"Fetched {len(all_comments)} total comments")
-    comment_lookup = _build_comment_lookup(all_comments)
+    comment_lookup = _build_comment_lookup(all_comments, token)
     logger.info(f"Comments mapped to {len(comment_lookup)} unique posts")
 
     records: list[dict] = []

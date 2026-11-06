@@ -7,7 +7,9 @@ crowd size, the stacker outcome and its provenance, the practice-post and date-q
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 
 import pytest
 import requests
@@ -245,6 +247,54 @@ class TestFetchBotComments:
 
         assert collector.fetch_bot_comments(275109, "bot-token") == []
         assert len(seen) == 2
+
+
+class TestTruncatedCommentRecovery:
+    """List stubs must be replaced with the full text before record parsing."""
+
+    @staticmethod
+    def _payloads() -> dict:
+        fixture_path = Path(__file__).parent / "data" / "truncated_comment_payloads.json"
+        return json.loads(fixture_path.read_text())
+
+    def test_lookup_fetches_and_uses_full_comment_payload_once(self, monkeypatch):
+        payloads = self._payloads()
+        list_comment = payloads["list_comment"]
+        detail_comment = payloads["detail_comment"]
+        calls: list[str] = []
+
+        def fake_api_get(path: str, token: str, params: dict | None = None) -> dict:
+            calls.append(path)
+            assert token == "bot-token"
+            return detail_comment
+
+        monkeypatch.setattr(collector, "_api_get", fake_api_get)
+
+        lookup = collector._build_comment_lookup([list_comment], "bot-token")
+        records = _process_post(_binary_post(list_comment["on_post"], 45859), lookup)
+
+        assert calls == [f"/comments/{list_comment['id']}/"]
+        assert records[0]["comment_text"] == detail_comment["text"]
+        assert records[0]["per_model_forecasts"]
+        assert records[0]["forecasters_used"] == 1
+        assert records[0]["forecasters_configured"] == 3
+
+    def test_truncated_comment_without_full_text_raises(self, monkeypatch):
+        list_comment = self._payloads()["list_comment"]
+        monkeypatch.setattr(collector, "_api_get", lambda path, token, params=None: {"id": list_comment["id"]})
+
+        with pytest.raises(ValueError, match=r"full comment .* has no text"):
+            collector._build_comment_lookup([list_comment], "bot-token")
+
+    def test_recognizes_stub_with_a_markdown_link_target(self, monkeypatch):
+        comment = self._payloads()["list_comment_with_markdown_link"]
+        monkeypatch.setattr(
+            collector,
+            "_api_get",
+            lambda path, token, params=None: {"id": comment["id"], "text": "full comment text"},
+        )
+
+        assert collector.expand_truncated_comment(comment, "bot-token")["text"] == "full comment text"
 
 
 class TestCollectorCommentCreatedAt:

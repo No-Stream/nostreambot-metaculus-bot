@@ -118,6 +118,8 @@ The standing set, each reconciling explicitly with the prior round's same-named 
   type-adjusted gap without the horizon-matched one beside it (2026-09-09: +10.71 became +8.19), and never
   reopen an underperformance flag on a positive gap. `docs/performance_analysis.md` "The era gap and the
   horizon confound".
+- partially pooled spot-peer estimates by question type and era: run `performance_analysis.type_pooling` on the
+  tagged dataset and review its sampler diagnostics; see `docs/performance_analysis.md` "Partial pooling across type and era".
 
 ## Phase 4 — Per-question tracing (the centerpiece; often the highest-value output)
 
@@ -177,7 +179,7 @@ after clustering (same-day resolutions share a world state).
 
 ## Standing gotchas (each has burned a round at least once)
 
-- **The tournament ranks on SPOT PEER; `peer_score` is `spot_peer_score × coverage`.**
+- **The tournament ranks on SPOT PEER; `peer_score` is roughly `spot_peer_score × coverage` on 3-hour bot windows only** (on weeks-long Cup windows it diverges, q45920: spot −0.69, peer −11.56).
   Never rank, aggregate, or headline on the coverage-scaled figure — the bot submits once
   and never revises, so its coverage is mostly submission timing, and the scaling flatters
   misses (q44872: peer −15.0 vs spot peer −38.8). Read platform scores through

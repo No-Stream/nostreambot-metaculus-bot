@@ -149,6 +149,19 @@ new era and reset every read. `TAIL_WIDEN_K_TAIL` stays at 1.0 under the rule in
 off, since all three were benchmarked and rejected; the per-bin Mantic grids are the one standing
 exception. A new prompt rule ships only on a cohort measurement.
 
+## Amendments (2026-11-04, first checkpoint)
+
+The roster did not stay frozen: four merges changed models or research roles after this document
+(021e059 gpt-6-sol and opus-5.5, #73 gpt-6.1-sol, #77 gemini-4-argon, #79 Terra research roles). Each is a
+labelled fine sub-era in `eras.py`, and the operator ruled that every read pools them as one fall arm, so
+read (a) selects on the coarse field: `--era-field triple_subera --treated-era triple_fall_config
+--comparison-era triple_ranked_market`. The secondary comparison against the whole three-model era is now
+runnable because `era_gap` accepts several labels per arm. The operator also shipped one new prompt rule,
+`_COUNT_PROCESS_RULE`, on mechanism reasoning rather than a cohort measurement, departing from the "a new
+prompt rule ships only on a cohort measurement" clause above; the market snapshot gained a metadata column in
+the same branch. Both change what forecasters see and take an era label at their merge. First-checkpoint
+numbers are in `scratch/residual_2026-11-04/SYNTHESIS.md`.
+
 ## Links
 
 - The summer round: `scratch/residual_2026-09-09/SYNTHESIS.md`, `ERA_MAP.md`, `era_boundaries.json`, `dim_numeric-width.md`, `cluster_structure.json`.

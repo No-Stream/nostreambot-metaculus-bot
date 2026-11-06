@@ -13,6 +13,7 @@ import pytest
 
 import metaculus_bot.prompts as prompts_module
 from metaculus_bot.prompts import (
+    _COUNT_PROCESS_RULE,
     _HISTORY_DISCHARGED_RULE,
     _SOFT_CLOCK_RULE,
     binary_prompt,
@@ -34,6 +35,7 @@ from tests.prompt_builders import (
     _mc_q,
     _numeric_prompt_text,
     _numeric_q,
+    _pmf_prompt_text,
     _stacked_prompt_texts,
 )
 
@@ -430,7 +432,7 @@ class TestSoftClockAndHistoryDischargedRules:
     names a reason the historical cadence has been discharged and keeps it as the center anyway:
     12.1% of rationales, about 7 spot per flagged record (95% CI 2.7 to 12.2), the pattern failed
     in 13 of 13 live-triple fires; coder agreement 0.59 and partly hindsight-contaminated, so
-    upper bounds. Shipped on the plan's recommendation with the operator's final say pending.
+    upper bounds. Shipped on the plan's recommendation; operator-approved 2026-11-05.
 
     Both ship to binary and MC only and sit in Phase 1 beside the reference-class bullets."""
 
@@ -954,3 +956,26 @@ class TestPreOpenRulesAgreeWithEventWindowRule:
         assert "the window rule given below decides which events count" in collapsed
         assert "a cumulative or stated-period measure counts its whole period" in collapsed
         assert "the question only resolves on events inside its window" not in collapsed
+
+
+class TestCountProcessRule:
+    def test_count_process_rule_is_present_once_in_each_base_forecaster_prompt(self) -> None:
+        prompts = (
+            _binary_prompt_text(),
+            _mc_prompt_text(),
+            _numeric_prompt_text(),
+            _pmf_prompt_text(),
+        )
+        for prompt in prompts:
+            assert _flat(prompt).count(_flat(_COUNT_PROCESS_RULE)) == 1
+
+    def test_count_process_rule_is_absent_from_all_stacking_prompts(self) -> None:
+        for prompt in _stacked_prompt_texts():
+            assert _flat(_COUNT_PROCESS_RULE) not in _flat(prompt)
+
+    def test_gap_fill_driver_brief_requests_historical_window_counts(self) -> None:
+        collapsed = " ".join(build_system_prompt("2026-11-04").split())
+        assert (
+            "If the question asks how many events happen in a window, find counts for several past windows of the "
+            "same length from an authoritative source, so the forecasters can see how much the count varies."
+        ) in collapsed
