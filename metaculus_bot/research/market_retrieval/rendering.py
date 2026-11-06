@@ -460,7 +460,7 @@ def _why_cell(match: MarketMatch) -> str:
     return f"{note}. {label}" if label else note
 
 
-def _metadata_number(value: float | None, *, signed: bool = False) -> str:
+def _metadata_number(value: float | None) -> str:
     if value is None or not math.isfinite(value):
         return "-"
     suffix = ""
@@ -470,7 +470,15 @@ def _metadata_number(value: float | None, *, signed: bool = False) -> str:
     elif abs(value) >= 1_000:
         value /= 1_000
         suffix = "k"
-    return (f"{value:+.3g}" if signed else f"{value:.3g}") + suffix
+    return f"{value:.3g}" + suffix
+
+
+def _metadata_points(change: float | None) -> str:
+    """A probability change as signed points to a tenth; venue float noise (~1e-16) renders as +0."""
+    if change is None or not math.isfinite(change):
+        return "-"
+    points = round(change * 100, 1) + 0.0  # + 0.0 turns -0.0 into 0.0
+    return f"{points:+g}"
 
 
 def _metadata_age(timestamp: datetime | None, forecast_time: datetime | None) -> str:
@@ -496,8 +504,8 @@ def _metadata_cell(platform: str, row: MarketMatch | MarketChild, forecast_time:
         ("bt", _metadata_number(row.num_bettors)),
         ("trd", _metadata_age(row.last_trade_time, forecast_time)),
         ("upd", "-" if row.last_trade_time is not None else _metadata_age(row.last_update_time, forecast_time)),
-        (change_label, _metadata_number(change * 100 if change is not None else None, signed=True)),
-        ("1w", _metadata_number(row.price_change_1w * 100 if row.price_change_1w is not None else None, signed=True)),
+        (change_label, _metadata_points(change)),
+        ("1w", _metadata_points(row.price_change_1w)),
     )
     present = [f"{label} {value}" for label, value in labelled if value != "-"]
     if not present:

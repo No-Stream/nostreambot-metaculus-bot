@@ -283,3 +283,23 @@ def test_populated_metadata_on_every_row_and_child_fits_the_existing_render_budg
     rendered = render_snapshot(MarketSnapshot(matches=matches, forecast_time=forecast_time))
 
     assert len(rendered) < MARKET_SNAPSHOT_MAXED_RENDER_CHAR_BUDGET
+
+
+class TestPriceChangeFormatting:
+    @pytest.mark.parametrize(
+        ("change", "expected"),
+        [
+            (-1.11e-16, "+0"),  # Manifold reports float noise for an untraded answer
+            (5.55e-17, "+0"),
+            (0.0123, "+1.2"),
+            (-0.55, "-55"),
+            (0.004, "+0.4"),
+        ],
+    )
+    def test_changes_render_as_points_rounded_to_a_tenth(self, change: float, expected: str) -> None:
+        match = replace(_row("manifold"), price_change_1d=change, price_change_1w=change)
+
+        metadata = _metadata_fields(_rendered_rows(MarketSnapshot(matches=[match], forecast_time=None))[0]["metadata"])
+
+        assert metadata["1d"] == expected
+        assert metadata["1w"] == expected
