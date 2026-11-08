@@ -29,7 +29,7 @@ __all__ = [
 # injected 0 when the arg was omitted); top_p flows via **kwargs and is never set.
 REASONING_MODEL_CONFIG: dict[str, Any] = {
     "temperature": None,
-    "max_tokens": OPENROUTER_OUTPUT_TOKEN_LIMIT,  # Combined reasoning + answer; see docs/operations.md.
+    "max_tokens": OPENROUTER_OUTPUT_TOKEN_LIMIT,  # Combined reasoning + answer; see docs/output_token_budgets.md.
     "stream": False,
     "timeout": 480,
     "allowed_tries": 3,
