@@ -752,3 +752,8 @@ RAW_RESEARCH_LOG_DIR_ENV: str = "RAW_RESEARCH_LOG_DIR"
 RAW_RESEARCH_LOG_DIR_DEFAULT: str = "run_logs"
 # Beyond this a payload becomes a truncation marker. Receipt: docs/constants.md "RAW_RESEARCH_MAX_PAYLOAD_CHARS".
 RAW_RESEARCH_MAX_PAYLOAD_CHARS: int = 200_000
+
+# Live OpenRouter model/endpoint metadata checked 2026-11-08. Combined reasoning
+# and visible output. Explicit limits avoid lower, provider-dependent defaults.
+OPENROUTER_OUTPUT_TOKEN_LIMIT: int = 128_000  # Current OpenAI and Anthropic production slots.
+GEMINI_OUTPUT_TOKEN_LIMIT: int = 65_536  # Lowest advertised Argon route maximum.

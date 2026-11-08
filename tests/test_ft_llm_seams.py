@@ -261,6 +261,7 @@ class TestProductionKwargShapesReachAcompletion:
             # temperature=None must survive for every reasoning forecaster (no injected 0).
             assert sent["temperature"] is None
             assert sent["timeout"] == declared["timeout"]
+            assert sent["max_tokens"] == declared["max_tokens"]
             if "reasoning" in declared:
                 assert sent["reasoning"] == declared["reasoning"]
                 if declared["reasoning"] == _PROD_REASONING_XHIGH:
