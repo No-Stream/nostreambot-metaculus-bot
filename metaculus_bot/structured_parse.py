@@ -17,6 +17,7 @@ from forecasting_tools import GeneralLlm, structure_output
 from forecasting_tools.data_models.numeric_report import DatePercentile, Percentile
 from pydantic import BaseModel, field_validator
 
+from metaculus_bot.constants import OPENROUTER_OUTPUT_TOKEN_LIMIT
 from metaculus_bot.fallback_openrouter import build_llm_with_openrouter_fallback
 from metaculus_bot.numeric.date_axis import parse_forecast_date
 from metaculus_bot.simple_types import OptionProbability
@@ -122,7 +123,7 @@ def _build_constrained_llm(response_format_model: type[BaseModel], parser_model:
         role="parser",
         # Why: redundant since ft 0.2.92 defaults it to None, kept as a pin; see docs/value_extraction.md "The LLM salvage rung: design notes".
         temperature=None,
-        max_tokens=32_000,
+        max_tokens=OPENROUTER_OUTPUT_TOKEN_LIMIT,
         stream=False,
         timeout=90,
         allowed_tries=1,

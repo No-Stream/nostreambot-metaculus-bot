@@ -8,6 +8,7 @@ from typing import Any
 
 from forecasting_tools import GeneralLlm
 
+from metaculus_bot.constants import GEMINI_OUTPUT_TOKEN_LIMIT, OPENROUTER_OUTPUT_TOKEN_LIMIT
 from metaculus_bot.fallback_openrouter import build_llm_with_openrouter_fallback
 
 __all__ = [
@@ -28,7 +29,7 @@ __all__ = [
 # injected 0 when the arg was omitted); top_p flows via **kwargs and is never set.
 REASONING_MODEL_CONFIG: dict[str, Any] = {
     "temperature": None,
-    "max_tokens": 64_000,  # Prevent truncation; all current forecasters/stackers support 64k output
+    "max_tokens": OPENROUTER_OUTPUT_TOKEN_LIMIT,  # Combined reasoning + answer; see docs/output_token_budgets.md.
     "stream": False,
     "timeout": 480,
     "allowed_tries": 3,
@@ -39,7 +40,7 @@ REASONING_MODEL_CONFIG: dict[str, Any] = {
 # left unset.
 UTILITY_MODEL_CONFIG: dict[str, Any] = {
     "temperature": None,
-    "max_tokens": 32_000,
+    "max_tokens": OPENROUTER_OUTPUT_TOKEN_LIMIT,
     "stream": False,
     "timeout": 300,
     "allowed_tries": 3,
@@ -80,7 +81,9 @@ def _forecaster_slot(model: str, **kwargs: Any) -> GeneralLlm:
     The role is derived from the slug rather than written beside it so a roster swap cannot
     leave a slot mislabeled.
     """
-    return build_llm_with_openrouter_fallback(model=model, role=forecaster_role(model), **_FORECASTER_CONFIG, **kwargs)
+    return build_llm_with_openrouter_fallback(
+        model=model, role=forecaster_role(model), **{**_FORECASTER_CONFIG, **kwargs}
+    )
 
 
 # SEASON-START RITUAL (operator, not an implementing session): resolve "latest per vendor"
@@ -139,7 +142,9 @@ FORECASTER_LLMS: list[GeneralLlm] = [
     # Google slot. No explicit reasoning-effort kwarg; use provider defaults.
     # Pinned to the personal key: the donated account's Google AI Studio BYOK
     # integration returned quota 0 for Argon in the 2026-10-13 live probe.
-    _forecaster_slot("openrouter/google/gemini-4-argon"),
+    # Some Argon routes advertise a much larger limit, but 65,536 is the
+    # verified ceiling shared by all routes; preserve provider fallback options.
+    _forecaster_slot("openrouter/google/gemini-4-argon", max_tokens=GEMINI_OUTPUT_TOKEN_LIMIT),
 ]
 
 
