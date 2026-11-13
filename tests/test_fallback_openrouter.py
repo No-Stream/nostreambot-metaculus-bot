@@ -881,7 +881,7 @@ class TestBuilder:
         llm = build_llm_with_openrouter_fallback("openrouter/google/gemini-3.5-flash")
         assert isinstance(llm, FallbackOpenRouterLlm)
 
-    @pytest.mark.parametrize("model", ["gemini-3.1-pro-preview", "gemini-4-argon"])
+    @pytest.mark.parametrize("model", ["gemini-3.1-pro-preview", "gemini-4-argon", "gemini-4-carbon"])
     def test_builder_plain_for_google_pro_blocklisted_when_toggle_on(
         self, monkeypatch: pytest.MonkeyPatch, model: str
     ) -> None:
