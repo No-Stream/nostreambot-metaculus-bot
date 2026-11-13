@@ -57,8 +57,8 @@ def gemini_use_donated_openrouter_key() -> bool:
     (``"false"`` / ``"0"`` / ``"no"``) forces personal-key-only routing. Read at call time
     (not import) so workflow env changes take effect without re-importing.
 
-    The ``gemini-4-argon`` forecaster and ``gemini-3.1-pro-preview`` are PINNED to the personal key regardless,
-    and this toggle does not touch the google-genai grounded-search provider. Both
+    The ``gemini-4-carbon`` forecaster, ``gemini-4-argon`` and ``gemini-3.1-pro-preview`` are PINNED to the
+    personal key regardless, and this toggle does not touch the google-genai grounded-search provider. Both
     exceptions, with their receipts: docs/constants.md "gemini_use_donated_openrouter_key".
     """
     return env_flag_enabled(GEMINI_USE_DONATED_OPENROUTER_KEY_ENV, default=True)
@@ -757,4 +757,4 @@ RAW_RESEARCH_MAX_PAYLOAD_CHARS: int = 200_000
 # Live OpenRouter model/endpoint metadata checked 2026-11-08. Combined reasoning
 # and visible output. Explicit limits avoid lower, provider-dependent defaults.
 OPENROUTER_OUTPUT_TOKEN_LIMIT: int = 128_000  # Current OpenAI and Anthropic production slots.
-GEMINI_OUTPUT_TOKEN_LIMIT: int = 65_536  # Lowest advertised Argon route maximum.
+GEMINI_OUTPUT_TOKEN_LIMIT: int = 65_536  # Argon's lowest route; Carbon's Vertex US/EU routes (2026-11-13).

@@ -20,6 +20,14 @@ Last verified against the code on 2026-09-04.
 
 ## Roster-change history
 
+**2026-11-13 (Gemini 4 Carbon at high effort in the Google slot):** At the operator's request, the Google
+forecaster moves from `gemini-4-argon` at the provider-default effort (medium) to `gemini-4-carbon` at
+`reasoning.effort` `high`, Carbon's highest tier. The live [OpenRouter model list](https://openrouter.ai/api/v1/models)
+read that day lists `google/gemini-4-carbon` (added 2026-11-10) at $2/$10 per million tokens, the same as Argon,
+with low, medium and high efforts and medium as the default. The slot stays pinned to the personal key and keeps
+the 65,536 output cap and the 480s timeout. No paid run checked it before review. This is a forecaster roster
+boundary; its `eras.py` row takes the merge-to-main committer timestamp once merged.
+
 **2026-10-13 (research evidence and comment publication; merged with PR #77, 28e82b6, 2026-10-14T15:14:09Z):** The live agentic
 research proposal contract changes from model-transcribed quotations to delivered evidence
 references. Corrections remain prominent driver interpretations, with source excerpts,
@@ -98,7 +106,7 @@ A support model sits in one of two places, and the boundary is who builds the cl
 
 ### LLM objects in `llm_configs.py`
 
-- **Stacker**: `STACKER_LLM`, the Anthropic slot since 2026-07-20, uses effort-based adaptive thinking; the stacker chain remains configured but disabled in production. It falls back to `STACKER_FALLBACK_LLM`, deliberately a different vendor so an Anthropic stall does not take both attempts down. Both run at xhigh with `allowed_tries=1`, while the fallback has a tighter timeout because it fires late on the critical path. The OpenAI and Anthropic forecasters also run at xhigh; the Google forecaster runs at provider defaults. GPT-6.1 Sol supports low, medium, high, xhigh and max, with none and minimal unsupported; the configured effort stays at xhigh, preserving the operator's 2026-09-22 choice. The dated effort changes and timing receipts are recorded above, and the high-versus-xhigh quality/cost comparison remains open in FUTURE.md.
+- **Stacker**: `STACKER_LLM`, the Anthropic slot since 2026-07-20, uses effort-based adaptive thinking; the stacker chain remains configured but disabled in production. It falls back to `STACKER_FALLBACK_LLM`, deliberately a different vendor so an Anthropic stall does not take both attempts down. Both run at xhigh with `allowed_tries=1`, while the fallback has a tighter timeout because it fires late on the critical path. The OpenAI and Anthropic forecasters also run at xhigh; the Google forecaster runs at high, its top tier on OpenRouter, since 2026-11-13. GPT-6.1 Sol supports low, medium, high, xhigh and max, with none and minimal unsupported; the configured effort stays at xhigh, preserving the operator's 2026-09-22 choice. The dated effort changes and timing receipts are recorded above, and the high-versus-xhigh quality/cost comparison remains open in FUTURE.md.
 - **Disagreement analyzer**: `DISAGREEMENT_ANALYZER_LLM` (low-effort crux extractor; quality drives targeted-search query, running under `CRUX_SOFT_DEADLINE`; sol→terra 2026-07-17 per the blind role audit: terra 2nd, sol 3rd, at −49% cost, and the role fires rarely with stacking disabled in prod).
 - **Summarizer / researcher**: `SUMMARIZER_LLM` (aliased as `RESEARCHER_LLM`; low effort, deterministic; sol→terra 2026-07-18 operator decision: AskNews is an auxiliary source per the content audit (16% unique content), the role audit had sol over terra only at "MARGINAL EDGE", and 4/5 audited briefing failures were prompt-era not model-tier; terra −43% cost, ~50s vs ~118s wall). The summarizer prompt carries the 2026-07-18 AskNews-audit rules: a hard per-article relevance gate (off-topic articles DROPPED to a one-line "Screened out as not decision-relevant" list), recency-first ordering (lead with the newest resolution-relevant facts, don't mirror the raw Historical/Recent input structure), supersession + quote-the-deadline-inputs arithmetic transparency, an evidence-age disclosure opening the briefing ("Newest directly-relevant article: ..."), and a proportionality rule (length tracks decision-relevant content, not article count).
 - **Parser**: `PARSER_LLM` (low effort, deterministic; a capability-saturated extraction task, so it sits on the cheapest tier that saturates it. The per-token comparison behind that choice is in the `llm_configs.py` comment).
