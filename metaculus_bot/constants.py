@@ -525,8 +525,9 @@ GEMINI_SEARCH_MODEL_ENV: str = "GEMINI_SEARCH_MODEL"
 GOOGLE_API_KEY_ENV: str = "GOOGLE_API_KEY"
 # OpenRouter Gemini routing only. Receipt: docs/constants.md "GEMINI_USE_DONATED_OPENROUTER_KEY_ENV".
 GEMINI_USE_DONATED_OPENROUTER_KEY_ENV: str = "GEMINI_USE_DONATED_OPENROUTER_KEY"
-# Verified live on the native SDK 2026-09-03. Receipt: docs/constants.md "GEMINI_SEARCH_DEFAULT_MODEL".
-GEMINI_SEARCH_DEFAULT_MODEL: str = "gemini-3.8-flash"
+# gemini-3.8-flash -> gemini-4-hydrogen 2026-11-13; thinking levels unchanged. Receipt: docs/constants.md
+# "GEMINI_SEARCH_DEFAULT_MODEL".
+GEMINI_SEARCH_DEFAULT_MODEL: str = "gemini-4-hydrogen"
 # 6 min: a 10-round AFC chain takes 150-200 s. Receipt: docs/constants.md "GEMINI_SEARCH_TIMEOUT".
 GEMINI_SEARCH_TIMEOUT: int = 360
 # Per-call wall for resolving all cited search links; use the remaining search wall. Receipt: docs/constants.md "GEMINI_SEARCH_LINK_RESOLVE_TIMEOUT_S".
@@ -581,7 +582,7 @@ GAP_FILL_V2_EVIDENCE_FINDING_MAX_CHARS: int = 3000
 GAP_FILL_V2_DRIVER_MODEL: str = os.getenv("GAP_FILL_V2_DRIVER_MODEL") or "openai/gpt-6.1-terra"
 GAP_FILL_V2_DRIVER_EFFORT: str = os.getenv("GAP_FILL_V2_DRIVER_EFFORT") or "low"
 # A wrong id, or a robots-gated host, kills the rung silently. Receipt: docs/constants.md "GAP_FILL_V2_READER_MODEL".
-GAP_FILL_V2_READER_MODEL: str = os.getenv("GAP_FILL_V2_READER_MODEL") or "gemini-3.8-flash"
+GAP_FILL_V2_READER_MODEL: str = os.getenv("GAP_FILL_V2_READER_MODEL") or "gemini-4-hydrogen"
 # Raised with the W2 ambition floor 2026-07-21. Receipt: docs/constants.md "GAP_FILL_V2_MAX_TOOL_CALLS".
 GAP_FILL_V2_MAX_TOOL_CALLS: int = _int_env("GAP_FILL_V2_MAX_TOOL_CALLS", 30)
 # Inside v1's worst-case envelope. Receipt: docs/constants.md "GAP_FILL_V2_WALL_DEADLINE".

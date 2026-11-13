@@ -126,7 +126,7 @@ async def test_provider_uses_default_model(monkeypatch: pytest.MonkeyPatch) -> N
 
     assert fake_client.aio.models.generate_content.await_count == 1
     call_kwargs = fake_client.aio.models.generate_content.await_args.kwargs
-    assert call_kwargs["model"] == "gemini-3.8-flash"
+    assert call_kwargs["model"] == "gemini-4-hydrogen"
     assert "Will X happen?" in call_kwargs["contents"]
 
 
@@ -344,7 +344,7 @@ async def test_zero_verified_links_suppresses_and_records_loss(
     assert out == ""
     assert "GEMINI_SELF_CITATION: question=6004" in caplog.text
     assert "links=1 unique=1 resolved=0 unverified=1 sources=0" in caplog.text
-    assert "GEMINI_UNGROUNDED_SUPPRESSED: question=6004 model=gemini-3.8-flash queries=30" in caplog.text
+    assert "GEMINI_UNGROUNDED_SUPPRESSED: question=6004 model=gemini-4-hydrogen queries=30" in caplog.text
     detail = pop_provider_detail(6004, "gemini_search")
     assert _is_lost_source(detail["sources"]["grounding"])
 

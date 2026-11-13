@@ -771,6 +771,11 @@ Turning it off again, or widening its trigger population, is the operator's cost
 `RESOLUTION_SOURCE_URLCONTEXT_NOT_ADDRESSED`, under "Reading run logs") say how often the free
 pre-check saved a read and how often a paid read served nothing.
 
+Since 2026-11-13 both native surfaces run `gemini-4-hydrogen` at $1.50/$7.50 per M, at the same
+thinking levels; it is a Gemini 3-or-newer model, so it should draw the same grounding pool (confirm
+on ai.google.dev; the 2026-11-13 read came from secondary sources). The paragraph below is the
+gemini-3.8-flash history.
+
 Model prices, read from ai.google.dev on 2026-09-03: the two live native surfaces
 (grounded search and gap-fill v2's `read_document`) run `gemini-3.8-flash` since
 2026-09-03, verified live on the google-genai SDK. It draws the same grounding
