@@ -49,6 +49,8 @@ FALL_GPT61_SOL_MERGED_AT = datetime(2026, 9, 29, 21, 36, 57, tzinfo=UTC)
 FALL_GEMINI4_ARGON_MERGED_AT = datetime(2026, 10, 14, 15, 14, 9, tzinfo=UTC)
 # 2c45ed7, PR #79: gap resolver, gap-fill driver and AskNews summarizer -> gpt-6.1-terra; AskNews-only primary.
 FALL_TERRA_RESEARCH_MERGED_AT = datetime(2026, 10, 28, 20, 3, 31, tzinfo=UTC)
+# e5b3b52, PR #82: grounded search and the native url_context reader, gemini-3.8-flash -> gemini-4-hydrogen.
+FALL_GEMINI4_HYDROGEN_MERGED_AT = datetime(2026, 11, 13, 12, 43, 2, tzinfo=UTC)
 
 # 9f1175c (grid-scaled max-step for discrete CDF resampling) rode b4e9df0: one instant, two gates.
 GRID_SCALED_MAX_STEP_MERGED_AT = B4E9DF0_MERGED_AT
@@ -69,6 +71,7 @@ BOUNDARIES_UTC: dict[str, str] = {
     "fall_gpt61_sol_6489289": FALL_GPT61_SOL_MERGED_AT.isoformat(),
     "fall_gemini4_argon_28e82b6": FALL_GEMINI4_ARGON_MERGED_AT.isoformat(),
     "fall_terra_research_2c45ed7": FALL_TERRA_RESEARCH_MERGED_AT.isoformat(),
+    "fall_gemini4_hydrogen_e5b3b52": FALL_GEMINI4_HYDROGEN_MERGED_AT.isoformat(),
     "linters_eded193_not_a_boundary": LINTERS_MERGED_AT.isoformat(),
 }
 
@@ -94,6 +97,7 @@ FINE_SUBERA_TABLE: SuberaTable = (
     ("fall_gpt61_sol", FALL_GPT61_SOL_MERGED_AT),
     ("fall_gemini4_argon", FALL_GEMINI4_ARGON_MERGED_AT),
     ("fall_terra_research", FALL_TERRA_RESEARCH_MERGED_AT),
+    ("fall_gemini4_hydrogen", FALL_GEMINI4_HYDROGEN_MERGED_AT),
     # A new sub-era is one appended row: (<name>, <merge-to-main committer timestamp>).
 )
 

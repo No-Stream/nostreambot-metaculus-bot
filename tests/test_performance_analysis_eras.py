@@ -25,6 +25,7 @@ from metaculus_bot.performance_analysis.eras import (
     DRY_KEY_FIX_MERGED_AT,
     FALL_CONFIG_MERGED_AT,
     FALL_GEMINI4_ARGON_MERGED_AT,
+    FALL_GEMINI4_HYDROGEN_MERGED_AT,
     FALL_GPT6_OPUS55_MERGED_AT,
     FALL_GPT61_SOL_MERGED_AT,
     FALL_TARGET_MERGED_AT,
@@ -63,6 +64,7 @@ BOUNDARY_MERGES: tuple[tuple[str, str, datetime], ...] = (
     ("6489289", "FALL_GPT61_SOL_MERGED_AT", FALL_GPT61_SOL_MERGED_AT),
     ("28e82b6", "FALL_GEMINI4_ARGON_MERGED_AT", FALL_GEMINI4_ARGON_MERGED_AT),
     ("2c45ed7", "FALL_TERRA_RESEARCH_MERGED_AT", FALL_TERRA_RESEARCH_MERGED_AT),
+    ("e5b3b52", "FALL_GEMINI4_HYDROGEN_MERGED_AT", FALL_GEMINI4_HYDROGEN_MERGED_AT),
 )
 
 # b8d730f authored the widening flip six days before 0e85e1b merged it: the trap this file guards.
@@ -210,6 +212,7 @@ class TestSuberaTags:
             ("2026-09-29T21:36:57Z", "triple_fall_config", "fall_gpt61_sol"),
             ("2026-10-14T15:14:09Z", "triple_fall_config", "fall_gemini4_argon"),
             ("2026-10-28T20:03:31Z", "triple_fall_config", "fall_terra_research"),
+            ("2026-11-13T12:43:02Z", "triple_fall_config", "fall_gemini4_hydrogen"),
         ],
     )
     def test_subera_at_literal_instants(self, created_at: str, coarse: str, fine: str):
@@ -231,8 +234,14 @@ class TestSuberaTags:
         assert {triple_subera_of({"bot_comment_created_at": raw}) for raw in september} == {"triple_fall_config"}
 
     def test_the_fall_roster_merges_pool_into_one_coarse_bucket(self):
-        """The four fall roster/research merges are labelled finely but pooled for the season's reads."""
-        fall = ["2026-09-24T20:50:53Z", "2026-09-29T21:36:57Z", "2026-10-14T15:14:09Z", "2026-10-28T20:03:31Z"]
+        """The five fall roster/research merges are labelled finely but pooled for the season's reads."""
+        fall = [
+            "2026-09-24T20:50:53Z",
+            "2026-09-29T21:36:57Z",
+            "2026-10-14T15:14:09Z",
+            "2026-10-28T20:03:31Z",
+            "2026-11-13T12:43:02Z",
+        ]
         assert {triple_subera_of({"bot_comment_created_at": raw}) for raw in fall} == {"triple_fall_config"}
 
     def test_the_tag_vocabulary_the_standing_instruments_read(self):
@@ -256,6 +265,7 @@ class TestSuberaTags:
             "fall_gpt61_sol",
             "fall_gemini4_argon",
             "fall_terra_research",
+            "fall_gemini4_hydrogen",
         )
         assert eras.POST_TIME_BUDGET_FINE == (
             "time_budget",
@@ -264,6 +274,7 @@ class TestSuberaTags:
             "fall_gpt61_sol",
             "fall_gemini4_argon",
             "fall_terra_research",
+            "fall_gemini4_hydrogen",
         )
 
     def test_each_subera_table_is_ordered_and_distinct(self):

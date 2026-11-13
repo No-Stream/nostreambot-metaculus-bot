@@ -429,7 +429,7 @@ bot published its comment) and return the fields a round's tagging pass writes:
 |---|---|---|---|
 | `config_era` | `era_of` | `pre_flip`, `post_flip`, `triple_era`, `no_ts` | `era_gap` (its default `ERA_FIELD`), the clip sweep's era windows |
 | `triple_subera` | `triple_subera_of` | `triple_pre_market`, `triple_ranked_market`, `triple_time_budget`, `triple_fall_config` | the coarse pooling, where every fall merge is one bucket |
-| `triple_subera_fine` | `triple_subera_fine_of` | `pre_ft_unfreeze`, `ft_0292`, `july25`, `post_dry_key_fix`, `ranked_markets`, `time_budget`, `fall_config`, `fall_gpt6_opus55`, `fall_gpt61_sol`, `fall_gemini4_argon`, `fall_terra_research` | per-merge labels; the fall season's pooled read selects on the coarse field instead (below) |
+| `triple_subera_fine` | `triple_subera_fine_of` | `pre_ft_unfreeze`, `ft_0292`, `july25`, `post_dry_key_fix`, `ranked_markets`, `time_budget`, `fall_config`, `fall_gpt6_opus55`, `fall_gpt61_sol`, `fall_gemini4_argon`, `fall_terra_research`, `fall_gemini4_hydrogen` | per-merge labels; the fall season's pooled read selects on the coarse field instead (below) |
 | `ft_unfreeze_side` | `ft_unfreeze_side_of` | `pre_ft_0292`, `ft_0292` | the MC-clamp cuts |
 | `post_linters_merge` | `post_linters_merge_of` | `True` / `False` | provenance only |
 

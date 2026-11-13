@@ -984,7 +984,8 @@ OpenAI/Anthropic models). The `read_document` reader uses the personal
 
 One caveat worth flagging for operators: `GAP_FILL_V2_READER_MODEL`'s default id
 was `gemini-3.8-flash`, verified live on the native AI Studio SDK 2026-09-03; it moved
-to `gemini-4-hydrogen` on 2026-11-13 ahead of a live probe, so run
+to `gemini-4-hydrogen` on 2026-11-13 and answered `read_document` in that day's smoke, but has not
+been through the probe, so run
 `scripts/probes/gemini_verify.py` if `read_document` errors. A wrong id still
 soft-fails `read_document` (model-not-found becomes an error outcome), which
 silently disables the directed-reading rung without breaking anything else, and
