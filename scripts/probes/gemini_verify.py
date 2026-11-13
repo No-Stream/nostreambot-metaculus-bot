@@ -40,7 +40,7 @@ from metaculus_bot.research.url_context_telemetry import URL_RETRIEVAL_SUCCESS, 
 # The id under test. Deliberately a literal here rather than a read of
 # GEMINI_SEARCH_DEFAULT_MODEL: the point of this probe is to verify an id the repo
 # has NOT adopted yet, so reading the adopted one would test nothing.
-CANDIDATE_MODEL = "gemini-3.8-flash"
+CANDIDATE_MODEL = "gemini-4-hydrogen"
 
 # Matched pair for the robots test. Everything about the two calls is identical
 # except the target host's Google-Extended directive.

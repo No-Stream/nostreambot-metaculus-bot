@@ -1076,7 +1076,16 @@ blocklist, with no donated attempt and no 429, pending the Metaculus-side BYOK f
 
 ### GEMINI_SEARCH_DEFAULT_MODEL
 
-The grounded-search model, verified live on the native google-genai SDK on 2026-09-03 with three calls
+`gemini-4-hydrogen` since 2026-11-13 (the Gemini 4 successor to the Flash tier; Google dropped the Flash
+name with it), replacing `gemini-3.8-flash` at the same thinking levels (`medium` here, `low` on the reader).
+Operator decision: a straight swap with no paired A/B. Grounding draws the same shared monthly pool. Prices
+are $1.50 in and $7.50 out per 1M; gemini-3.8-flash moves to the same $1.50/$7.50 on 2027-01-01. On
+Artificial Analysis Intelligence Index v5.0.1 (read 2026-11-13) Hydrogen medium scores 41 at $0.80 per task
+against 30 at $6.26 for 3.8 Flash medium, and Hydrogen supports low, medium, high (default) and xhigh. Not
+yet verified live on the native SDK with `scripts/probes/gemini_verify.py`; the history below is the
+gemini-3.8-flash verification.
+
+The previous grounded-search model, verified live on the native google-genai SDK on 2026-09-03 with three calls
 from `scripts/probes/gemini_verify.py`: the response reported `model_version` gemini-3.8-flash, the
 `google_search` tool returned a web search query, `thinking_level` was accepted,
 and `url_context` retrieved a robots-allowed host. Grounding still needs billing enabled on the Google AI
@@ -1275,6 +1284,9 @@ Updated 2026-09-29 to `gpt-6.1-sol`, retaining low effort and the existing budge
 Changed 2026-10-27 to `gpt-6.1-terra` once GPT-6.1 shipped a Terra tier, at half Sol's price ($1/$5 against $2/$10 per million tokens), retaining low effort and the existing budgets. A two-question research-only run found its findings as complete as Sol's or more so, every claim with a quoted excerpt.
 
 ### GAP_FILL_V2_READER_MODEL
+
+`gemini-4-hydrogen` since 2026-11-13, moved together with `GEMINI_SEARCH_DEFAULT_MODEL` at the same `low`
+thinking level; see that entry. The paragraphs below record the gemini-3.8-flash verification.
 
 The `read_document` backend model on the native google-genai path,
 `research/agentic/tool_backends.py._run_document_read_sync`. Verified live on that SDK on 2026-09-03 with
