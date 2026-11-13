@@ -143,7 +143,8 @@ after Metaculus raised the Google rate limits on 2026-06-16, the donated OpenRou
 `gemini-3.1-flash-lite` succeed on the donated key, verified by live call in that session. Setting
 the env var to a false-y value ("false", "0", "no") forces personal-key-only routing.
 
-The known exceptions are `gemini-3.1-pro-preview` and the `gemini-4-argon` forecaster, pinned to the
+The known exceptions are `gemini-3.1-pro-preview`, `gemini-4-argon` and the `gemini-4-carbon` forecaster
+(Carbon by analogy with Argon, unprobed on the donated key), pinned to the
 personal key rather than merely falling back to it. They sit on the
 `DONATED_KEY_BLOCKED_GOOGLE_MODELS` blocklist in `fallback_openrouter`, so
 `should_route_via_donated_key` returns False for them even when this toggle is True: no donated
@@ -1069,7 +1070,7 @@ provider, which always uses the personal `GOOGLE_API_KEY`.
 
 Default on since 2026-06-16: after Metaculus raised the Google rate limits, the donated key serves most
 Gemini models, including gemini-3.5-flash and gemini-3.1-flash-lite. The known exceptions are
-gemini-3.1-pro-preview and gemini-4-argon, pinned to the personal key via the `DONATED_KEY_BLOCKED_GOOGLE_MODELS`
+gemini-3.1-pro-preview, gemini-4-argon and gemini-4-carbon, pinned to the personal key via the `DONATED_KEY_BLOCKED_GOOGLE_MODELS`
 blocklist, with no donated attempt and no 429, pending the Metaculus-side BYOK fix; see
 `TODO(gemini-3.1-pro-donated)` in `fallback_openrouter`. The full reasoning is under
 `gemini_use_donated_openrouter_key` above.

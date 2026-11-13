@@ -11,6 +11,12 @@ Opus 5.5 advertise 128,000. Argon's headline is 943,718, but its endpoint list a
 contains 65,536-token routes; the smaller ceiling preserves routing compatibility.
 Do not copy the headline maximum blindly across routes.
 
+Gemini 4 Carbon replaced Argon in the Google slot on 2026-11-13 and keeps the 65,536 cap. Its
+`/endpoints` list read that day shows seven routes: four at 943,718, the Vertex US and EU routes at
+65,536, and the plain Google AI Studio route at 32,768. A 65,536 request may skip that one route
+rather than fit it; dropping to 32,768 to keep it would leave little room for an answer at `high`
+effort, which is the failure the November 8 change was made for.
+
 Omitting `max_tokens` is not unlimited: [OpenRouter omits it upstream](https://openrouter.ai/docs/api_reference/parameters),
 leaving provider defaults. Those defaults need not be the advertised maximum, so
 we use explicit verified ceilings instead. Remaining context space still applies.
