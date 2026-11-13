@@ -20,13 +20,23 @@ Last verified against the code on 2026-09-04.
 
 ## Roster-change history
 
-**2026-11-13 (Gemini 4 Carbon at high effort in the Google slot):** At the operator's request, the Google
+**2026-11-13 (Gemini 4 Carbon at high effort in the Google slot, PR #83, fdc1483, 2026-11-13T14:36:58Z):** At the operator's request, the Google
 forecaster moves from `gemini-4-argon` at the provider-default effort (medium) to `gemini-4-carbon` at
 `reasoning.effort` `high`, Carbon's highest tier. The live [OpenRouter model list](https://openrouter.ai/api/v1/models)
 read that day lists `google/gemini-4-carbon` (added 2026-11-10) at $2/$10 per million tokens, the same as Argon,
 with low, medium and high efforts and medium as the default. The slot stays pinned to the personal key and keeps
 the 65,536 output cap and the 480s timeout. No paid run checked it before review. This is a forecaster roster
-boundary; its `eras.py` row takes the merge-to-main committer timestamp once merged.
+boundary, recorded as the `fall_gemini4_carbon` sub-era in `performance_analysis/eras.py` and pooled
+into `triple_fall_config`.
+
+**2026-11-13 (Gemini 4 Hydrogen for the native research surfaces, PR #82, e5b3b52, 2026-11-13T12:43:02Z):** At
+the operator's request, the grounded-search provider and the native `url_context` reader (`GEMINI_SEARCH_DEFAULT_MODEL`
+and `GAP_FILL_V2_READER_MODEL`) move together from `gemini-3.8-flash` to `gemini-4-hydrogen` at unchanged thinking
+levels, as a straight swap with no paired test. On Artificial Analysis (read 2026-11-13) Hydrogen at medium scores 41
+at $0.80 per task against 30 at $6.26 for 3.8 Flash. A one-question smoke on the branch ran clean at about $1.42 all in;
+its one oddity, a grounded-search `search_queries=0`, is recorded under `GEMINI_SEARCH_DEFAULT_MODEL` in
+[constants.md](constants.md). This is a research-pipeline boundary with no forecaster roster change, recorded as the
+`fall_gemini4_hydrogen` sub-era in `performance_analysis/eras.py` and pooled into `triple_fall_config`.
 
 **2026-10-13 (research evidence and comment publication; merged with PR #77, 28e82b6, 2026-10-14T15:14:09Z):** The live agentic
 research proposal contract changes from model-transcribed quotations to delivered evidence

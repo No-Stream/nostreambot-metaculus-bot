@@ -1082,9 +1082,13 @@ name with it), replacing `gemini-3.8-flash` at the same thinking levels (`medium
 Operator decision: a straight swap with no paired A/B. Grounding draws the same shared monthly pool. Prices
 are $1.50 in and $7.50 out per 1M; gemini-3.8-flash moves to the same $1.50/$7.50 on 2027-01-01. On
 Artificial Analysis Intelligence Index v5.0.1 (read 2026-11-13) Hydrogen medium scores 41 at $0.80 per task
-against 30 at $6.26 for 3.8 Flash medium, and Hydrogen supports low, medium, high (default) and xhigh. Not
-yet verified live on the native SDK with `scripts/probes/gemini_verify.py`; the history below is the
-gemini-3.8-flash verification.
+against 30 at $6.26 for 3.8 Flash medium, and Hydrogen supports low, medium, high (default) and xhigh. Seen
+live in the `test_bot_basic` smoke on the PR #82 branch (run 43406470160, 2026-11-13, Q14333): both
+`GEMINI_USAGE` rows reported `model=gemini-4-hydrogen`, grounded search took 42.6s and returned 21 resolved
+sources. That row read `search_queries=0` and `tool_use_prompt_tokens=n/a` although the call plainly searched,
+so Hydrogen appears not to populate `grounding_metadata.web_search_queries`: nothing functional keys on it, but
+grounding-pool usage read from these rows undercounts until confirmed against Google's billing view. Not yet
+run through `scripts/probes/gemini_verify.py`; the history below is the gemini-3.8-flash verification.
 
 The previous grounded-search model, verified live on the native google-genai SDK on 2026-09-03 with three calls
 from `scripts/probes/gemini_verify.py`: the response reported `model_version` gemini-3.8-flash, the
