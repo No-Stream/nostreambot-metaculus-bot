@@ -270,8 +270,8 @@ Gemini has two separate routes, which is the other easy thing to confuse:
   free-tier Google AI Studio BYOK key on the donated account with quota 0
   (`is_byok:true` + `FreeTier limit: 0`). A donated-key-only call for Gemini 4 Argon
   on 2026-10-13 returned HTTP 429 with input-token and request free-tier limits of 0.
-  Gemini 4 Carbon, the forecaster since 2026-11-13, is pinned by analogy and has not been probed on the
-  donated key.
+  Gemini 4 Carbon, briefly the forecaster on 2026-11-13/14, is pinned by analogy and has not been probed on
+  the donated key.
   This is a temporary workaround
   tagged `TODO(gemini-3.1-pro-donated)` in code: remove the blocklist entry once
   Metaculus fixes the BYOK routing (enable Cloud billing on the BYOK key's GCP
