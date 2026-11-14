@@ -20,7 +20,7 @@ Last verified against the code on 2026-09-04.
 
 ## Roster-change history
 
-**2026-11-14 (Google slot back to Gemini 4 Argon at the provider-default effort):** `gemini-4-carbon` at
+**2026-11-14 (Google slot back to Gemini 4 Argon at the provider-default effort, PR #85, 79c1d7a, 2026-11-14T08:11:00Z):** `gemini-4-carbon` at
 `reasoning.effort` `high` hit `FORECASTER_SOFT_DEADLINE` (600s) on all three questions it saw after PR #83
 (Q46727 and Q46728 on 2026-11-13, Mantic 879 on 2026-11-14), so each published on two voices. On those
 questions the other slots finished in 83 to 323s; Argon had finished 5 of 5 questions on 2026-11-12/13 in 69
@@ -28,8 +28,8 @@ to 96s from the end of research. Each dropped Carbon call still billed about $0.
 to a full Argon-sized call (about 20k tokens in, 5k out), which points at slow serving of a four-day-old model
 rather than at runaway thinking, so dropping Carbon to medium effort was judged unlikely to be enough. The
 slot returns to exactly its pre-#83 config. Carbon stays on `DONATED_KEY_BLOCKED_GOOGLE_MODELS` so a retry
-keeps routing; measure its latency before retrying (`FUTURE.md`). This is a forecaster roster boundary; its
-`eras.py` row needs this merge's committer timestamp, so it belongs in a follow-up after merge.
+keeps routing; measure its latency before retrying (`FUTURE.md`). This is a forecaster roster boundary, recorded as the
+`fall_argon_restored` sub-era in `performance_analysis/eras.py` and pooled into `triple_fall_config`.
 
 **2026-11-13 (Gemini 4 Carbon at high effort in the Google slot, PR #83, fdc1483, 2026-11-13T14:36:58Z):** At the operator's request, the Google
 forecaster moves from `gemini-4-argon` at the provider-default effort (medium) to `gemini-4-carbon` at
