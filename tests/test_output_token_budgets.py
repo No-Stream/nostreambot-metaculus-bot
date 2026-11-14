@@ -18,7 +18,8 @@ def test_forecaster_budgets_preserve_timeouts_and_effort():
         assert kwargs["max_tokens"] == (65_536 if is_google else 128_000)
         assert kwargs["timeout"] == 480
         assert kwargs["stream"] is False
-        assert kwargs["reasoning"] == {"effort": "high" if is_google else "xhigh"}
+        if not is_google:
+            assert kwargs["reasoning"] == {"effort": "xhigh"}
 
 
 def test_other_production_slots_use_full_verified_allowance():

@@ -6,6 +6,15 @@ and planning docs named here may have moved out of the public repo. Neither is a
 
 ## Open, operator decides
 
+- **Retry Gemini 4 Carbon in the Google slot?** Reverted to Argon on 2026-11-14 after Carbon at effort `high`
+  hit the 600s soft deadline on 3 of 3 questions (`docs/roster_history.md`). The cause is not pinned down:
+  each dropped call billed about $0.10, an Argon-sized call, which reads as slow serving of a new model rather
+  than long thinking, but the logs cannot separate queueing from low throughput. Before retrying, read the
+  three generations' provider, latency and token counts on the OpenRouter activity page (free), or time one
+  prod-prompt Carbon call at `high` and one at `medium` with the operator's yes (about $0.10 each).
+  Raising `FORECASTER_SOFT_DEADLINE` is not the lever: it feeds the time-budget fast-path sums and the
+  deadline code takes strictly-safer changes only.
+
 - **Gap-fill v1 for the fall**: leaned (about $1.75 a question, over the $1.50 ceiling) or off (about $1.37), against a
   roughly $1 target. Its gate discharged 2026-09-09 MIXED over 99 both-on bundles: forecaster lens v1 59 / v2 32,
   resolution lens 28 / 24, the passes complementary, v1 building reference classes while v2 reads the resolving

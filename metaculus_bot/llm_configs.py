@@ -139,17 +139,15 @@ FORECASTER_LLMS: list[GeneralLlm] = [
         "openrouter/anthropic/claude-opus-5.5",
         reasoning={"effort": "xhigh"},
     ),
-    # Google slot. 2026-11-13: gemini-4-argon (provider-default effort, medium) -> gemini-4-carbon at
-    # effort=high, Carbon's top tier on OpenRouter (low/medium/high; default medium), read from the live
-    # model list that day. Pinned to the personal key like Argon: the donated account's Google AI Studio
-    # BYOK integration returned quota 0 for Argon in the 2026-10-13 live probe, and Carbon is unprobed
-    # there. 65,536 is the ceiling of Carbon's two Vertex US/EU routes; one AI Studio route caps at 32,768
-    # and the rest at 943,718 (see docs/output_token_budgets.md).
-    _forecaster_slot(
-        "openrouter/google/gemini-4-carbon",
-        reasoning={"effort": "high"},
-        max_tokens=GEMINI_OUTPUT_TOKEN_LIMIT,
-    ),
+    # Google slot. No explicit reasoning-effort kwarg; use provider defaults (medium).
+    # 2026-11-14: back to gemini-4-argon after gemini-4-carbon at effort=high (PR #83, 2026-11-13) hit
+    # FORECASTER_SOFT_DEADLINE on all 3 questions it saw (Q46727, Q46728, Mantic 879), while Argon had
+    # finished 5 of 5 the day before in 69-96s. See docs/roster_history.md 2026-11-14.
+    # Pinned to the personal key: the donated account's Google AI Studio BYOK
+    # integration returned quota 0 for Argon in the 2026-10-13 live probe.
+    # Some Argon routes advertise a much larger limit, but 65,536 is the
+    # verified ceiling shared by all routes; preserve provider fallback options.
+    _forecaster_slot("openrouter/google/gemini-4-argon", max_tokens=GEMINI_OUTPUT_TOKEN_LIMIT),
 ]
 
 

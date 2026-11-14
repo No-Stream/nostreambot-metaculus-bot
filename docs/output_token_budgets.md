@@ -11,7 +11,8 @@ Opus 5.5 advertise 128,000. Argon's headline is 943,718, but its endpoint list a
 contains 65,536-token routes; the smaller ceiling preserves routing compatibility.
 Do not copy the headline maximum blindly across routes.
 
-Gemini 4 Carbon replaced Argon in the Google slot on 2026-11-13 and keeps the 65,536 cap. Its
+Gemini 4 Carbon replaced Argon in the Google slot on 2026-11-13 and kept the 65,536 cap; Argon was
+restored on 2026-11-14 after Carbon timed out (see roster_history.md). Its
 `/endpoints` list read that day shows seven routes: four at 943,718, the Vertex US and EU routes at
 65,536, and the plain Google AI Studio route at 32,768. A 65,536 request may skip that one route
 rather than fit it; dropping to 32,768 to keep it would leave little room for an answer at `high`
