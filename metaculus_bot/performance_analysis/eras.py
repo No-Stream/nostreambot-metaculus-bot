@@ -53,6 +53,8 @@ FALL_TERRA_RESEARCH_MERGED_AT = datetime(2026, 10, 28, 20, 3, 31, tzinfo=UTC)
 FALL_GEMINI4_HYDROGEN_MERGED_AT = datetime(2026, 11, 13, 12, 43, 2, tzinfo=UTC)
 # fdc1483, PR #83: the Google forecaster, gemini-4-argon (default effort) -> gemini-4-carbon at effort high.
 FALL_GEMINI4_CARBON_MERGED_AT = datetime(2026, 11, 13, 14, 36, 58, tzinfo=UTC)
+# 79c1d7a, PR #85: the Google forecaster back to gemini-4-argon (default effort) after Carbon timed out.
+FALL_ARGON_RESTORED_MERGED_AT = datetime(2026, 11, 14, 8, 11, 0, tzinfo=UTC)
 
 # 9f1175c (grid-scaled max-step for discrete CDF resampling) rode b4e9df0: one instant, two gates.
 GRID_SCALED_MAX_STEP_MERGED_AT = B4E9DF0_MERGED_AT
@@ -75,6 +77,7 @@ BOUNDARIES_UTC: dict[str, str] = {
     "fall_terra_research_2c45ed7": FALL_TERRA_RESEARCH_MERGED_AT.isoformat(),
     "fall_gemini4_hydrogen_e5b3b52": FALL_GEMINI4_HYDROGEN_MERGED_AT.isoformat(),
     "fall_gemini4_carbon_fdc1483": FALL_GEMINI4_CARBON_MERGED_AT.isoformat(),
+    "fall_argon_restored_79c1d7a": FALL_ARGON_RESTORED_MERGED_AT.isoformat(),
     "linters_eded193_not_a_boundary": LINTERS_MERGED_AT.isoformat(),
 }
 
@@ -102,6 +105,7 @@ FINE_SUBERA_TABLE: SuberaTable = (
     ("fall_terra_research", FALL_TERRA_RESEARCH_MERGED_AT),
     ("fall_gemini4_hydrogen", FALL_GEMINI4_HYDROGEN_MERGED_AT),
     ("fall_gemini4_carbon", FALL_GEMINI4_CARBON_MERGED_AT),
+    ("fall_argon_restored", FALL_ARGON_RESTORED_MERGED_AT),
     # A new sub-era is one appended row: (<name>, <merge-to-main committer timestamp>).
 )
 
