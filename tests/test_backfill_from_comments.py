@@ -61,29 +61,31 @@ No forecasts available.
 """
 
 
-def test_comment_backfill_expands_archived_list_comments(monkeypatch):
-    import scripts.backfill_research_from_comments as mod
+def _truncated_fixture() -> dict:
+    return json.loads((Path(__file__).parent / "data" / "truncated_comment_payloads.json").read_text())
 
-    fixture_path = Path(__file__).parent / "data" / "truncated_comment_payloads.json"
-    list_comment = json.loads(fixture_path.read_text())["list_comment"]
+
+def test_comment_listing_returns_archived_stubs_unexpanded(monkeypatch):
+    """The listing pulls public plus private and leaves archived stubs alone; expansion is deferred."""
+    import scripts.backfill_research_from_comments as mod
+    from metaculus_bot.performance_analysis import collector
+
+    list_comment = _truncated_fixture()["list_comment"]
     calls: list[tuple[str, dict | None]] = []
 
-    def fake_api_get(endpoint: str, token: str, params: dict | None = None) -> dict:
-        calls.append((endpoint, params))
+    def fake_api_get(path: str, token: str, params: dict | None = None) -> dict:
+        calls.append((path, params))
         return {"results": [list_comment], "next": None}
 
-    def expand(comment: dict, token: str) -> dict:
-        assert token == "token"
-        return {**comment, "text": SAMPLE_COMMENT_FULL}
-
-    monkeypatch.setattr(mod, "api_get", fake_api_get)
-    monkeypatch.setattr(mod, "expand_truncated_comment", expand)
+    monkeypatch.setattr(collector, "api_get", fake_api_get)
 
     comments = mod.fetch_all_comments("token")
 
-    assert len(comments) == 1
-    assert comments[0]["text"] == SAMPLE_COMMENT_FULL
-    assert [params and params.get("is_private") for _, params in calls] == [None, "true"]
+    assert comments == [list_comment]
+    assert [(path, params and params.get("is_private")) for path, params in calls] == [
+        ("/comments/", None),
+        ("/comments/", "true"),
+    ]
 
 
 # Mirrors SAMPLE_COMMENT_FULL but carries the research blocks ADDED this session:
@@ -468,7 +470,7 @@ class TestBuildRecord:
 
 
 def _run_main(tmp_path, monkeypatch, comments, *, extra_argv=()):
-    """Drive the CLI end to end with the network, token load and rate-gate stubbed out.
+    """Drive the CLI end to end with the comment listing, token load and post lookup stubbed out.
 
     Everything below the API boundary is real: argument parsing, the post_id -> question_id
     cache, the dedup read of an existing output file, record building and the JSONL write.
@@ -481,7 +483,6 @@ def _run_main(tmp_path, monkeypatch, comments, *, extra_argv=()):
     monkeypatch.setattr(mod, "get_token", lambda: "token")
     monkeypatch.setattr(mod, "verify_metaculus_api_identity", lambda: None)
     monkeypatch.setattr(mod, "fetch_all_comments", lambda token: comments)
-    monkeypatch.setattr(mod.time, "sleep", lambda _s: None)
 
     def _resolve(post_id: int, token: str) -> int | None:
         resolved.append(post_id)
@@ -552,3 +553,28 @@ class TestMainWritesTheBackfillFile:
 
         assert [r["on_post"] for r in written] == [101]
         assert resolved == [101]
+
+    def test_an_archived_stub_is_expanded_only_while_its_post_is_uncaptured(self, tmp_path, monkeypatch):
+        """Re-running the backfill must not re-fetch archived comments it already wrote.
+
+        Every sync used to expand every archived stub up front, one unpaced detail GET each,
+        which tripped Cloudflare's 429s on every expansion (2026-11-19).
+        """
+        from metaculus_bot.performance_analysis import collector
+
+        fixture = _truncated_fixture()
+        stub = fixture["list_comment"]
+        expansions: list[str] = []
+
+        def fake_api_get(path: str, token: str, params: dict | None = None) -> dict:
+            expansions.append(path)
+            return {**fixture["detail_comment"], "text": SAMPLE_COMMENT_FULL}
+
+        monkeypatch.setattr(collector, "api_get", fake_api_get)
+
+        first_written, _ = _run_main(tmp_path, monkeypatch, [stub])
+        assert [r["on_post"] for r in first_written] == [stub["on_post"]]
+        assert expansions == [f"/comments/{stub['id']}/"]
+
+        _run_main(tmp_path, monkeypatch, [stub])
+        assert expansions == [f"/comments/{stub['id']}/"]

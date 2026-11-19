@@ -65,6 +65,16 @@ its own traceback rather than arriving as a slow success, and an exhausted 429 r
 naming the rate limit instead of reporting the whole rate-limited run as one unlucky request.
 A sustained outage still fails the pull; re-running it is free.
 
+**Every request is paced, not only the page loops.** `api_get` waits until
+`MIN_REQUEST_INTERVAL_SECS` (2 s) has passed since the process's previous Metaculus request.
+The page loops used to sleep 0.5 s between pages while archived-comment expansion
+(`expand_truncated_comment`) ran back to back with no wait. On 2026-11-19 every expansion drew
+two Cloudflare 429s (`Retry-After: 2`, yet still limited after the 5 s backoff) before the 10 s
+retry succeeded, so a `make sync_all` spent about 15 s per archived comment. A comment listing
+paced at 2 s drew no 429s over 17 pages. The comment backfill now goes through the same
+`api_get` and expands a stub only when its post is about to be written, so a re-run fetches
+nothing it already holds.
+
 **Pass `--prior <previous round's dataset>` on every round pull.** Metaculus
 re-resolves questions IN PLACE without moving any timestamp we store. It edited q44798
 (Halo: Campaign Evolved Metascore) from 80 to 82 with `resolution_set_time` left at a

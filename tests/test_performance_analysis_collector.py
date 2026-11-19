@@ -1,6 +1,6 @@
 """Tests for the Metaculus collector: its HTTP retry, its two pulls, and per-record processing.
 
-Covers ``_api_get``'s shared retry budget, the paged resolved-post pull, the public-plus-private
+Covers ``api_get``'s shared retry budget, the paged resolved-post pull, the public-plus-private
 comment pull, and the fields ``_process_post`` stamps onto a record (the comment timestamp, the
 crowd size, the stacker outcome and its provenance, the practice-post and date-question skips).
 """
@@ -19,8 +19,48 @@ from metaculus_bot.performance_analysis.collector import _process_post
 from tests.performance_analysis_fakes import _binary_post, _FakeResponse
 
 
+@pytest.fixture(autouse=True)
+def _fresh_request_pacing(monkeypatch):
+    """Each test starts as a fresh process would: no previous request to space against."""
+    monkeypatch.setattr(collector._REQUEST_PACER, "last_started_at", None)
+
+
+class TestApiGetPacing:
+    """Consecutive requests are spaced by MIN_REQUEST_INTERVAL_SECS, whoever the caller is.
+
+    Back-to-back archived-comment expansions drew two Cloudflare 429s each on 2026-11-19,
+    because only the page loops slept between requests.
+    """
+
+    def test_back_to_back_comment_expansions_are_spaced(self, monkeypatch):
+        clock = [1000.0]
+        sleeps: list[float] = []
+
+        def fake_sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+            clock[0] += seconds
+
+        def fake_get(url: str, headers: dict | None = None, params: dict | None = None, timeout: float | None = None):
+            comment_id = int(url.rstrip("/").rsplit("/", 1)[1])
+            return _FakeResponse(200, {"id": comment_id, "text": "full comment text"})
+
+        monkeypatch.setattr(collector.time, "monotonic", lambda: clock[0])
+        monkeypatch.setattr(collector.time, "sleep", fake_sleep)
+        monkeypatch.setattr(collector.requests, "get", fake_get)
+        stub_template = json.loads((Path(__file__).parent / "data" / "truncated_comment_payloads.json").read_text())
+
+        list_comment = stub_template["list_comment"]
+        collector.expand_truncated_comment(list_comment, "token")
+        collector.expand_truncated_comment(list_comment, "token")
+        clock[0] += collector.MIN_REQUEST_INTERVAL_SECS
+        collector.expand_truncated_comment(list_comment, "token")
+
+        # The second request waits out the interval; the third, already past it, does not wait.
+        assert sleeps == [collector.MIN_REQUEST_INTERVAL_SECS]
+
+
 class TestApiGetRetry:
-    """``_api_get`` retries a transient network failure, and its wall clock stays bounded.
+    """``api_get`` retries a transient network failure, and its wall clock stays bounded.
 
     A read timeout used to propagate on its first occurrence, so one slow page abandoned a
     whole tournament sweep and wrote nothing after several minutes of paging. Nine residual
@@ -56,7 +96,7 @@ class TestApiGetRetry:
             [requests.exceptions.ReadTimeout("slow page"), _FakeResponse(200, {"results": [{"id": 7}]})],
         )
 
-        assert collector._api_get("/posts/", "token") == {"results": [{"id": 7}]}
+        assert collector.api_get("/posts/", "token") == {"results": [{"id": 7}]}
         assert len(calls) == 2
         assert sleeps == [collector.RETRY_BACKOFF_SECS]
 
@@ -65,14 +105,14 @@ class TestApiGetRetry:
             monkeypatch, [requests.exceptions.ConnectionError("reset by peer"), _FakeResponse(200, {"results": []})]
         )
 
-        assert collector._api_get("/comments/", "token") == {"results": []}
+        assert collector.api_get("/comments/", "token") == {"results": []}
 
     def test_exhausted_transient_retries_raise_the_underlying_requests_error(self, monkeypatch):
         timeout = requests.exceptions.ReadTimeout("still slow")
         sleeps, calls = self._install(monkeypatch, [timeout] * collector.MAX_RETRIES)
 
         with pytest.raises(requests.exceptions.ReadTimeout):
-            collector._api_get("/posts/", "token")
+            collector.api_get("/posts/", "token")
 
         # Every attempt is spent, and the last one does not sleep before giving up.
         assert len(calls) == collector.MAX_RETRIES
@@ -84,7 +124,7 @@ class TestApiGetRetry:
         sleeps, calls = self._install(monkeypatch, outcomes)
 
         with pytest.raises(requests.exceptions.RequestException):
-            collector._api_get("/posts/", "token")
+            collector.api_get("/posts/", "token")
 
         assert len(calls) == collector.MAX_RETRIES
         # Worst-case wall clock: MAX_RETRIES reads at the request timeout, plus these backoffs.
@@ -94,13 +134,13 @@ class TestApiGetRetry:
         self._install(monkeypatch, [_FakeResponse(429)] * collector.MAX_RETRIES)
 
         with pytest.raises(requests.exceptions.HTTPError, match="429 rate limit"):
-            collector._api_get("/posts/", "token")
+            collector.api_get("/posts/", "token")
 
     def test_a_server_error_is_not_retried(self, monkeypatch):
         _sleeps, calls = self._install(monkeypatch, [_FakeResponse(500)])
 
         with pytest.raises(requests.exceptions.HTTPError):
-            collector._api_get("/posts/", "token")
+            collector.api_get("/posts/", "token")
 
         assert len(calls) == 1
 
@@ -109,7 +149,7 @@ class TestApiGetRetry:
             monkeypatch, [requests.exceptions.ReadTimeout("slow"), _FakeResponse(200, {"results": []})]
         )
 
-        collector._api_get("/posts/", "token")
+        collector.api_get("/posts/", "token")
 
         assert [call["timeout"] for call in calls] == [collector.REQUEST_TIMEOUT_SECS] * 2
 
@@ -137,8 +177,7 @@ class TestFetchResolvedQuestions:
             page = remaining.pop(0)
             return {"results": page, "next": "next-page" if remaining else None}
 
-        monkeypatch.setattr(collector, "_api_get", fake_api_get)
-        monkeypatch.setattr(collector, "FETCH_DELAY_SECS", 0.0)
+        monkeypatch.setattr(collector, "api_get", fake_api_get)
         return seen
 
     def test_returns_the_list_payloads_across_pages_with_no_per_post_get(self, monkeypatch):
@@ -196,8 +235,7 @@ class TestFetchBotComments:
             page = pages.pop(0)
             return {"results": page, "next": "next-page" if pages else None}
 
-        monkeypatch.setattr(collector, "_api_get", fake_api_get)
-        monkeypatch.setattr(collector, "FETCH_DELAY_SECS", 0.0)
+        monkeypatch.setattr(collector, "api_get", fake_api_get)
         return seen
 
     @staticmethod
@@ -268,7 +306,7 @@ class TestTruncatedCommentRecovery:
             assert token == "bot-token"
             return detail_comment
 
-        monkeypatch.setattr(collector, "_api_get", fake_api_get)
+        monkeypatch.setattr(collector, "api_get", fake_api_get)
 
         lookup = collector._build_comment_lookup([list_comment], "bot-token")
         records = _process_post(_binary_post(list_comment["on_post"], 45859), lookup)
@@ -281,7 +319,7 @@ class TestTruncatedCommentRecovery:
 
     def test_truncated_comment_without_full_text_raises(self, monkeypatch):
         list_comment = self._payloads()["list_comment"]
-        monkeypatch.setattr(collector, "_api_get", lambda path, token, params=None: {"id": list_comment["id"]})
+        monkeypatch.setattr(collector, "api_get", lambda path, token, params=None: {"id": list_comment["id"]})
 
         with pytest.raises(ValueError, match=r"full comment .* has no text"):
             collector._build_comment_lookup([list_comment], "bot-token")
@@ -290,7 +328,7 @@ class TestTruncatedCommentRecovery:
         comment = self._payloads()["list_comment_with_markdown_link"]
         monkeypatch.setattr(
             collector,
-            "_api_get",
+            "api_get",
             lambda path, token, params=None: {"id": comment["id"], "text": "full comment text"},
         )
 

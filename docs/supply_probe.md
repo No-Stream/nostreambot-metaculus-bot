@@ -119,10 +119,10 @@ reliability".
 - **Bounded 429 retry, spaced requests.** The Metaculus endpoint rate-limits aggressively right
   after a full performance pull, so every request carries a linear-backoff retry (linear, not
   exponential, because the endpoint recovers in seconds and the probe pages several slugs) and
-  pages are spaced one second apart. Per-post detail GETs are spaced tighter, at the scoring
-  pull's own `FETCH_DELAY_SECS`, imported rather than copied so the two read-only Metaculus
+  pages are spaced one second apart. Per-post detail GETs are spaced at the scoring pull's own
+  `MIN_REQUEST_INTERVAL_SECS` (2 s), imported rather than copied so the two read-only Metaculus
   walkers cannot drift into different politeness. The sweep logs progress every 25 posts: at
-  0.5 s spacing that is an INFO line about every 13 seconds, enough to tell a slow sweep from a
+  2 s spacing that is an INFO line about every 50 seconds, enough to tell a slow sweep from a
   wedged one without burying the slug's own summary; every GET is a DEBUG line for a per-URL trace.
 - **Dead slugs are error rows.** A slug that errors (the bare `metaculus-cup` slug and an unknown
   Mantic slug both answer 400) is reported as an error row and the survey continues, so one dead

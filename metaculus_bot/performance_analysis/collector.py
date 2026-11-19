@@ -42,7 +42,12 @@ BASE_URL = "https://www.metaculus.com/api"
 DEFAULT_BOT_USER_ID = 275109
 DEFAULT_TOURNAMENT = "spring-aib-2026"
 
-FETCH_DELAY_SECS: float = 0.5
+# Minimum gap between any two Metaculus API requests this process sends. Cloudflare's per-IP
+# limiter answers a burst with 429s that outlast the 2s Retry-After it sends: on 2026-11-19
+# back-to-back comment expansions drew two 429s each (5s and 10s backoffs) before succeeding,
+# while a comment listing paced at 2s drew none over 17 pages. Paced inside api_get so every
+# caller (page loops, comment expansion, the backfill script) shares one budget.
+MIN_REQUEST_INTERVAL_SECS: float = 2.0
 MAX_RETRIES: int = 3
 RETRY_BACKOFF_SECS: float = 5.0
 REQUEST_TIMEOUT_SECS: float = 30.0
@@ -67,8 +72,29 @@ def _make_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Token {token}"}
 
 
-def _api_get(path: str, token: str, params: dict | None = None) -> dict:
+@dataclass
+class _RequestPacer:
+    """When this process last started a Metaculus request, so the next one can keep its distance."""
+
+    last_started_at: float | None = None
+
+    def wait_for_slot(self) -> None:
+        """Sleep until ``MIN_REQUEST_INTERVAL_SECS`` has passed since the previous request started."""
+        if self.last_started_at is not None:
+            remaining = MIN_REQUEST_INTERVAL_SECS - (time.monotonic() - self.last_started_at)
+            if remaining > 0:
+                time.sleep(remaining)
+        self.last_started_at = time.monotonic()
+
+
+_REQUEST_PACER = _RequestPacer()
+
+
+def api_get(path: str, token: str, params: dict | None = None) -> dict:
     """GET one page, retrying a 429 or a transient network failure within one shared budget.
+
+    Every call first waits for its slot under ``MIN_REQUEST_INTERVAL_SECS``; the retries inside
+    one call need no extra wait because each backoff is already longer than the interval.
 
     Both causes draw on the same ``MAX_RETRIES`` attempts, so the worst-case wall clock is
     unchanged from the 429-only retry this replaced: ``MAX_RETRIES`` reads at
@@ -78,6 +104,7 @@ def _api_get(path: str, token: str, params: dict | None = None) -> dict:
     """
     url = f"{BASE_URL}{path}"
     headers = _make_headers(token)
+    _REQUEST_PACER.wait_for_slot()
     for attempt in range(MAX_RETRIES):
         last_attempt = attempt == MAX_RETRIES - 1
         wait = RETRY_BACKOFF_SECS * (attempt + 1)
@@ -118,7 +145,7 @@ def fetch_resolved_questions(tournament: str, token: str) -> list[dict]:
     posts: list[dict] = []
     offset = 0
     while True:
-        data = _api_get(
+        data = api_get(
             "/posts/",
             token,
             params={
@@ -135,7 +162,6 @@ def fetch_resolved_questions(tournament: str, token: str) -> list[dict]:
         if not results or data.get("next") is None:
             break
         offset += PAGE_SIZE
-        time.sleep(FETCH_DELAY_SECS)
     logger.info(f"Found {len(posts)} resolved posts in tournament '{tournament}'")
     return posts
 
@@ -145,14 +171,13 @@ def _page_comments(token: str, params: dict[str, object]) -> list[dict]:
     comments: list[dict] = []
     offset = 0
     while True:
-        data = _api_get("/comments/", token, params={**params, "limit": PAGE_SIZE, "offset": offset})
+        data = api_get("/comments/", token, params={**params, "limit": PAGE_SIZE, "offset": offset})
         results = data.get("results", [])
         comments.extend(results)
         logger.info(f"Fetched comments page: {offset=}, got {len(results)} comments, {params=}")
         if not results or data.get("next") is None:
             break
         offset += PAGE_SIZE
-        time.sleep(FETCH_DELAY_SECS)
     return comments
 
 
@@ -198,7 +223,7 @@ def expand_truncated_comment(comment: dict, token: str) -> dict:
     ):
         raise ValueError(f"comment {comment_id} has a malformed truncation stub")
 
-    full_comment = _api_get(f"/comments/{comment_id}/", token)
+    full_comment = api_get(f"/comments/{comment_id}/", token)
     full_text = full_comment.get("text")
     if full_comment.get("id") != comment_id:
         raise ValueError(f"full comment response for {comment_id} has a mismatched id")
