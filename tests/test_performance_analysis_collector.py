@@ -7,6 +7,7 @@ crowd size, the stacker outcome and its provenance, the practice-post and date-q
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 from pathlib import Path
@@ -64,6 +65,28 @@ class TestApiGetPacing:
         # The second request waits out the interval; the third, already past it, does not wait.
         assert sleeps == [collector.MIN_REQUEST_INTERVAL_SECS]
 
+    def test_the_request_after_a_successful_retry_is_still_spaced(self, monkeypatch):
+        clock = [1000.0]
+        starts: list[float] = []
+        outcomes = [_FakeResponse(429), _FakeResponse(200, {"results": []}), _FakeResponse(200, {"results": []})]
+
+        def fake_sleep(seconds: float) -> None:
+            clock[0] += seconds
+
+        def fake_get(url: str, headers: dict | None = None, params: dict | None = None, timeout: float | None = None):
+            starts.append(clock[0])
+            return outcomes.pop(0)
+
+        monkeypatch.setattr(collector.time, "monotonic", lambda: clock[0])
+        monkeypatch.setattr(collector.time, "sleep", fake_sleep)
+        monkeypatch.setattr(collector.requests, "get", fake_get)
+
+        collector.api_get("/comments/", "token")
+        collector.api_get("/comments/", "token")
+
+        gaps = [later - earlier for earlier, later in itertools.pairwise(starts)]
+        assert gaps == [collector.RETRY_BACKOFF_SECS, collector.MIN_REQUEST_INTERVAL_SECS]
+
 
 class TestApiGetRetry:
     """``api_get`` retries a transient network failure, and its wall clock stays bounded.
@@ -81,6 +104,7 @@ class TestApiGetRetry:
         sleeps: list[float] = []
         calls: list[dict] = []
         remaining = list(outcomes)
+        clock = [1000.0]
 
         def fake_get(url: str, headers: dict | None = None, params: dict | None = None, timeout: float | None = None):
             calls.append({"url": url, "headers": dict(headers or {}), "timeout": timeout})
@@ -91,9 +115,11 @@ class TestApiGetRetry:
 
         def fake_sleep(seconds: float) -> None:
             sleeps.append(seconds)
+            clock[0] += seconds
 
         monkeypatch.setattr(collector.requests, "get", fake_get)
         monkeypatch.setattr(collector.time, "sleep", fake_sleep)
+        monkeypatch.setattr(collector.time, "monotonic", lambda: clock[0])
         return sleeps, calls
 
     def test_a_read_timeout_is_retried_and_the_next_attempt_wins(self, monkeypatch):

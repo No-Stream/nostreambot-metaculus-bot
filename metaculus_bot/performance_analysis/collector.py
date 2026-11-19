@@ -122,8 +122,9 @@ _REQUEST_PACER = _RequestPacer()
 def api_get(path: str, token: str, params: dict | None = None, *, base_url: str = BASE_URL) -> dict:
     """GET one page, retrying a 429 or a transient network failure within one shared budget.
 
-    Every call first waits for its slot under ``MIN_REQUEST_INTERVAL_SECS``; the retries inside
-    one call need no extra wait because each backoff is already longer than the interval.
+    Every attempt, retries included, waits for its slot under ``MIN_REQUEST_INTERVAL_SECS`` and records
+    its start, so the request after a quickly successful retry is still spaced. A retry itself
+    never waits on the pacer in practice, because its backoff is already longer than the interval.
 
     Both causes draw on the same ``MAX_RETRIES`` attempts, so the worst-case wall clock is
     unchanged from the 429-only retry this replaced: ``MAX_RETRIES`` reads at
@@ -133,10 +134,10 @@ def api_get(path: str, token: str, params: dict | None = None, *, base_url: str 
     """
     url = f"{base_url}{path}"
     headers = _make_headers(token)
-    _REQUEST_PACER.wait_for_slot()
     for attempt in range(MAX_RETRIES):
         last_attempt = attempt == MAX_RETRIES - 1
         wait = RETRY_BACKOFF_SECS * (attempt + 1)
+        _REQUEST_PACER.wait_for_slot()
         try:
             resp = requests.get(url, headers=headers, params=params, timeout=REQUEST_TIMEOUT_SECS)
         except _TRANSIENT_NETWORK_ERRORS as exc:
