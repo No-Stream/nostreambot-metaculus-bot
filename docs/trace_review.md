@@ -120,11 +120,12 @@ changes move these shares.
 
 ## The app
 
-The **Forecasts** page shows one line about the build, the presets (worst misses, confident and wrong,
-biggest member disagreement, ghost differs most from published, since the last round, strict cohort),
+The **Forecasts** page shows one line about the build, six presets (Worst misses, Confident & wrong,
+Most disagreement, Ghost vs published, Since last round, Strict cohort; each says what it does on hover),
 one summary block per platform, and a table of every filtered row. Selecting a row opens **Forecast
 detail**: a header with each score named by platform and kind, previous and next buttons that walk the
-filtered order, a plot of every member beside the published forecast, and tabs for rationales,
+filtered order, a plot of every member beside the published forecast, and tabs for rationales (side by
+side, or one model at a time at full width),
 research, gap-fill v2, telemetry and the published comment. The **Models** page shows, per platform,
 model and question type, the mean own score over rankable rows (and for numeric the same mean without
 scores at the censoring floor), the mean difference from the published score, how often the model was

@@ -247,3 +247,5 @@ cython_debug/
 backtests.pre_link/
 benchmarks.pre_link/
 
+# Playwright MCP screenshots and traces from UI QA passes.
+.playwright-mcp/

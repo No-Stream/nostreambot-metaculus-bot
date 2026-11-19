@@ -22,6 +22,7 @@ from metaculus_bot.performance_analysis.scaling import NUMERIC_TYPES, cdf_and_gr
 from metaculus_bot.trace_review import bundle
 from metaculus_bot.trace_review.filters import (
     KEY_PARAM,
+    PRESET_HELP,
     PRESETS,
     SORT_PARAM,
     FilterResult,
@@ -30,14 +31,20 @@ from metaculus_bot.trace_review.filters import (
     render_sidebar,
 )
 from metaculus_bot.trace_review.plots import forecast_figure, replay_record
-from metaculus_bot.trace_review.traits import TRAITS
+from metaculus_bot.trace_review.traits import TRAIT_KIND_FLAG, TRAIT_KIND_RATE, TRAITS
 
 PAGE_FORECASTS = "pages/forecasts.py"
 PAGE_DETAIL = "pages/detail.py"
 PAGE_MODELS = "pages/models.py"
 DETAIL_URL_PATH = "detail"
 RATIONALE_COLUMNS = 3
-RATIONALE_HEIGHT_PX = 520
+PRESETS_PER_ROW = 3
+# Tall enough to read a 10-15k-character rationale without nested scrolling on a 1000px-high window.
+RATIONALE_HEIGHT_PX = 820
+RATIONALE_VIEW_SIDE_BY_SIDE = "Side by side"
+RATIONALE_VIEW_ONE = "One model at a time"
+QUESTION_TYPE_SHORT = {"multiple_choice": "MC"}
+TRAIT_DIGITS = 1
 TEXT_PANEL_HEIGHT_PX = 640
 MEDIAN = 0.5
 PLATFORM_LABELS = {"metaculus": "Metaculus", PLATFORM_MANTIC: "Mantic"}
@@ -206,9 +213,20 @@ def _manifest_line(manifest: dict) -> None:
 
 
 def _presets() -> None:
-    columns = st.columns(len(PRESETS))
-    for column, (name, params) in zip(columns, PRESETS.items(), strict=True):
-        column.page_link(PAGE_FORECASTS, label=name, query_params=params)
+    items = list(PRESETS.items())
+    for start in range(0, len(items), PRESETS_PER_ROW):
+        for column, (name, params) in zip(
+            st.columns(PRESETS_PER_ROW), items[start : start + PRESETS_PER_ROW], strict=False
+        ):
+            column.page_link(PAGE_FORECASTS, label=name, query_params=params, help=PRESET_HELP[name], width="stretch")
+
+
+def log_score_line(rows: pd.DataFrame) -> str:
+    """ "binary 42.8 · discrete 35.3 · MC 29.8": the mean type log score per question type."""
+    means = rows.groupby("question_type")["type_log_score"].mean().dropna()
+    return (
+        " · ".join(f"{QUESTION_TYPE_SHORT.get(str(kind), kind)} {mean:.1f}" for kind, mean in means.items()) or MISSING
+    )
 
 
 def platform_summary(rows: pd.DataFrame) -> dict[str, object]:
@@ -224,7 +242,7 @@ def platform_summary(rows: pd.DataFrame) -> dict[str, object]:
             (rows["headline_score_field"].notna() & (rows["headline_score_field"] != main_field)).sum()
         ),
         "weight": float(rows["question_weight"].sum()) if rows["question_weight"].notna().any() else None,
-        "log_score_by_type": rows.groupby("question_type")["type_log_score"].mean().round(2).to_dict(),
+        "log_score_by_type": log_score_line(rows),
     }
 
 
@@ -240,9 +258,9 @@ def _summary_strip(rows: pd.DataFrame) -> None:
             st.metric(f"Mean {summary['field']} over {summary['n_headline']} rows", _number(summary["mean_headline"]))
             st.caption(
                 f"{summary['rows']} rows; {summary['n_other_field']} scored on another field, left out of the mean; "
-                f"summed question weight {summary['weight'] if summary['weight'] is not None else MISSING}; "
-                f"mean log score by type {summary['log_score_by_type']}"
+                f"summed question weight {summary['weight'] if summary['weight'] is not None else MISSING}"
             )
+            st.caption(f"Mean log score: {summary['log_score_by_type']}")
     cohorts = ", ".join(f"{int(rows[column].fillna(value=False).sum())} {column}" for column in COHORT_COLUMNS)
     st.caption(
         f"Means cover the filtered rows and are not era-bucketed unless an era filter is set. Included: {cohorts}."
@@ -313,12 +331,18 @@ def _navigation(keys: list[str], key: str) -> None:
     back.page_link(PAGE_FORECASTS, label="Back to the list", query_params=_filters_only_params())
 
 
+def era_label(forecast: pd.Series) -> str:
+    """The fine sub-era where there is one, since it is what tells two configs of one era apart."""
+    fine = forecast["triple_subera_fine"]
+    return f"era {forecast['config_era']} / {fine}" if pd.notna(fine) else f"era {forecast['config_era']}"
+
+
 def _header(forecast: pd.Series) -> None:
     st.title(forecast["title"])
     platform = PLATFORM_LABELS.get(forecast["platform"], forecast["platform"])
     st.markdown(
         f":blue-badge[{platform}] :gray-badge[{forecast['question_type']}] :gray-badge[{forecast['tournament']}] "
-        f":gray-badge[era {forecast['config_era']}] [open on {platform}]({forecast['url']})"
+        f":gray-badge[{era_label(forecast)}] [open on {platform}]({forecast['url']})"
     )
     submitted = forecast["submitted_at"].strftime("%Y-%m-%d") if pd.notna(forecast["submitted_at"]) else MISSING
     resolved = (
@@ -351,14 +375,46 @@ def _rationale_column(member: pd.Series, rationale: str | None) -> None:
         f"Extraction rung: {member['extraction_rung'] if pd.notna(member['extraction_rung']) else 'not recorded'}"
     )
     if member["has_rationale"]:
-        st.caption("; ".join(f"{trait.label} {member[trait.name]}" for trait in TRAITS))
+        st.caption(trait_line(member))
+        chips = trait_chips(member)
+        if chips:
+            st.markdown(chips)
     with st.container(height=RATIONALE_HEIGHT_PX):
         st.markdown(rationale or "_No rationale in the comment for this member._")
+
+
+def trait_line(member: pd.Series) -> str:
+    """The count and rate traits, rounded, as one scannable line."""
+    parts = []
+    for trait in TRAITS:
+        value = member[trait.name]
+        if trait.kind == TRAIT_KIND_FLAG or pd.isna(value):
+            continue
+        shown = f"{float(value):.{TRAIT_DIGITS}f}" if trait.kind == TRAIT_KIND_RATE else f"{int(value):,}"
+        parts.append(f"{trait.label.lower()} {shown}")
+    return " · ".join(parts)
+
+
+def trait_chips(member: pd.Series) -> str:
+    """One badge per flag trait that is set; nothing for the ones that are not."""
+    return " ".join(
+        f":violet-badge[{trait.label.lower()}]"
+        for trait in TRAITS
+        if trait.kind == TRAIT_KIND_FLAG and _is_true(member[trait.name])
+    )
 
 
 def _rationales_tab(members: pd.DataFrame, comment_text: str | None, key: str) -> None:
     rationales = parse_per_model_reasoning_text(comment_text) if comment_text else {}
     models = members["model"].tolist()
+    if not models:
+        st.info("No member values were recovered for this forecast.")
+        return
+    view = st.radio("View", (RATIONALE_VIEW_SIDE_BY_SIDE, RATIONALE_VIEW_ONE), horizontal=True, key=f"view_{key}")
+    if view == RATIONALE_VIEW_ONE:
+        model = st.radio("Model", models, horizontal=True, key=f"model_{key}") or models[0]
+        _rationale_column(members[members["model"] == model].iloc[0], rationales.get(model))
+        return
     shown = models
     if len(models) > RATIONALE_COLUMNS:
         shown = st.multiselect("Members to show", models, default=models[:RATIONALE_COLUMNS], key=f"members_{key}")

@@ -186,15 +186,24 @@ FILTER_GROUPS: tuple[str, ...] = tuple(dict.fromkeys(spec.group for spec in FILT
 
 PRESETS: dict[str, dict[str, str]] = {
     "Worst misses": {SORT_PARAM: "headline_score", DESC_PARAM: "false"},
-    "Confident and wrong": {"cw": TRISTATE_YES, SORT_PARAM: "headline_score", DESC_PARAM: "false"},
-    "Biggest member disagreement": {SORT_PARAM: "member_spread", DESC_PARAM: "true"},
-    "Ghost differs most from published": {
+    "Confident & wrong": {"cw": TRISTATE_YES, SORT_PARAM: "headline_score", DESC_PARAM: "false"},
+    "Most disagreement": {SORT_PARAM: "member_spread", DESC_PARAM: "true"},
+    "Ghost vs published": {
         "ghost": TRISTATE_YES,
         SORT_PARAM: "ghost_score_delta_abs",
         DESC_PARAM: "true",
     },
-    "Since the last round": {"origin": RECORD_ORIGIN_FRESH, "plat": "metaculus"},
+    "Since last round": {"origin": RECORD_ORIGIN_FRESH, "plat": "metaculus"},
     "Strict cohort": {"deg": TRISTATE_NO, "pdeg": TRISTATE_NO, "bug": TRISTATE_NO},
+}
+# Labels stay short enough for three presets per row beside the sidebar; the hover text says what each does.
+PRESET_HELP: dict[str, str] = {
+    "Worst misses": "Every forecast, lowest headline score first",
+    "Confident & wrong": "Published probability on what happened at most 0.15 (numeric: outside the 5th-95th percentiles)",
+    "Most disagreement": "Largest member spread first; pick one question type to compare like with like",
+    "Ghost vs published": "Forecasts with a gap-fill ghost, largest score difference from the published forecast first",
+    "Since last round": "Metaculus questions resolved since the round the index rests on",
+    "Strict cohort": "No degraded, partially degraded or known-bug rows",
 }
 
 

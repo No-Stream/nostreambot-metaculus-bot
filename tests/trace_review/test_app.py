@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
 
@@ -54,6 +56,9 @@ class TestForecastList:
         assert headers.count("Metaculus") == 1
         assert headers.count("Mantic") == 1
         assert len(app.metric) == 2
+        captions = [caption.value for caption in app.caption]
+        assert sum(caption.startswith("Mean log score: ") for caption in captions) == 2
+        assert not any("{" in caption for caption in captions), "a raw dict leaked into the summary"
 
     def test_a_query_string_filter_narrows_the_table(self, monkeypatch, built_bundle: BuiltBundle, bundle_forecasts):
         app = _app(monkeypatch, built_bundle.output_dir, type="binary")
@@ -71,12 +76,32 @@ class TestForecastDetail:
             forecast_key(PLATFORM_MANTIC, MANTIC_DISCRETE),
         ],
     )
-    def test_each_question_type_renders(self, monkeypatch, built_bundle: BuiltBundle, key: str):
+    def test_each_question_type_renders(self, monkeypatch, built_bundle: BuiltBundle, bundle_forecasts, key: str):
         app = _app(monkeypatch, built_bundle.output_dir, "pages/detail.py", **{KEY_PARAM: key})
 
         _no_failures(app)
         assert len(app.tabs) == DETAIL_TABS
         assert len(app.get("plotly_chart")) == 1
+        # Trait lines are rounded and booleans appear only as badges, never as True/False.
+        captions = " ".join(caption.value for caption in app.caption)
+        assert not re.search(r"\d\.\d{2,}", captions)
+        assert "True" not in captions
+        assert "False" not in captions
+        fine_era = bundle_forecasts.set_index("forecast_key").loc[key, "triple_subera_fine"]
+        if pd.notna(fine_era):
+            assert any(fine_era in block.value for block in app.markdown)
+
+    def test_rationales_can_be_read_one_model_at_a_time(self, monkeypatch, built_bundle: BuiltBundle):
+        key = forecast_key(PLATFORM_METACULUS, COLLIDING_BINARY)
+        app = _app(monkeypatch, built_bundle.output_dir, "pages/detail.py", **{KEY_PARAM: key})
+        assert app.radio(key=f"view_{key}").value == "Side by side"
+
+        app.radio(key=f"view_{key}").set_value("One model at a time").run()
+
+        _no_failures(app)
+        chosen = app.radio(key=f"model_{key}")
+        assert chosen.value == chosen.options[0]
+        assert [header.value for header in app.subheader] == [chosen.value]
 
     def test_next_moves_to_the_neighbour_in_the_filtered_order(self, monkeypatch, built_bundle: BuiltBundle):
         first = forecast_key(PLATFORM_METACULUS, COLLIDING_BINARY)

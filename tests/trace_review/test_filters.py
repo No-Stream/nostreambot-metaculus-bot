@@ -10,6 +10,7 @@ import pytest
 from metaculus_bot.constants import PLATFORM_MANTIC, PLATFORM_METACULUS
 from metaculus_bot.trace_review.filters import (
     FILTER_SPECS,
+    PRESET_HELP,
     PRESETS,
     SHARE_EVERY,
     SHARE_NONE,
@@ -29,6 +30,9 @@ from metaculus_bot.trace_review.filters import (
     tristate_mask,
 )
 from tests.trace_review.workspace_fixtures import COLLIDING_BINARY, EARLY_BINARY, NEW_SINCE_ROUND, forecast_key
+
+# About what a third of the main pane holds at 1280px wide with the sidebar open.
+MAX_PRESET_LABEL_CHARS = 20
 
 
 def _keys(forecasts: pd.DataFrame, mask: pd.Series) -> set[str]:
@@ -100,7 +104,7 @@ class TestOrderAndPresets:
         assert missing == sorted(missing)  # unscored rows last
 
     def test_since_the_last_round_is_the_metaculus_overlay(self, bundle_forecasts):
-        params = PRESETS["Since the last round"]
+        params = PRESETS["Since last round"]
         state = FilterState(values={"origin": [params["origin"]], "plat": [params["plat"]]})
 
         rows = apply_filters(bundle_forecasts, state, _no_texts).rows
@@ -132,6 +136,11 @@ class TestOrderAndPresets:
 
         assert rows["forecast_key"].str.startswith(PLATFORM_MANTIC).all()
         assert len(rows) == 1
+
+
+def test_preset_labels_fit_three_to_a_row_and_each_has_hover_text() -> None:
+    assert max(len(name) for name in PRESETS) <= MAX_PRESET_LABEL_CHARS
+    assert set(PRESET_HELP) == set(PRESETS)
 
 
 @pytest.mark.parametrize(
