@@ -73,7 +73,7 @@ def test_comment_listing_returns_archived_stubs_unexpanded(monkeypatch):
     list_comment = _truncated_fixture()["list_comment"]
     calls: list[tuple[str, dict | None]] = []
 
-    def fake_api_get(path: str, token: str, params: dict | None = None) -> dict:
+    def fake_api_get(path: str, token: str, params: dict | None = None, *, base_url: str = collector.BASE_URL) -> dict:
         calls.append((path, params))
         return {"results": [list_comment], "next": None}
 
@@ -566,7 +566,9 @@ class TestMainWritesTheBackfillFile:
         stub = fixture["list_comment"]
         expansions: list[str] = []
 
-        def fake_api_get(path: str, token: str, params: dict | None = None) -> dict:
+        def fake_api_get(
+            path: str, token: str, params: dict | None = None, *, base_url: str = collector.BASE_URL
+        ) -> dict:
             expansions.append(path)
             return {**fixture["detail_comment"], "text": SAMPLE_COMMENT_FULL}
 

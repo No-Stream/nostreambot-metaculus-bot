@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import math
 import statistics
+from collections.abc import Callable
 from typing import Literal
 
 from metaculus_bot.comment.markers import (
@@ -167,16 +168,16 @@ def base_or_per_model_forecasts(record: dict) -> dict:
     return per_base_model if per_base_model else (record.get("per_model_forecasts") or {})
 
 
-def _binary_spread_exceeded(record: dict) -> bool | None:
-    """Whether the members' binary probability RANGE clears the production threshold."""
+def _binary_spread(record: dict) -> float | None:
+    """The members' binary probability RANGE."""
     probs = [p for p in (_parse_probability(v) for v in base_or_per_model_forecasts(record).values()) if p is not None]
     if len(probs) < 2:
         return None
-    return (max(probs) - min(probs)) > CONDITIONAL_STACKING_BINARY_PROB_RANGE_THRESHOLD
+    return max(probs) - min(probs)
 
 
-def _mc_spread_exceeded(record: dict) -> bool | None:
-    """Whether the widest PER-OPTION spread clears the production threshold.
+def _mc_spread(record: dict) -> float | None:
+    """The widest PER-OPTION spread across the members.
 
     The collector emits MC option vectors as {model: {option: prob}}. A non-dict value
     means the MC option parser found nothing and the collector fell back to single-string
@@ -195,7 +196,7 @@ def _mc_spread_exceeded(record: dict) -> bool | None:
     spreads = [max(probs) - min(probs) for probs in option_probs.values() if len(probs) >= 2]
     if not spreads:
         return None
-    return max(spreads) > CONDITIONAL_STACKING_MC_MAX_OPTION_THRESHOLD
+    return max(spreads)
 
 
 def _scoreable_label_maps(record: dict) -> list[dict[float, float]]:
@@ -250,8 +251,8 @@ def _numeric_spread_denominator(record: dict, model_maps: list[dict[float, float
     return statistics.median(p90_values) - statistics.median(p10_values)
 
 
-def _numeric_spread_exceeded(record: dict) -> bool | None:
-    """Whether the widest NORMALIZED percentile spread clears the production threshold."""
+def _numeric_spread(record: dict) -> float | None:
+    """The widest NORMALIZED percentile spread at the 10th, 50th and 90th percentiles."""
     if len(record.get("per_model_numeric_percentiles") or {}) < 2:
         return None
 
@@ -269,7 +270,28 @@ def _numeric_spread_exceeded(record: dict) -> bool | None:
         normalized = (max(values_at_pct) - min(values_at_pct)) / denominator
         max_normalized_spread = max(max_normalized_spread, normalized)
 
-    return max_normalized_spread > CONDITIONAL_STACKING_NUMERIC_NORMALIZED_THRESHOLD
+    return max_normalized_spread
+
+
+_SPREAD_BY_TYPE: dict[str, tuple[Callable[[dict], float | None], float]] = {
+    "binary": (_binary_spread, CONDITIONAL_STACKING_BINARY_PROB_RANGE_THRESHOLD),
+    "multiple_choice": (_mc_spread, CONDITIONAL_STACKING_MC_MAX_OPTION_THRESHOLD),
+    "numeric": (_numeric_spread, CONDITIONAL_STACKING_NUMERIC_NORMALIZED_THRESHOLD),
+    "discrete": (_numeric_spread, CONDITIONAL_STACKING_NUMERIC_NORMALIZED_THRESHOLD),
+}
+
+
+def member_spread(record: dict) -> float | None:
+    """How far apart the record's members are, in the unit the stacking trigger compares.
+
+    A probability range on binary, the widest per-option range on multiple choice, and on
+    numeric and discrete the widest 10th/50th/90th-percentile range divided by the question's
+    width (or by the members' median P10-P90 span when a bound is open). The three units differ,
+    so spreads compare only within one question type. None when fewer than two members carry a
+    measurable value.
+    """
+    spread_rule = _SPREAD_BY_TYPE.get(record.get("type", ""))
+    return None if spread_rule is None else spread_rule[0](record)
 
 
 def exceeded_spread_threshold(record: dict) -> bool | None:
@@ -282,15 +304,12 @@ def exceeded_spread_threshold(record: dict) -> bool | None:
     Returns True if spread > threshold, False if spread <= threshold,
     None if spread cannot be computed.
     """
-    question_type = record.get("type", "")
-
-    if question_type == "binary":
-        return _binary_spread_exceeded(record)
-    if question_type == "multiple_choice":
-        return _mc_spread_exceeded(record)
-    if question_type in ("numeric", "discrete"):
-        return _numeric_spread_exceeded(record)
-    return None
+    spread_rule = _SPREAD_BY_TYPE.get(record.get("type", ""))
+    if spread_rule is None:
+        return None
+    spread_of, threshold = spread_rule
+    spread = spread_of(record)
+    return None if spread is None else spread > threshold
 
 
 # ---------------------------------------------------------------------------
@@ -385,4 +404,5 @@ __all__ = [
     "get_stacker_outcome_field",
     "has_stacker_body_marker",
     "has_was_stacked_flag",
+    "member_spread",
 ]

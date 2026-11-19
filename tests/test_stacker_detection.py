@@ -18,6 +18,7 @@ from metaculus_bot.performance_analysis.stacker_detection import (
     get_stacker_outcome_field,
     has_stacker_body_marker,
     has_was_stacked_flag,
+    member_spread,
 )
 
 # ---------------------------------------------------------------------------
@@ -671,3 +672,43 @@ class TestNumericSpreadDenominator:
 
     def test_an_unrecognized_question_type_is_unmeasurable(self):
         assert exceeded_spread_threshold({"type": "trinary"}) is None
+
+
+class TestMemberSpread:
+    """The spread value the stacking trigger compares, exposed so the trace index can sort on it.
+
+    Each expected value is computed by hand from the fixture, in the unit the type uses.
+    """
+
+    def test_binary_is_the_probability_range_over_base_models(self):
+        record = {
+            "type": "binary",
+            "per_model_forecasts": {"stacker": "60%"},
+            "per_base_model_forecasts": {"a": "20%", "b": "35%", "c": "50%"},
+        }
+        assert member_spread(record) == pytest.approx(0.30)
+
+    def test_multiple_choice_is_the_widest_per_option_range(self):
+        record = {
+            "type": "multiple_choice",
+            "per_model_forecasts": {"a": {"X": 0.7, "Y": 0.3}, "b": {"X": 0.4, "Y": 0.6}, "c": {"X": 0.5, "Y": 0.5}},
+        }
+        assert member_spread(record) == pytest.approx(0.30)
+
+    def test_numeric_is_the_widest_key_percentile_range_over_the_question_width(self):
+        labels = [1, 2.5, 5, 10, 20, 40, 50, 60, 80, 90, 95]
+        low = [[label, float(label)] for label in labels]
+        high = [[label, float(label) + (30.0 if label == 90 else 10.0)] for label in labels]
+        record = {
+            "type": "numeric",
+            "per_model_numeric_percentiles": {"a": low, "b": high},
+            "scaling": {"range_min": 0.0, "range_max": 200.0},
+        }
+        # P10 and P50 differ by 10, P90 by 30, on a 200-wide closed question.
+        assert member_spread(record) == pytest.approx(30.0 / 200.0)
+
+    def test_one_member_has_no_spread(self):
+        assert member_spread({"type": "binary", "per_model_forecasts": {"a": "40%"}}) is None
+
+    def test_a_date_question_has_no_spread_rule(self):
+        assert member_spread({"type": "date"}) is None
