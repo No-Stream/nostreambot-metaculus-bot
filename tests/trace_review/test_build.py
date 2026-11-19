@@ -323,6 +323,24 @@ class TestFailuresAndCache:
         with pytest.raises(ValueError, match="duplicate forecast_key"):
             build_index(workspace.config(tmp_path / "bundle", round_path=duplicated, skip_fresh_pull=True))
 
+    def test_a_round_with_no_recovered_rationales_builds_and_reports(
+        self, workspace: Workspace, tmp_path, monkeypatch, caplog
+    ):
+        install_doubles(monkeypatch, FetcherDoubles())
+        records = json.loads(next(workspace.scratch_dir.glob("*/perf_all_tagged.json")).read_text())
+        for record in records:
+            record["comment_text"] = None
+        round_path = tmp_path / "residual_2026-11-05" / "perf_all_tagged.json"
+        round_path.parent.mkdir()
+        round_path.write_text(json.dumps(records))
+
+        with caplog.at_level("INFO"):
+            result = build_index(workspace.config(tmp_path / "bundle", round_path=round_path, skip_fresh_pull=True))
+
+        assert all(row["share"] is None for row in result.manifest["trait_prevalence"])
+        assert "TRACE_INDEX trait percent_count: not recorded of 0 rationales" in caplog.text
+        assert (tmp_path / "bundle" / MANIFEST_FILE).exists()
+
     def test_cached_pulls_are_reused_until_refresh_and_skip_pulls_nothing(
         self, workspace: Workspace, tmp_path, monkeypatch
     ):

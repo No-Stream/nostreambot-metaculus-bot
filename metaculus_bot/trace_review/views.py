@@ -118,8 +118,9 @@ def filtered(loaded: Loaded) -> FilterResult:
     return apply_filters(loaded.forecasts, state, lambda: bundle.load_search_texts(loaded.directory, loaded.built_at))
 
 
-def _filters_only_params() -> dict[str, str]:
-    return {name: value for name, value in st.query_params.to_dict().items() if name != KEY_PARAM}
+def _filters_only_params() -> dict[str, list[str]]:
+    """Every filter parameter with all its values: a multiselect or a range repeats its parameter."""
+    return {name: st.query_params.get_all(name) for name in st.query_params if name != KEY_PARAM}
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +294,7 @@ def _forecast_table(loaded: Loaded, result: FilterResult) -> None:
     selected = event.selection.rows if event is not None else []
     if selected:
         key = str(display.index[selected[0]])
-        st.switch_page(PAGE_DETAIL, query_params={**_filters_only_params(), KEY_PARAM: key})
+        st.switch_page(PAGE_DETAIL, query_params={**_filters_only_params(), KEY_PARAM: [key]})
 
 
 def render_forecasts_page() -> None:

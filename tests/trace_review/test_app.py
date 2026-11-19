@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from urllib.parse import parse_qs
 
 import pandas as pd
 import pytest
@@ -114,6 +115,18 @@ class TestForecastDetail:
         assert app.query_params[KEY_PARAM] != [first]
         caption_after = next(caption.value for caption in app.caption if " in the filtered list" in caption.value)
         assert int(caption_after.split()[0]) == int(caption_before.split()[0]) + 1
+
+    def test_the_back_link_keeps_every_value_of_a_repeated_filter(self, monkeypatch, built_bundle: BuiltBundle):
+        key = forecast_key(PLATFORM_METACULUS, COLLIDING_BINARY)
+        monkeypatch.setenv(BUNDLE_DIR_ENV, str(built_bundle.output_dir))
+        app = AppTest.from_file(APP_PATH, default_timeout=APP_TIMEOUT_S)
+        app.query_params[KEY_PARAM] = key
+        app.query_params["type"] = ["binary", "numeric"]
+        app.switch_page("pages/detail.py").run()
+
+        _no_failures(app)
+        back = next(link for link in app.get("page_link") if link.proto.label == "Back to the list")
+        assert parse_qs(back.proto.query_string) == {"type": ["binary", "numeric"]}
 
     def test_an_unknown_key_is_an_error_not_a_crash(self, monkeypatch, built_bundle: BuiltBundle):
         app = _app(monkeypatch, built_bundle.output_dir, "pages/detail.py", **{KEY_PARAM: "metaculus:999999"})

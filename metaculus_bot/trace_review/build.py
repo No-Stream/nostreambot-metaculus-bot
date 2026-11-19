@@ -405,7 +405,8 @@ def _log_report(manifest: dict) -> None:
     )
     for row in manifest["trait_prevalence"]:
         if row["config_era"] == ALL_ERAS:
-            logger.info(f"TRACE_INDEX trait {row['trait']}: {row['share']:.1%} of {row['n_rationales']} rationales")
+            share = "not recorded" if row["share"] is None else f"{row['share']:.1%}"
+            logger.info(f"TRACE_INDEX trait {row['trait']}: {share} of {row['n_rationales']} rationales")
 
 
 def build_index(config: BuildConfig) -> BuildResult:
@@ -418,6 +419,7 @@ def build_index(config: BuildConfig) -> BuildResult:
     assembled = assemble_records(round_records, label=label, config=config, now=built_at)
     tables = build_tables(assembled.records, config)
     manifest = build_manifest(tables, assembled, round_path=round_path, label=label, config=config, built_at=built_at)
-    write_bundle(tables, manifest, config.output_dir)
+    # Reported before the swap, so a report that fails leaves the previous bundle in place.
     _log_report(manifest)
+    write_bundle(tables, manifest, config.output_dir)
     return BuildResult(output_dir=config.output_dir, manifest=manifest)
