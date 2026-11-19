@@ -121,7 +121,7 @@ def member_values(record: dict, lines: list[dict]) -> list[MemberValue]:
     return values
 
 
-def _pmf_cdf(bins: list[float]) -> list[float]:
+def pmf_cdf(bins: list[float]) -> list[float]:
     """A per-bin vector ``[below, p_0 .. p_{N-1}, above]`` as CDF heights on the N+1 grid points."""
     return list(np.cumsum(bins)[:-1])
 
@@ -131,7 +131,7 @@ def _numeric_cdf(value: MemberValue, record: dict) -> list[float] | None:
     if inputs is None or value.value is None:
         return None
     if value.value_kind == KIND_PMF:
-        cdf = _pmf_cdf(value.value)
+        cdf = pmf_cdf(value.value)
         return cdf if len(cdf) == inputs.cdf_size else None
     try:
         return member_cdf(value.value, inputs)
