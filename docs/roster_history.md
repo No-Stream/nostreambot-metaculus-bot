@@ -28,8 +28,11 @@ to 96s from the end of research. Each dropped Carbon call still billed about $0.
 to a full Argon-sized call (about 20k tokens in, 5k out), which points at slow serving of a four-day-old model
 rather than at runaway thinking, so dropping Carbon to medium effort was judged unlikely to be enough. The
 slot returns to exactly its pre-#83 config. Carbon stays on `DONATED_KEY_BLOCKED_GOOGLE_MODELS` so a retry
-keeps routing; measure its latency before retrying (`FUTURE.md`). This is a forecaster roster boundary; its
-`eras.py` row needs this merge's committer timestamp, so it belongs in a follow-up after merge.
+keeps routing; measure its latency before retrying (`FUTURE.md`). Recorded as the `fall_gemini4_argon_return`
+sub-era in `performance_analysis/eras.py` (79c1d7a, committer time 2026-11-14T08:11:00Z), pooled into
+`triple_fall_config`. The slow-serving reading was wrong: a timed prod-prompt call on 2026-11-19 ran 813s and
+wrote 44k output tokens at about 50 tokens/s, so a call cut off at the deadline bills only part of its
+generation. Carbon thinks long at low throughput (`FUTURE.md`).
 
 **2026-11-13 (Gemini 4 Carbon at high effort in the Google slot, PR #83, fdc1483, 2026-11-13T14:36:58Z):** At the operator's request, the Google
 forecaster moves from `gemini-4-argon` at the provider-default effort (medium) to `gemini-4-carbon` at
