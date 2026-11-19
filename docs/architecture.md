@@ -1315,6 +1315,7 @@ welcome.
 | Model roster (source of truth) | `metaculus_bot/llm_configs.py` |
 | Prompts | `metaculus_bot/prompts.py` |
 | Constants / thresholds / env flags | `metaculus_bot/constants.py` |
+| Offline trace review (index builder and Streamlit app; never imported by the live pipeline) | `metaculus_bot/trace_review/` (`build.py`, `sources.py`, `views.py`); see [trace_review.md](trace_review.md) |
 
 ## Related docs
 
@@ -1325,6 +1326,7 @@ welcome.
 - [agentic_gap_fill.md](agentic_gap_fill.md): the v2 agentic research loop.
 - [roster_history.md](roster_history.md): the ensemble roster, its history, dormant paths.
 - [performance_analysis.md](performance_analysis.md): residual-analysis conventions.
+- [trace_review.md](trace_review.md): the offline index and app for reading resolved forecasts.
 - [operations.md](operations.md): running the bot, workflows, cost discipline, credits.
 
 ## A note on cost
