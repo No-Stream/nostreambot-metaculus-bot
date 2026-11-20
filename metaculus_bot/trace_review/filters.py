@@ -55,26 +55,28 @@ SORT_PARAM = "sort"
 DESC_PARAM = "desc"
 KEY_PARAM = "key"
 DEFAULT_SORT = "submitted_at"
-SORTABLE_COLUMNS: tuple[str, ...] = (
-    "submitted_at",
-    "actual_resolve_time",
-    "headline_score",
-    "type_log_score",
-    "spot_peer_score",
-    "spot_baseline_score",
-    "prob_on_outcome",
-    "member_spread",
-    "ghost_score_delta",
-    "ghost_score_delta_abs",
-    "lead_days",
-    "close_margin_frac",
-    "research_chars",
-    "usd_per_question",
-    "crowd_size",
-    "n_members",
-    "rationale_chars_mean",
-    "hedge_per_1k_mean",
-)
+
+SORT_LABELS: dict[str, str] = {
+    "submitted_at": "Submitted date",
+    "actual_resolve_time": "Resolved date",
+    "headline_score": "Headline score",
+    "type_log_score": "Log score",
+    "spot_peer_score": "Spot peer score",
+    "spot_baseline_score": "Spot baseline score",
+    "prob_on_outcome": "Probability on what happened",
+    "member_spread": "Member spread",
+    "ghost_score_delta": "Ghost minus published score",
+    "ghost_score_delta_abs": "Ghost vs published score gap (absolute)",
+    "lead_days": "Days from submit to resolution",
+    "close_margin_frac": "Share of the window left at submit",
+    "research_chars": "Research length (characters)",
+    "usd_per_question": "Cost per question (USD)",
+    "crowd_size": "Crowd size",
+    "n_members": "Members",
+    "rationale_chars_mean": "Rationale length (mean characters)",
+    "hedge_per_1k_mean": "Hedge words per 1,000 characters (mean)",
+}
+SORT_COLUMN_BY_LABEL: dict[str, str] = {label: column for column, label in SORT_LABELS.items()}
 
 
 @dataclass(frozen=True)
@@ -138,7 +140,7 @@ FILTER_SPECS: tuple[FilterSpec, ...] = (
             ("stacker", "stacker_verdict", KIND_CHOICE, "Stacker verdict"),
             ("drop", "any_drop", KIND_TRISTATE, "A forecaster dropped"),
             ("extreme", "any_extreme_call", KIND_TRISTATE, "Extreme call"),
-            ("rung", "extraction_not_clean", KIND_TRISTATE, "Extraction off the block rung"),
+            ("rung", "extraction_not_clean", KIND_TRISTATE, "A member's value not read from its structured block"),
         ],
     ),
     *_spec(
@@ -185,12 +187,12 @@ FILTER_SPECS: tuple[FilterSpec, ...] = (
 FILTER_GROUPS: tuple[str, ...] = tuple(dict.fromkeys(spec.group for spec in FILTER_SPECS))
 
 PRESETS: dict[str, dict[str, str]] = {
-    "Worst misses": {SORT_PARAM: "headline_score", DESC_PARAM: "false"},
-    "Confident & wrong": {"cw": TRISTATE_YES, SORT_PARAM: "headline_score", DESC_PARAM: "false"},
-    "Most disagreement": {SORT_PARAM: "member_spread", DESC_PARAM: "true"},
+    "Worst misses": {SORT_PARAM: SORT_LABELS["headline_score"], DESC_PARAM: "false"},
+    "Confident & wrong": {"cw": TRISTATE_YES, SORT_PARAM: SORT_LABELS["headline_score"], DESC_PARAM: "false"},
+    "Most disagreement": {SORT_PARAM: SORT_LABELS["member_spread"], DESC_PARAM: "true"},
     "Ghost vs published": {
         "ghost": TRISTATE_YES,
-        SORT_PARAM: "ghost_score_delta_abs",
+        SORT_PARAM: SORT_LABELS["ghost_score_delta_abs"],
         DESC_PARAM: "true",
     },
     "Since last round": {"origin": RECORD_ORIGIN_FRESH, "plat": "metaculus"},
@@ -409,6 +411,8 @@ def render_sidebar(forecasts: pd.DataFrame) -> FilterState:
                 "Search in", TEXT_IN_OPTIONS, key=TEXT_SEARCH_IN_PARAM, bind=BIND_TO_URL
             )
         st.header("Order")
-        state.sort = st.selectbox("Sort by", SORTABLE_COLUMNS, key=SORT_PARAM, bind=BIND_TO_URL)
+        # The options are the labels, not the column names: a bound selectbox writes the shown text to the URL.
+        label = st.selectbox("Sort by", tuple(SORT_LABELS.values()), key=SORT_PARAM, bind=BIND_TO_URL)
+        state.sort = SORT_COLUMN_BY_LABEL[label]
         state.descending = st.toggle("Descending", value=True, key=DESC_PARAM, bind=BIND_TO_URL)
     return state

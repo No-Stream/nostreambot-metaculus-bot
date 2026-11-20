@@ -15,6 +15,7 @@ from metaculus_bot.trace_review.filters import (
     SHARE_EVERY,
     SHARE_NONE,
     SHARE_SOME,
+    SORT_COLUMN_BY_LABEL,
     TRISTATE_NO,
     TRISTATE_NOT_RECORDED,
     TRISTATE_YES,
@@ -93,7 +94,7 @@ class TestMasks:
 class TestOrderAndPresets:
     def test_worst_misses_is_every_forecast_ascending_by_headline(self, bundle_forecasts):
         params = PRESETS["Worst misses"]
-        state = FilterState(sort=params["sort"], descending=params["desc"] == "true")
+        state = FilterState(sort=SORT_COLUMN_BY_LABEL[params["sort"]], descending=params["desc"] == "true")
 
         rows = apply_filters(bundle_forecasts, state, _no_texts).rows
 
