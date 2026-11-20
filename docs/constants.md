@@ -85,6 +85,10 @@ id 5, `start_date` 2026-09-23T00:00:00Z, `forecasting_end_date` equal to `close_
 closing 2026-10-23T18:00Z; question submissions had not opened. The Preseason 2 reading above
 is kept as the record of the previous season. An unknown slug answers HTTP 400.
 
+Mantic extended Series 2. A re-read of the same endpoint on 2026-11-19 gave `forecasting_end_date`
+and `close_date` 2027-01-20T23:59:00Z, so `MANTIC_TOURNAMENT_END_DATE` moved to 2027-01-20 with the
+operator's approval, since the extra five weeks are paid, publishing Mantic runs.
+
 ### MANTIC_FETCH_QUESTION_CEILING
 
 The tournament fetch asks the framework for this many questions so that it walks offsets until an

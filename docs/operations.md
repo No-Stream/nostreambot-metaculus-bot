@@ -1084,8 +1084,8 @@ platform client. Everything in this section was verified against the live API on
 "Running it" below).
 
 The current target is Series 2: slug `series-2` (`MANTIC_TOURNAMENT_ID`), project id 5,
-opened 2026-09-23, forecasting closes 2026-12-16 23:59 UTC (`MANTIC_TOURNAMENT_END_DATE`),
-`score_type` `spot_baseline_tournament`, API-verified 2026-09-24 with five open practice
+opened 2026-09-23, forecasting closes 2027-01-20 23:59 UTC (`MANTIC_TOURNAMENT_END_DATE`; Mantic
+moved it from 2026-12-16, re-read 2026-11-19), `score_type` `spot_baseline_tournament`, API-verified 2026-09-24 with five open practice
 questions and submissions not yet open. The previous target was Preseason 2: slug
 `preseason-2`, project id 4, forecasting closed 2026-09-20 12:00 UTC. It held four questions: one binary, one
 multiple choice with four options, one discrete with 450 bins and
@@ -1597,7 +1597,7 @@ Operator steps, in order:
    enabled, so `make cronjob_dispatch_setup` shows it in the dry-run plan. Applying the
    plan with `ARGS="--apply"` is paid and ask-first; see "Scheduling reliability" above.
 4. Done 2026-09-24: `MANTIC_TOURNAMENT_ID` and `MANTIC_TOURNAMENT_END_DATE` re-pointed to
-   Series 2 (`series-2`, closing 2026-12-16). For the next season, the "Series 2 discovery"
+   Series 2 (`series-2`, then closing 2026-12-16; extended to 2027-01-20, re-pointed 2026-11-19). For the next season, the "Series 2 discovery"
    and "Stale slug goes red" checks above are what flag the hand-over.
 
 ## Cost discipline
