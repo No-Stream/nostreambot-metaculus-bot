@@ -123,14 +123,20 @@ changes move these shares.
 
 The **Forecasts** page shows one line about the build, six presets (Worst misses, Confident & wrong,
 Most disagreement, Ghost vs published, Since last round, Strict cohort; each says what it does on hover),
-one summary block per platform, and a table of every filtered row. Selecting a row opens **Forecast
-detail**: a header with each score named by platform and kind, previous and next buttons that walk the
-filtered order, a plot of every member beside the published forecast, and tabs for rationales (side by
-side, or one model at a time at full width),
-research, gap-fill v2, telemetry and the published comment. The **Models** page shows, per platform,
-model and question type, the mean own score over rankable rows (and for numeric the same mean without
-scores at the censoring floor), the mean difference from the published score, how often the model was
-the farthest member, and the trait means. Every filter is bound to a query parameter, so a pasted URL
+one summary block per platform, and a table of every filtered row. Each question in the table is a link
+that opens **Forecast detail** in a new tab with the current filters (Streamlit opens table links in a new
+tab and offers no same-tab option). The detail page has a header with each score named by platform and
+kind, previous and next buttons that walk the filtered order, a chart of every member beside the
+published forecast and the resolution (on numeric and discrete questions a density or per-value chart,
+with the cumulative curve one click away; a member keeps its model family's colour across forecasts),
+and tabs for rationales (side by side, or one model at a time at full width), research, gap-fill v2,
+telemetry and the published comment. Rationales and the comment are model-written markdown, so the app
+escapes `$` and `~` before rendering them (Streamlit would otherwise read dollar amounts as LaTeX and
+"~350" as strikethrough), and each rationale's traits show as "label: value" badges. The **Models**
+page shows, per platform, model and question type, the mean "score alone" (each member's own
+forecast scored as if published) over rankable rows, and for numeric the same mean without scores at
+the censoring floor, the mean difference from the published score, how often the model was the
+farthest member, and the trait means. Every filter is bound to a query parameter, so a pasted URL
 reproduces the view, and all three pages render the same sidebar so the filters survive a page switch.
 None of the means is era-bucketed unless an era filter is set, and the captions say so.
 
@@ -140,7 +146,9 @@ None of the means is era-bucketed unless an era filter is set, and the captions 
 exclusion counts), `build.py` (assembly, tables, manifest, staged write), `forecast_rows.py` and
 `member_rows.py` (one function per column group), `traits.py`, `schema.py`, `config.py`, then the app:
 `bundle.py` (cached readers), `filters.py` (one `FilterSpec` row per filter), `plots.py`, `views.py`,
-`app.py` and three one-line page files. The live pipeline may not import the package (an import-linter
-contract). Tests are in `tests/trace_review/`: a fixture workspace built through the real collector from
-`tests/data/performance_comments_mini.jsonl`, the builder end to end, filters, plots, and Streamlit
-`AppTest` smoke tests of every page.
+`app.py` and three one-line page files in `app_pages/` (not `pages/`: with a folder of that name
+Streamlit runs a page file directly when its URL is opened, skipping `app.py` and its navigation). The
+live pipeline may not import the package (an import-linter contract). Tests are in
+`tests/trace_review/`: a fixture workspace built through the real collector from
+`tests/data/performance_comments_mini.jsonl`, the builder end to end, filters, plots, the markdown
+escaping, and Streamlit `AppTest` smoke tests of every page.

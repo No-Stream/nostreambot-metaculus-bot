@@ -11,6 +11,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote, urlencode
 
 import numpy as np
 import pandas as pd
@@ -24,18 +25,19 @@ from metaculus_bot.trace_review.filters import (
     KEY_PARAM,
     PRESET_HELP,
     PRESETS,
+    SORT_LABELS,
     SORT_PARAM,
     FilterResult,
     apply_filters,
     neighbours,
     render_sidebar,
 )
-from metaculus_bot.trace_review.plots import forecast_figure, replay_record
+from metaculus_bot.trace_review.plots import forecast_figure, format_quantity, replay_record
 from metaculus_bot.trace_review.traits import TRAIT_KIND_FLAG, TRAIT_KIND_RATE, TRAITS
 
-PAGE_FORECASTS = "pages/forecasts.py"
-PAGE_DETAIL = "pages/detail.py"
-PAGE_MODELS = "pages/models.py"
+PAGE_FORECASTS = "app_pages/forecasts.py"
+PAGE_DETAIL = "app_pages/detail.py"
+PAGE_MODELS = "app_pages/models.py"
 DETAIL_URL_PATH = "detail"
 RATIONALE_COLUMNS = 3
 PRESETS_PER_ROW = 3
@@ -44,6 +46,33 @@ RATIONALE_HEIGHT_PX = 820
 RATIONALE_VIEW_SIDE_BY_SIDE = "Side by side"
 RATIONALE_VIEW_ONE = "One model at a time"
 QUESTION_TYPE_SHORT = {"multiple_choice": "MC"}
+QUESTION_TYPE_LABELS = {"multiple_choice": "multiple choice"}
+RESOLUTION_LABELS = {
+    "yes": "Yes",
+    "no": "No",
+    "below_lower_bound": "below the range",
+    "above_upper_bound": "above the range",
+}
+EXTRACTION_RUNG_LABELS = {
+    "block": "Value read from the model's structured forecast block.",
+    "repair": "Value read after repairing a malformed structured forecast block.",
+    "llm": "No usable structured block; a parser model extracted the value from the text.",
+}
+EXTRACTION_RUNG_UNRECORDED = "How the value was read was not recorded (no telemetry for this run)."
+RESEARCH_SOURCE_LABELS = {
+    "artifact": "saved research artifact",
+    "comment_backfill": "copy recovered from the published comment",
+    "log_backfill": "copy recovered from the run log",
+}
+NOT_RANKABLE_LABELS = {
+    "anonymous_key": "the comment names no model",
+    "stacked_record": "a stacker set the published value",
+    "stacker_row": "this is the stacker",
+    "sparse_anchors": "too few percentiles to rebuild its curve",
+}
+CHART_DENSITY = "Probability density"
+CHART_DENSITY_DISCRETE = "Probability of each value"
+CHART_CUMULATIVE = "Cumulative probability"
 TRAIT_DIGITS = 1
 TEXT_PANEL_HEIGHT_PX = 640
 MEDIAN = 0.5
@@ -65,14 +94,13 @@ FLAG_COLUMNS: tuple[tuple[str, str], ...] = (
 )
 COHORT_COLUMNS: tuple[str, ...] = ("known_bug", "degraded_run", "partial_degraded")
 TABLE_COLUMNS: dict[str, str] = {
-    "submitted": "Submitted",
     "title": "Question",
-    "question_type": "Type",
-    "platform": "Platform",
-    "tournament": "Tournament",
+    "headline_score": "Score",
     "published": "Published",
     "resolution_raw": "Resolution",
-    "headline_score": "Score",
+    "question_type": "Type",
+    "submitted": "Submitted",
+    "tournament": "Tournament",
     "score_kind": "Score kind",
     "type_log_score": "Log score",
     "member_spread": "Spread",
@@ -80,10 +108,22 @@ TABLE_COLUMNS: dict[str, str] = {
     "aggregation": "Aggregation",
     "config_era": "Era",
     "flags": "Flags",
+    "platform": "Platform",
     "url": "Link",
 }
 MISSING = "-"
+# The question cell's label: the URL-encoded title after "#" (Streamlit decodes the capture group).
+DETAIL_LINK_LABEL_RE = r"#(.*)$"
+# A link cell cannot wrap or show a tooltip, so the question column is wide and can be widened further.
+QUESTION_COLUMN_WIDTH_PX = 460
 _HEADING_RE = re.compile(r"^(#{1,6}) ", re.MULTILINE)
+# A fenced code block or an inline code span: left as written, since a backslash shows inside code.
+_CODE_RE = re.compile(r"(```.*?(?:```|\Z)|`[^`\n]+`)", re.DOTALL)
+# Unescaped $ (Streamlit reads $...$ as LaTeX) and ~ (GitHub markdown reads ~...~ as strikethrough).
+_MARKDOWN_SPECIAL_RE = re.compile(r"(?<!\\)([$~])")
+# Rationale and comment headings start at this level, so a model's "# PHASE 0" does not dwarf the page.
+TOP_HEADING_LEVEL = 4
+MAX_HEADING_LEVEL = 6
 
 
 @dataclass(frozen=True)
@@ -132,6 +172,23 @@ def _number(value: object, digits: int = 1) -> str:
     return MISSING if value is None or pd.isna(value) else f"{float(value):+.{digits}f}"  # type: ignore[arg-type]
 
 
+def readable_markdown(text: str) -> str:
+    """Model-written markdown made safe to render: ``$`` and ``~`` escaped outside code, headings demoted.
+
+    Rationales are full of dollar amounts and "~350" approximations, which Streamlit would otherwise
+    render as LaTeX math (unwrappable, spaces dropped) and strikethrough.
+    """
+    levels = [len(match.group(1)) for match in _HEADING_RE.finditer(text)]
+    shift = TOP_HEADING_LEVEL - min(levels) if levels else 0
+    parts = _CODE_RE.split(text)
+    for index in range(0, len(parts), 2):
+        escaped = _MARKDOWN_SPECIAL_RE.sub(r"\\\1", parts[index])
+        parts[index] = _HEADING_RE.sub(
+            lambda match: "#" * min(len(match.group(1)) + shift, MAX_HEADING_LEVEL) + " ", escaped
+        )
+    return "".join(parts)
+
+
 def published_median(forecast: pd.Series) -> float | None:
     grid_and_cdf = cdf_and_grid(replay_record(forecast))
     if grid_and_cdf is None:
@@ -149,7 +206,7 @@ def published_display(forecast: pd.Series) -> str:
         top = int(np.argmax(values))
         return f"{options[top]} ({values[top]:.0%})"
     median = published_median(forecast) if question_type in NUMERIC_TYPES else None
-    return MISSING if median is None else f"median {median:,.4g}"
+    return MISSING if median is None else f"median {format_quantity(median)}"
 
 
 def score_label(forecast: pd.Series) -> str:
@@ -180,8 +237,9 @@ def table_frame(directory: str, built_at: str) -> pd.DataFrame:
     forecasts = bundle.load_forecasts(directory, built_at).set_index("forecast_key", drop=False)
     display = pd.DataFrame(index=forecasts.index)
     display["submitted"] = forecasts["submitted_at"].dt.strftime("%Y-%m-%d")
-    for column in ("title", "question_type", "platform", "tournament", "resolution_raw", "headline_score"):
+    for column in ("title", "question_type", "platform", "tournament", "headline_score"):
         display[column] = forecasts[column]
+    display["resolution_raw"] = [resolution_display(row) for _, row in forecasts.iterrows()]
     display["published"] = [published_display(row) for _, row in forecasts.iterrows()]
     display["score_kind"] = forecasts["headline_score_field"].map(SCORE_FIELD_LABELS)
     display["type_log_score"] = forecasts["type_log_score"]
@@ -275,26 +333,40 @@ def _summary_strip(rows: pd.DataFrame) -> None:
         st.dataframe(grouped.round(2))
 
 
+def detail_links(keys: pd.Series, titles: pd.Series, filter_params: dict[str, list[str]]) -> pd.Series:
+    """Detail-page URLs carrying the current filters; the title rides in the fragment for the cell's label."""
+    query = urlencode(filter_params, doseq=True)
+    prefix = f"{DETAIL_URL_PATH}?{query + '&' if query else ''}{KEY_PARAM}="
+    return (
+        prefix
+        + keys.map(lambda key: quote(str(key), safe=":"))
+        + "#"
+        + titles.map(lambda title: quote(str(title), safe=""))
+    )
+
+
 def _forecast_table(loaded: Loaded, result: FilterResult) -> None:
     display = table_frame(loaded.directory, loaded.built_at).loc[result.rows["forecast_key"]]
-    event = st.dataframe(
+    display = display.assign(
+        title=detail_links(display.index.to_series(), display["title"], _filters_only_params()).to_numpy()
+    )
+    st.dataframe(
         display,
         hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key="forecast_table",
         column_config={
             **{name: st.column_config.Column(label) for name, label in TABLE_COLUMNS.items()},
+            "title": st.column_config.LinkColumn(
+                "Question",
+                display_text=DETAIL_LINK_LABEL_RE,
+                width=QUESTION_COLUMN_WIDTH_PX,
+                help="Opens the forecast in a new tab. Drag the column edge to widen it.",
+            ),
             "headline_score": st.column_config.NumberColumn("Score", format="%+.1f"),
             "type_log_score": st.column_config.NumberColumn("Log score", format="%.1f"),
             "member_spread": st.column_config.NumberColumn("Spread", format="%.3f"),
             "url": st.column_config.LinkColumn("Link", display_text="open"),
         },
     )
-    selected = event.selection.rows if event is not None else []
-    if selected:
-        key = str(display.index[selected[0]])
-        st.switch_page(PAGE_DETAIL, query_params={**_filters_only_params(), KEY_PARAM: [key]})
 
 
 def render_forecasts_page() -> None:
@@ -303,14 +375,14 @@ def render_forecasts_page() -> None:
     st.title("Forecasts")
     _manifest_line(loaded.manifest)
     _presets()
-    if SORT_PARAM in st.query_params and st.query_params[SORT_PARAM] == "member_spread":
+    if SORT_PARAM in st.query_params and st.query_params[SORT_PARAM] == SORT_LABELS["member_spread"]:
         st.caption(
             "Spread is a probability range on binary and multiple choice and a range-normalized value on numeric; pick one type to compare like with like."
         )
     _summary_strip(result.rows)
     for label, n in result.nulls_dropped.items():
         st.caption(f"{n} rows with no recorded {label.lower()} were dropped by that filter.")
-    st.caption(f"{len(result.rows)} of {len(loaded.forecasts)} forecasts. Select a row to open it.")
+    st.caption(f"{len(result.rows)} of {len(loaded.forecasts)} forecasts. Click a question to open it in a new tab.")
     _forecast_table(loaded, result)
 
 
@@ -321,15 +393,17 @@ def render_forecasts_page() -> None:
 
 def _navigation(keys: list[str], key: str) -> None:
     previous, following, position = neighbours(keys, key)
-    left, middle, right, back = st.columns([1, 2, 1, 2])
-    if left.button("Previous", disabled=previous is None, use_container_width=True) and previous:
-        st.query_params[KEY_PARAM] = previous
-        st.rerun()
-    middle.caption(f"{position} of {len(keys)} in the filtered list" if position else "Not in the filtered list")
-    if right.button("Next", disabled=following is None, use_container_width=True) and following:
-        st.query_params[KEY_PARAM] = following
-        st.rerun()
-    back.page_link(PAGE_FORECASTS, label="Back to the list", query_params=_filters_only_params())
+    with st.container(horizontal=True, vertical_alignment="center"):
+        st.page_link(
+            PAGE_FORECASTS, label="Back to the list", icon=":material/arrow_back:", query_params=_filters_only_params()
+        )
+        if st.button("Previous", disabled=previous is None) and previous:
+            st.query_params[KEY_PARAM] = previous
+            st.rerun()
+        if st.button("Next", disabled=following is None) and following:
+            st.query_params[KEY_PARAM] = following
+            st.rerun()
+        st.caption(f"{position} of {len(keys)} in the filtered list" if position else "Not in the filtered list")
 
 
 def era_label(forecast: pd.Series) -> str:
@@ -338,19 +412,27 @@ def era_label(forecast: pd.Series) -> str:
     return f"era {forecast['config_era']} / {fine}" if pd.notna(fine) else f"era {forecast['config_era']}"
 
 
+def resolution_display(forecast: pd.Series) -> str:
+    raw = str(forecast["resolution_raw"])
+    if forecast["question_type"] in NUMERIC_TYPES and pd.notna(forecast["resolution_value"]):
+        return format_quantity(float(forecast["resolution_value"]))
+    return RESOLUTION_LABELS.get(raw, raw)
+
+
 def _header(forecast: pd.Series) -> None:
     st.title(forecast["title"])
     platform = PLATFORM_LABELS.get(forecast["platform"], forecast["platform"])
+    question_type = QUESTION_TYPE_LABELS.get(forecast["question_type"], forecast["question_type"])
     st.markdown(
-        f":blue-badge[{platform}] :gray-badge[{forecast['question_type']}] :gray-badge[{forecast['tournament']}] "
-        f":gray-badge[{era_label(forecast)}] [open on {platform}]({forecast['url']})"
+        f":blue-badge[{platform}] :gray-badge[{question_type}] :gray-badge[{forecast['tournament']}] "
+        f":gray-badge[config {era_label(forecast)}] [open on {platform}]({forecast['url']})"
     )
     submitted = forecast["submitted_at"].strftime("%Y-%m-%d") if pd.notna(forecast["submitted_at"]) else MISSING
     resolved = (
         forecast["actual_resolve_time"].strftime("%Y-%m-%d") if pd.notna(forecast["actual_resolve_time"]) else MISSING
     )
     st.markdown(
-        f"Submitted **{submitted}**, resolved **{resolved}** as **{forecast['resolution_raw']}**. "
+        f"Submitted **{submitted}**, resolved **{resolved}** as **{resolution_display(forecast)}**. "
         f"Published **{published_display(forecast)}**. **{score_label(forecast)}**, log score {_number(forecast['type_log_score'])}."
     )
     flags = flags_display(forecast)
@@ -364,45 +446,44 @@ def _member_value(member: pd.Series) -> str:
     if pd.notna(member["option_probs_json"]):
         return ", ".join(f"{option}: {p:.0%}" for option, p in json.loads(member["option_probs_json"]).items())
     if pd.notna(member["center_value"]):
-        return f"median {member['center_value']:,.4g}"
+        return f"median {format_quantity(float(member['center_value']))}"
     return MISSING
 
 
 def _rationale_column(member: pd.Series, rationale: str | None) -> None:
     st.subheader(str(member["model"]))
-    reason = "" if member["rankable"] else f" (not rankable: {member['not_rankable_reason']})"
-    st.markdown(f"**{_member_value(member)}**; own score {_number(member['own_score'])}{reason}")
-    st.caption(
-        f"Extraction rung: {member['extraction_rung'] if pd.notna(member['extraction_rung']) else 'not recorded'}"
+    reason = (
+        ""
+        if member["rankable"]
+        else f" (left out of model rankings: {NOT_RANKABLE_LABELS.get(member['not_rankable_reason'], member['not_rankable_reason'])})"
     )
+    st.markdown(f"Forecast **{_member_value(member)}** · scored alone **{_number(member['own_score'])}**{reason}")
+    rung = member["extraction_rung"]
+    st.caption(EXTRACTION_RUNG_LABELS.get(rung, rung) if pd.notna(rung) else EXTRACTION_RUNG_UNRECORDED)
     if member["has_rationale"]:
-        st.caption(trait_line(member))
-        chips = trait_chips(member)
-        if chips:
-            st.markdown(chips)
+        st.markdown(trait_badges(member))
     with st.container(height=RATIONALE_HEIGHT_PX):
-        st.markdown(rationale or "_No rationale in the comment for this member._")
+        st.markdown(readable_markdown(rationale) if rationale else "_No rationale in the comment for this member._")
 
 
-def trait_line(member: pd.Series) -> str:
-    """The count and rate traits, rounded, as one scannable line."""
-    parts = []
+def _trait_value(trait_kind: str, value: object) -> str:
+    if trait_kind == TRAIT_KIND_FLAG:
+        return "yes" if _is_true(value) else "no"
+    if trait_kind == TRAIT_KIND_RATE:
+        return f"{float(value):.{TRAIT_DIGITS}f}"  # type: ignore[arg-type]
+    return f"{int(value):,}"  # type: ignore[arg-type]
+
+
+def trait_badges(member: pd.Series) -> str:
+    """Every recorded trait as a "label: value" badge; a flag that is set is highlighted."""
+    badges = []
     for trait in TRAITS:
         value = member[trait.name]
-        if trait.kind == TRAIT_KIND_FLAG or pd.isna(value):
+        if pd.isna(value):
             continue
-        shown = f"{float(value):.{TRAIT_DIGITS}f}" if trait.kind == TRAIT_KIND_RATE else f"{int(value):,}"
-        parts.append(f"{trait.label.lower()} {shown}")
-    return " · ".join(parts)
-
-
-def trait_chips(member: pd.Series) -> str:
-    """One badge per flag trait that is set; nothing for the ones that are not."""
-    return " ".join(
-        f":violet-badge[{trait.label.lower()}]"
-        for trait in TRAITS
-        if trait.kind == TRAIT_KIND_FLAG and _is_true(member[trait.name])
-    )
+        color = "violet" if trait.kind == TRAIT_KIND_FLAG and _is_true(value) else "gray"
+        badges.append(f":{color}-badge[{trait.label}: {_trait_value(trait.kind, value)}]")
+    return " ".join(badges)
 
 
 def _rationales_tab(members: pd.DataFrame, comment_text: str | None, key: str) -> None:
@@ -412,6 +493,10 @@ def _rationales_tab(members: pd.DataFrame, comment_text: str | None, key: str) -
         st.info("No member values were recovered for this forecast.")
         return
     view = st.radio("View", (RATIONALE_VIEW_SIDE_BY_SIDE, RATIONALE_VIEW_ONE), horizontal=True, key=f"view_{key}")
+    st.caption(
+        "Scored alone: the platform score this member's forecast would have earned had it been published on its own. "
+        "The badges are counted from the rationale text by pattern matching, so treat them as rough."
+    )
     if view == RATIONALE_VIEW_ONE:
         model = st.radio("Model", models, horizontal=True, key=f"model_{key}") or models[0]
         _rationale_column(members[members["model"] == model].iloc[0], rationales.get(model))
@@ -451,16 +536,20 @@ def _research_tab(forecast: pd.Series, texts: dict[str, object]) -> None:
     if pd.isna(source):
         st.info("No research record in the archive belongs to this forecast.")
         return
-    st.markdown(f"Record class **{source}**, trimmed: **{forecast['research_is_trimmed']}**")
+    trimmed = forecast["research_is_trimmed"]
+    trimmed_text = "not recorded" if pd.isna(trimmed) else ("yes" if trimmed else "no")
+    st.markdown(f"Source: **{RESEARCH_SOURCE_LABELS.get(source, source)}** · trimmed: **{trimmed_text}**")
     if source == "comment_backfill":
         st.caption(
             "This text is the lossy copy recovered from the published comment, not the research the forecasters saw."
         )
     if texts["provider_results_json"]:
-        st.dataframe(pd.DataFrame(json.loads(str(texts["provider_results_json"]))), hide_index=True)
+        st.dataframe(
+            pd.DataFrame(json.loads(str(texts["provider_results_json"]))), hide_index=True, placeholder=MISSING
+        )
     for heading, body in split_at_shallowest_heading(str(texts["research_text"] or "")):
         with st.expander(heading):
-            st.markdown(body)
+            st.markdown(readable_markdown(body))
     raw_path = texts["raw_research_path"]
     if raw_path and st.toggle("Show raw provider payloads", key=f"raw_{forecast['forecast_key']}"):
         for payload in _raw_payloads(str(raw_path), int(forecast["question_id"])):
@@ -471,13 +560,21 @@ def _research_tab(forecast: pd.Series, texts: dict[str, object]) -> None:
 
 
 def _gap_fill_tab(forecast: pd.Series, texts: dict[str, object], telemetry: pd.DataFrame) -> None:
+    st.caption(
+        "The ghost forecast is the gap-fill v2 driver's own private forecast from its findings; "
+        "it is logged for evaluation and never published."
+    )
+    if pd.notna(forecast["ghost_log_score"]):
+        st.markdown(
+            f"Ghost forecast log score **{_number(forecast['ghost_log_score'])}** against the published "
+            f"{_number(forecast['type_log_score'])} (difference {_number(forecast['ghost_score_delta'])})."
+        )
+    else:
+        st.markdown("No ghost forecast was scored for this question.")
     lines = telemetry[telemetry["marker"] == "gap_fill_v2"]
     if len(lines):
-        st.json(json.loads(lines.iloc[-1]["payload_json"]), expanded=False)
-    st.markdown(
-        f"Ghost log score {_number(forecast['ghost_log_score'])} against published {_number(forecast['type_log_score'])} "
-        f"(difference {_number(forecast['ghost_score_delta'])})"
-    )
+        with st.expander("The run's gap-fill v2 summary line (raw)"):
+            st.json(json.loads(lines.iloc[-1]["payload_json"]))
     payload = json.loads(str(texts["gap_fill_v2_json"])) if texts["gap_fill_v2_json"] else None
     if payload is None:
         st.info("No gap-fill v2 record for this forecast.")
@@ -495,7 +592,7 @@ def _telemetry_tab(telemetry: pd.DataFrame, key: str) -> None:
     markers = sorted(telemetry["marker"].unique())
     chosen = st.multiselect("Markers", markers, key=f"markers_{key}")
     shown = telemetry[telemetry["marker"].isin(chosen)] if chosen else telemetry
-    st.dataframe(shown, hide_index=True)
+    st.dataframe(shown.drop(columns="forecast_key"), hide_index=True, placeholder=MISSING)
 
 
 def _comment_tab(comment_text: str | None, key: str) -> None:
@@ -506,7 +603,19 @@ def _comment_tab(comment_text: str | None, key: str) -> None:
         st.code(comment_text, language=None, wrap_lines=True)
     else:
         with st.container(height=TEXT_PANEL_HEIGHT_PX):
-            st.markdown(comment_text)
+            st.markdown(readable_markdown(comment_text))
+
+
+def _forecast_chart(forecast: pd.Series, members: pd.DataFrame, key: str) -> None:
+    cumulative = False
+    if forecast["question_type"] in NUMERIC_TYPES:
+        density = CHART_DENSITY_DISCRETE if forecast["question_type"] == "discrete" else CHART_DENSITY
+        shown = st.radio("Chart", (density, CHART_CUMULATIVE), horizontal=True, key=f"chart_{key}")
+        cumulative = shown == CHART_CUMULATIVE
+    dark_theme = st.context.theme.type != "light"
+    st.plotly_chart(
+        forecast_figure(forecast, members, cumulative=cumulative, dark_theme=dark_theme), key=f"figure_{key}"
+    )
 
 
 def render_detail_page() -> None:
@@ -514,7 +623,13 @@ def render_detail_page() -> None:
     result = filtered(loaded)
     key = st.query_params.get(KEY_PARAM)
     forecasts = loaded.forecasts.set_index("forecast_key", drop=False)
-    if key is None or key not in forecasts.index:
+    if key is None:
+        st.info("Open a forecast from the list to read it here.")
+        st.page_link(
+            PAGE_FORECASTS, label="Go to the list", icon=":material/arrow_back:", query_params=_filters_only_params()
+        )
+        return
+    if key not in forecasts.index:
         st.error(f"No forecast with key {key!r} in this index. Pick one from the list.")
         st.page_link(PAGE_FORECASTS, label="Back to the list", query_params=_filters_only_params())
         return
@@ -522,7 +637,7 @@ def render_detail_page() -> None:
     members = loaded.members[loaded.members["forecast_key"] == key]
     _navigation(result.rows["forecast_key"].tolist(), key)
     _header(forecast)
-    st.plotly_chart(forecast_figure(forecast, members), key=f"figure_{key}")
+    _forecast_chart(forecast, members, key)
     texts = bundle.load_texts_for(loaded.directory, loaded.built_at, key)
     telemetry = bundle.load_telemetry_for(loaded.directory, loaded.built_at, key)
     comment_text = str(texts["comment_text"]) if texts["comment_text"] else None
@@ -564,23 +679,68 @@ def model_table(members: pd.DataFrame) -> pd.DataFrame:
     return table.join([scored, ex_floor, traits]).reset_index().round(3)
 
 
+# Raw JSON columns are long and unreadable in a cell; the detail page shows what they hold.
+MEMBER_ROW_HIDDEN_COLUMNS: tuple[str, ...] = (
+    "option_probs_json",
+    "percentiles_json",
+    "raw_value_json",
+    "published_value_json",
+)
+
+
 def render_models_page() -> None:
     loaded = load_bundle_or_stop()
     result = filtered(loaded)
     st.title("Models")
     st.caption(
-        "Per-model scores use only rankable rows (no stacker rows, no stacked records, no anonymous keys, no sparse curves), "
-        "and they are not era-bucketed unless an era filter is set. The ex-floor mean drops numeric scores at the censoring floor."
+        "Score means use only rankable rows: no stacker rows, no stacked records, no members the comment does not "
+        "name, and no numeric curves with too few percentiles. They are not era-bucketed unless an era filter is set. "
+        "Trait columns are means over the rationales. Hover a column header for what it measures."
     )
     members = loaded.members[loaded.members["forecast_key"].isin(result.rows["forecast_key"])]
-    table = model_table(members)
+    column_config = {
+        "model": st.column_config.TextColumn("Model"),
+        "question_type": st.column_config.TextColumn("Type"),
+        "rows": st.column_config.NumberColumn("Rows"),
+        "rankable": st.column_config.NumberColumn("Rankable rows", help="Rows that enter the score means"),
+        "mean_own_score": st.column_config.NumberColumn(
+            "Mean score alone", format="%+.1f", help="The score each forecast would have earned if published on its own"
+        ),
+        "mean_minus_published": st.column_config.NumberColumn(
+            "Mean score alone minus published", format="%+.1f", help="Positive: the model alone beat the ensemble"
+        ),
+        "mean_own_score_ex_floor": st.column_config.NumberColumn(
+            "Mean score alone, floor scores dropped",
+            format="%+.1f",
+            help="The same mean without numeric scores at the censoring floor",
+        ),
+        "farthest_share": st.column_config.NumberColumn(
+            "Farthest member", format="percent", help="Share of forecasts where this model was farthest from the others"
+        ),
+        "rationale_chars": st.column_config.NumberColumn("Rationale length (characters)", format="%d"),
+        "percent_count": st.column_config.NumberColumn("Percentages quoted", format="%.1f"),
+        "hedge_per_1k": st.column_config.NumberColumn("Hedge words per 1,000 characters", format="%.2f"),
+        "base_rate_number_count": st.column_config.NumberColumn("Base rates with a number", format="%.2f"),
+    }
+    table = model_table(members).sort_values(
+        ["platform", "question_type", "rows", "model"], ascending=[True, True, False, True]
+    )
     for platform in sorted(table["platform"].unique()):
         st.subheader(PLATFORM_LABELS.get(platform, platform))
-        st.dataframe(table[table["platform"] == platform].drop(columns="platform"), hide_index=True)
+        st.dataframe(
+            table[table["platform"] == platform][list(column_config)],
+            hide_index=True,
+            column_config=column_config,
+            placeholder=MISSING,
+        )
     st.subheader("Member rows")
-    shown = members.assign(open=DETAIL_URL_PATH + "?" + KEY_PARAM + "=" + members["forecast_key"])
+    st.caption("Every member row behind the tables above, with its stored columns.")
+    shown = members.drop(columns=list(MEMBER_ROW_HIDDEN_COLUMNS)).assign(
+        open=DETAIL_URL_PATH + "?" + KEY_PARAM + "=" + members["forecast_key"]
+    )
     st.dataframe(
-        shown,
+        shown[["open", *(column for column in shown.columns if column != "open")]],
         hide_index=True,
-        column_config={"open": st.column_config.LinkColumn("Forecast", display_text="open")},
+        placeholder=MISSING,
+        column_config={"open": st.column_config.LinkColumn("Forecast", display_text="open", pinned=True)},
     )
