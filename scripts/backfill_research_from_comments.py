@@ -10,7 +10,6 @@ import json
 import logging
 import os
 import sys
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
@@ -18,15 +17,15 @@ from typing import TextIO
 import requests
 
 from metaculus_bot.api_preflight import verify_metaculus_api_identity
-from metaculus_bot.performance_analysis.collector import expand_truncated_comment
+from metaculus_bot.performance_analysis.collector import (
+    DEFAULT_BOT_USER_ID,
+    api_get,
+    expand_truncated_comment,
+    fetch_bot_comments,
+)
 from metaculus_bot.research.section_format import detect_gap_fill, detect_providers
 
 logger = logging.getLogger(__name__)
-
-BOT_USER_ID = 275109
-BASE_URL = "https://www.metaculus.com/api"
-PAGE_SIZE = 100
-FETCH_DELAY = 2.0
 
 RESEARCH_START_MARKER = "# RESEARCH"
 FORECASTS_MARKER = "# FORECASTS"
@@ -48,48 +47,14 @@ def get_token() -> str:
     return token
 
 
-def api_get(endpoint: str, token: str, params: dict | None = None) -> dict:
-    """Authenticated GET to the Metaculus API."""
-    url = f"{BASE_URL}{endpoint}"
-    headers = {"Authorization": f"Token {token}"}
-    resp = requests.get(url, headers=headers, params=params, timeout=30)
-    resp.raise_for_status()
-    return resp.json()
-
-
-def _page_comments(token: str, params: dict[str, object]) -> list[dict]:
-    """Page one ``/comments/`` listing to exhaustion, on top of the caller's params."""
-    comments: list[dict] = []
-    offset = 0
-    while True:
-        data = api_get("/comments/", token, params={**params, "limit": PAGE_SIZE, "offset": offset})
-        results = data.get("results", [])
-        comments.extend(results)
-        logger.info(f"Fetched {len(comments)} comments so far ({offset=}, {params=})")
-        if not results or data.get("next") is None:
-            break
-        offset += PAGE_SIZE
-        time.sleep(FETCH_DELAY)
-    return comments
-
-
 def fetch_all_comments(token: str) -> list[dict]:
-    """Every bot comment, public and private, deduplicated by comment id.
+    """Every bot comment, public and private, as raw list payloads (archived stubs not yet expanded).
 
-    The bot POSTs comments private and Metaculus flips older ones public server-side, so the
-    default author listing serves only the flipped ones (docs/performance_analysis.md, "The
+    Expansion waits until a comment's post is known to be uncaptured, so a re-run does not
+    re-fetch every archived comment it already wrote (docs/performance_analysis.md, "The
     research archive's latest/ records come from three writers").
     """
-    public = _page_comments(token, {"author": BOT_USER_ID})
-    private = _page_comments(token, {"author": BOT_USER_ID, "is_private": "true"})
-
-    merged: dict[int, dict] = {}
-    for comment in (*public, *private):
-        merged[comment["id"]] = comment
-
-    n_public, n_private, n_unique = len(public), len(private), len(merged)
-    logger.info(f"Fetched bot comments: {n_public=} {n_private=} {n_unique=}")
-    return [expand_truncated_comment(comment, token) for comment in merged.values()]
+    return fetch_bot_comments(DEFAULT_BOT_USER_ID, token)
 
 
 def get_question_id_for_post(post_id: int, token: str) -> int | None:
@@ -219,7 +184,8 @@ def append_backfill_records(
 
     ``existing_post_ids`` is read AND extended, so a duplicate post inside one fetch is
     skipped the same way a re-run skips what a previous run wrote. The post_id ->
-    question_id lookup is cached and rate-gated (one sleep per uncached post).
+    question_id lookup is cached, and an archived comment stub is expanded only for a post
+    about to be written; both requests are paced inside the collector's ``api_get``.
     """
     post_to_qid: dict[int, int | None] = {}
     tally = BackfillTally()
@@ -231,9 +197,8 @@ def append_backfill_records(
 
         if post_id not in post_to_qid:
             post_to_qid[post_id] = get_question_id_for_post(post_id, token)
-            time.sleep(FETCH_DELAY)
 
-        record = build_record(comment, question_id=post_to_qid[post_id])
+        record = build_record(expand_truncated_comment(comment, token), question_id=post_to_qid[post_id])
         if record is None:
             tally.no_research += 1
             continue

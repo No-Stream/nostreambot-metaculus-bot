@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from metaculus_bot.performance_analysis.eras import B4E9DF0_MERGED_AT
-from metaculus_bot.performance_analysis.id_mapping import QuestionIds
+from metaculus_bot.performance_analysis.id_mapping import QuestionIds, record_platform
 
 logger = logging.getLogger(__name__)
 
@@ -176,31 +176,39 @@ def research_tags_for_qid(qid: object, latest_dir: Path | str = DEFAULT_RESEARCH
     return research_tags_for_record(record)
 
 
+def load_verified_archive_record(record: dict, latest_dir: Path | str) -> dict | None:
+    """The ``latest/`` research record that provably belongs to one performance record, or None.
+
+    Lookup walks the record's own id pair (:meth:`QuestionIds.lookup_order`, question-id
+    first) and accepts a file only when :meth:`QuestionIds.matches_archive_record` confirms it
+    belongs to this question: ``latest/`` mixes two id spaces (log-backfill records key on the
+    POST id, everything else on the QUESTION id, in one integer namespace), so a bare filename
+    hit can serve a DIFFERENT question's research (the measured ``latest/43592`` collision). A
+    ``log_backfill`` record is never accepted, because its only identity is the page URL, and
+    neither is a record from another platform, since Mantic ids share that integer space too.
+    """
+    ids = QuestionIds.from_perf_record(record)
+    platform = record_platform(record)
+    for candidate_qid in ids.lookup_order():
+        loaded = _load_archive_record(candidate_qid, latest_dir)
+        if loaded is None or not ids.matches_archive_record(loaded):
+            continue
+        if loaded.get("source") == "log_backfill" or record_platform(loaded) != platform:
+            continue
+        return loaded
+    return None
+
+
 def attach_research_tags(records: list[dict], latest_dir: Path | str = DEFAULT_RESEARCH_ARCHIVE_LATEST) -> None:
     """Stamp the treatment tags onto each performance record in place.
 
-    Lookup walks the record's own id pair (:meth:`QuestionIds.lookup_order`,
-    question-id first) and accepts a ``latest/`` file only when
-    :meth:`QuestionIds.matches_archive_record` confirms it belongs to this
-    question — ``latest/`` mixes two id spaces (log-backfill records key on the
-    POST id, everything else on the QUESTION id, in one integer namespace), so a
-    bare filename hit can serve a DIFFERENT question's research (the measured
-    ``latest/43592`` collision). A record with no verified archive counterpart
-    gets the all-None tags rather than False.
+    The archive record is found by :func:`load_verified_archive_record`. A record with no
+    verified archive counterpart gets the all-None tags rather than False.
     """
     tagged = 0
     for record in records:
-        ids = QuestionIds.from_perf_record(record)
-        tags = dict(_ABSENT_TAGS)
-        for candidate_qid in ids.lookup_order():
-            loaded = _load_archive_record(candidate_qid, latest_dir)
-            if loaded is None or not ids.matches_archive_record(loaded):
-                continue
-            if loaded.get("source") == "log_backfill":
-                # page_url-identified only: on an id collision it can be a foreign question.
-                continue
-            tags = research_tags_for_record(loaded)
-            break
+        loaded = load_verified_archive_record(record, latest_dir)
+        tags = dict(_ABSENT_TAGS) if loaded is None else research_tags_for_record(loaded)
         record.update(tags)
         if tags["anchor_present"] is not None:
             tagged += 1

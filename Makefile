@@ -1,4 +1,4 @@
-.PHONY: install lock test test_verbose all lint lint_imports deps format typecheck typecheck_ty cov audit run benchmark precommit precommit_all precommit_install analyze_correlations analyze_correlations_latest backtest_smoke_test backtest_small backtest_medium backtest_large ablation_qa_research ablation_smoke ablation_small ablation_medium ablation_score test_e2e test_live test_fast check_credits sync_research sync_telemetry sync_raw_research sync_all resync_from_store backfill_research download_research download_run_logs download_raw_research backfill_comments score_ghosts close_margin_watch supply_probe supply_probe_mantic probe_slugs verify_pull cost_report dispatch_watch cronjob_dispatch_setup backtest_with_cache run_mantic run_mantic_one strip_bench probe_resolver replay_ladder artifacts_link artifacts_check artifacts_migrate
+.PHONY: install lock test test_verbose all lint lint_imports deps format typecheck typecheck_ty cov audit run benchmark precommit precommit_all precommit_install analyze_correlations analyze_correlations_latest backtest_smoke_test backtest_small backtest_medium backtest_large ablation_qa_research ablation_smoke ablation_small ablation_medium ablation_score test_e2e test_live test_fast check_credits sync_research sync_telemetry sync_raw_research sync_all resync_from_store backfill_research download_research download_run_logs download_raw_research backfill_comments score_ghosts close_margin_watch supply_probe supply_probe_mantic probe_slugs verify_pull cost_report dispatch_watch cronjob_dispatch_setup backtest_with_cache run_mantic run_mantic_one strip_bench probe_resolver replay_ladder artifacts_link artifacts_check artifacts_migrate trace_index review
 
 # Stream logs live from recipes; avoid per-target buffering
 MAKEFLAGS += --output-sync=none
@@ -286,7 +286,10 @@ sync_all:
 	@echo "=== Single-pass GHA sync: research + telemetry + raw-research (one download pass) ==="
 	uv run python scripts/sync_all.py $(ARGS)
 	@echo ""
-	@echo "=== sync_all complete: research + telemetry + raw-research archives refreshed ==="
+	@echo "=== Trace-review index rebuild (docs/trace_review.md) ==="
+	uv run python -m metaculus_bot.trace_review
+	@echo ""
+	@echo "=== sync_all complete: research + telemetry + raw-research archives and the trace-review index refreshed ==="
 
 # OFFLINE re-parse: rebuild all three archives from the persisted artifact store
 # (backtests/gha_artifact_store/) with ZERO network calls. This is the payoff of
@@ -356,6 +359,17 @@ verify_pull:
 # FORECASTERS_SURVIVED lines. ARGS="--days 7" to narrow the window (default 30).
 cost_report:
 	uv run python scripts/cost_report.py $(ARGS)
+
+# Offline trace-review index (docs/trace_review.md): the newest round file plus a fresh, paced,
+# read-only pull of resolved questions and the bot's own comments, joined to telemetry and the
+# research archive, written to backtests/trace_index/. Free. Mantic needs MANTIC_TOKEN; without
+# it, ARGS="--platforms metaculus". ARGS="--skip-fresh-pull" makes no request at all.
+trace_index:
+	uv run python -m metaculus_bot.trace_review $(ARGS)
+
+# The trace-review app over that index, on localhost only. Free: it reads local files.
+review:
+	uv run streamlit run metaculus_bot/trace_review/app.py --server.address localhost --browser.gatherUsageStats false $(ARGS)
 
 # One-question probe of gap-fill v1's per-gap resolver: replays the gaps the archive recorded
 # for question QUESTION=<question id> through the production resolver path

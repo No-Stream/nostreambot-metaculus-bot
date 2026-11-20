@@ -6,14 +6,15 @@ and planning docs named here may have moved out of the public repo. Neither is a
 
 ## Open, operator decides
 
-- **Retry Gemini 4 Carbon in the Google slot?** Reverted to Argon on 2026-11-14 after Carbon at effort `high`
-  hit the 600s soft deadline on 3 of 3 questions (`docs/roster_history.md`). The cause is not pinned down:
-  each dropped call billed about $0.10, an Argon-sized call, which reads as slow serving of a new model rather
-  than long thinking, but the logs cannot separate queueing from low throughput. Before retrying, read the
-  three generations' provider, latency and token counts on the OpenRouter activity page (free), or time one
-  prod-prompt Carbon call at `high` and one at `medium` with the operator's yes (about $0.10 each).
-  Raising `FORECASTER_SOFT_DEADLINE` is not the lever: it feeds the time-budget fast-path sums and the
-  deadline code takes strictly-safer changes only.
+- **Gemini 4 Carbon in the Google slot: decided against, 2026-11-19; Argon stays.** Reverted to Argon on
+  2026-11-14 after Carbon at effort `high` hit the 600s soft deadline on 3 of 3 questions (`docs/roster_history.md`).
+  On 2026-11-19 the operator approved three timed calls on the prod binary prompt for Q46548, all through the personal
+  OpenRouter key and reusing the 2026-11-03 research archive. Carbon `high` took 813s and wrote 44,052 output tokens
+  (37,454 reasoning), costing $0.48. Carbon `medium` took 260s and wrote 13,105 tokens, costing $0.17; its first try
+  died with an OpenRouter 504 after about 5 minutes. Opus 5.5 `xhigh` took 52s and wrote 5,390 tokens. Carbon generates
+  at about 50 tokens/s, half Opus's speed, so the slowness is long thinking at low throughput rather than queueing. All
+  three answered 0.40. A blinded gpt-6.2-astra judge preferred Opus narrowly over Carbon `medium`. In prod on
+  2026-11-03, Argon answered this question in about the same time as Opus. Revisit only if Carbon's throughput improves.
 
 - **Gap-fill v1 for the fall**: leaned (about $1.75 a question, over the $1.50 ceiling) or off (about $1.37), against a
   roughly $1 target. Its gate discharged 2026-09-09 MIXED over 99 both-on bundles: forecaster lens v1 59 / v2 32,

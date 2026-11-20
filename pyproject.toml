@@ -337,7 +337,9 @@ DEP002 = ["brotli", "backports-zstd"]
 #   httpx <- openai (and asknews, exa-py, google-genai, litellm — five declared deps
 #     require it). Used directly in credit_telemetry.py, check_openrouter_credits.py and
 #     research/agentic/tools.py.
-DEP003 = ["urllib3", "httpx"]
+#   streamlit, plotly <- forecasting-tools. Imported only by the offline trace-review app
+#     (metaculus_bot/trace_review/app.py and its pages); the live bot never loads them.
+DEP003 = ["urllib3", "httpx", "streamlit", "plotly"]
 # DEP004 — dev dependency imported by the shipped package. Neither import is reachable on a
 # live bot run, which installs with `uv sync --no-dev`:
 #   matplotlib. Plotting is optional at both call sites:
@@ -444,6 +446,7 @@ forbidden_modules = [
     "metaculus_bot.backtest",
     "metaculus_bot.ablation",
     "metaculus_bot.benchmark",
+    "metaculus_bot.trace_review",
 ]
 
 # constants.py is imported by nearly every module in the package, so an upward import

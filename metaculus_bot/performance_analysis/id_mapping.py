@@ -37,6 +37,8 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from metaculus_bot.constants import PLATFORM_METACULUS
+
 # The two id spaces, named. These are the canonical ``qid_kind`` values; the
 # telemetry marker parser imports them so the emitted tag and the reader stay in
 # lockstep (a typo on either side would silently re-open the split-brain).
@@ -51,6 +53,16 @@ QID_KIND_QUESTION_ID = "question_id"
 # package imports (same convention as the telemetry markers' local qid_kind
 # literals); ``tests/test_id_mapping.py`` pins the two patterns equal.
 PAGE_URL_ID_PATTERN = re.compile(r"(?:metaculus\.com/(?:questions|c/[^/]+)|competitions\.mantic\.com/questions)/(\d+)")
+
+
+def record_platform(record: dict) -> str:
+    """The platform a performance or research-archive record belongs to.
+
+    Both record kinds gained a ``platform`` field only when Mantic arrived; every record written
+    before then is Metaculus (no older archive record has a Mantic page URL), so an absent or
+    empty field reads as Metaculus.
+    """
+    return record.get("platform") or PLATFORM_METACULUS
 
 
 def _coerce_int(value: object) -> int | None:
