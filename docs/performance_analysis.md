@@ -101,7 +101,8 @@ a printed summary. Three details:
 "Residual analysis" implies `make sync_all` first, always (read-only and free). It
 pulls **everything** sync-shaped in one command, and that matters because GHA artifacts
 expire at 90 days, so a single-source pull silently and permanently drops whatever it
-did not fetch. Three archives:
+did not fetch. Three archives, and after them the trace-review index (`docs/trace_review.md`), rebuilt
+from the newest round plus a fresh paced pull:
 
 - **The research archive** (`backtests/research_archive/latest/<qid>.json`):
   per-question post-summarizer research. Precedence rules below.

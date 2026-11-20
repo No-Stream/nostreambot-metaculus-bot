@@ -286,7 +286,10 @@ sync_all:
 	@echo "=== Single-pass GHA sync: research + telemetry + raw-research (one download pass) ==="
 	uv run python scripts/sync_all.py $(ARGS)
 	@echo ""
-	@echo "=== sync_all complete: research + telemetry + raw-research archives refreshed ==="
+	@echo "=== Trace-review index rebuild (docs/trace_review.md) ==="
+	uv run python -m metaculus_bot.trace_review
+	@echo ""
+	@echo "=== sync_all complete: research + telemetry + raw-research archives and the trace-review index refreshed ==="
 
 # OFFLINE re-parse: rebuild all three archives from the persisted artifact store
 # (backtests/gha_artifact_store/) with ZERO network calls. This is the payoff of

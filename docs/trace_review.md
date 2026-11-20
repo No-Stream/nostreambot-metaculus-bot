@@ -12,8 +12,9 @@ collector's paced GETs of resolved posts and the bot's own comments.
 
 | Command | What it does |
 |---|---|
-| `make trace_index` | Builds `backtests/trace_index/` from both platforms. Needs `METACULUS_TOKEN` and `MANTIC_TOKEN`. |
-| `make trace_index ARGS="--platforms metaculus"` | Metaculus only, for when `MANTIC_TOKEN` is not set. |
+| `make trace_index` | Builds `backtests/trace_index/` from Metaculus, plus Mantic when `MANTIC_TOKEN` is set (a warning says when it is skipped). Reads `.env`. |
+| `make sync_all` | Runs the same build as its last step, so the index stays current with every sync and needs no separate command. |
+| `make trace_index ARGS="--platforms metaculus mantic"` | Names the platforms explicitly; a named platform without its token fails. |
 | `make trace_index ARGS="--skip-fresh-pull"` | No network at all; the index stops at the round, and the app says so. |
 | `make trace_index ARGS="--refresh"` | Ignores the cached pulls and pulls again. |
 | `make review` | The app on `localhost`, with Streamlit's usage statistics off (it would otherwise report to its vendor). |

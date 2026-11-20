@@ -15,6 +15,7 @@ import pytest
 from metaculus_bot.constants import MANTIC_TOKEN_ENV, PLATFORM_MANTIC, PLATFORM_METACULUS
 from metaculus_bot.performance_analysis import collector
 from metaculus_bot.performance_analysis.member_replay import replay_solo_score
+from metaculus_bot.trace_review.__main__ import parse_args
 from metaculus_bot.trace_review.build import build_index
 from metaculus_bot.trace_review.config import (
     BUNDLE_TABLE_FILES,
@@ -311,6 +312,18 @@ class TestFailuresAndCache:
         # Metaculus alone builds without it.
         build_index(workspace.config(tmp_path / "bundle", platforms=(PLATFORM_METACULUS,)))
         assert doubles.total("posts") > 0
+
+    def test_the_default_platforms_are_the_ones_with_a_token_so_an_unattended_sync_builds(self, monkeypatch, caplog):
+        monkeypatch.delenv(MANTIC_TOKEN_ENV, raising=False)
+        assert parse_args([]).platforms == (PLATFORM_METACULUS,)
+        assert MANTIC_TOKEN_ENV in caplog.text  # the skip is logged, not silent
+
+        monkeypatch.setenv(MANTIC_TOKEN_ENV, "token")
+        assert parse_args([]).platforms == (PLATFORM_METACULUS, PLATFORM_MANTIC)
+
+    def test_a_platform_named_explicitly_still_needs_its_token(self, monkeypatch):
+        monkeypatch.delenv(MANTIC_TOKEN_ENV, raising=False)
+        assert parse_args(["--platforms", PLATFORM_MANTIC]).platforms == (PLATFORM_MANTIC,)
 
     def test_a_duplicate_forecast_key_fails(self, workspace: Workspace, tmp_path, monkeypatch):
         install_doubles(monkeypatch, FetcherDoubles())
