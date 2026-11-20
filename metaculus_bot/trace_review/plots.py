@@ -13,6 +13,7 @@ A member's colour comes from its model family, so a vendor keeps its colour from
 from __future__ import annotations
 
 import json
+import re
 
 import numpy as np
 import pandas as pd
@@ -27,14 +28,15 @@ PUBLISHED_COLOR_DARK_THEME = "#f1f5f9"
 PUBLISHED_COLOR_LIGHT_THEME = "#111827"
 RESOLUTION_COLOR = "#ec4899"
 PUBLISHED_BAR_COLOR = "#64748b"
-# (model-name prefixes, (first model's colour, a second model of the same family's colour))
-MODEL_FAMILY_COLORS: tuple[tuple[tuple[str, ...], tuple[str, str]], ...] = (
-    (("gpt", "o1", "o3", "o4"), ("#10b981", "#6ee7b7")),
-    (("claude",), ("#f97316", "#fdba74")),
-    (("gemini",), ("#3b82f6", "#93c5fd")),
-    (("grok",), ("#a855f7", "#d8b4fe")),
-    (("qwen",), ("#eab308", "#fde047")),
-    (("kimi",), ("#06b6d4", "#67e8f9")),
+# (model-name pattern matched at the start, (first model's colour, a second model of the same family's colour)).
+# Patterns rather than literal ids, since model ids live only in llm_configs.py and constants.py.
+MODEL_FAMILY_COLORS: tuple[tuple[re.Pattern[str], tuple[str, str]], ...] = (
+    (re.compile(r"gpt|o\d"), ("#10b981", "#6ee7b7")),
+    (re.compile(r"claude"), ("#f97316", "#fdba74")),
+    (re.compile(r"gemini"), ("#3b82f6", "#93c5fd")),
+    (re.compile(r"grok"), ("#a855f7", "#d8b4fe")),
+    (re.compile(r"qwen"), ("#eab308", "#fde047")),
+    (re.compile(r"kimi"), ("#06b6d4", "#67e8f9")),
 )
 OTHER_MODEL_COLORS = ("#94a3b8", "#cbd5e1")
 MEMBER_OPACITY = 0.7
@@ -85,7 +87,7 @@ def member_colors(models: list[str]) -> dict[str, str]:
     seen_per_family: dict[int, int] = {}
     for model in models:
         family = next(
-            (index for index, (prefixes, _) in enumerate(MODEL_FAMILY_COLORS) if model.lower().startswith(prefixes)),
+            (index for index, (pattern, _) in enumerate(MODEL_FAMILY_COLORS) if pattern.match(model.lower())),
             len(MODEL_FAMILY_COLORS),
         )
         shades = MODEL_FAMILY_COLORS[family][1] if family < len(MODEL_FAMILY_COLORS) else OTHER_MODEL_COLORS
