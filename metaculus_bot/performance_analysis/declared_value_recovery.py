@@ -24,6 +24,7 @@ from metaculus_bot.structured_output_schema import (
     NumericStructured,
     StructuredBlock,
     extract_json_block,
+    extract_json_block_candidates,
     parse_structured_block,
 )
 
@@ -150,8 +151,8 @@ def _parse_block_in_body(
     ``parse_structured_block`` returns None on malformed JSON / validation
     failure, so callers just fall back to the prose regex on None.
     """
-    raw_block = extract_json_block(body_text)
-    if raw_block is None or _declares_other_known_type(raw_block, question_type):
+    candidates = extract_json_block_candidates(body_text)
+    if all(_declares_other_known_type(raw_block, question_type) for raw_block in candidates):
         return None
     return parse_structured_block(body_text, question_type)
 
@@ -161,7 +162,9 @@ def _declares_other_known_type(raw_block: str, question_type: str) -> bool:
 
     Callers probe a comment of unknown type for each type in turn, so a binary block read as numeric
     is "not this type", not a parse failure; without this check the strict parser logs a mismatch
-    WARNING for every member of every non-numeric comment the collector reads.
+    WARNING for every member of every non-numeric comment the collector reads. The caller skips the
+    parse only when EVERY candidate names another type, so a trailing recap block of another type
+    cannot hide a valid earlier block, the case ``parse_structured_block`` walks candidates for.
     """
     try:
         payload = json.loads(raw_block)
