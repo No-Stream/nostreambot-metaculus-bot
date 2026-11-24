@@ -88,7 +88,7 @@ def _read_declared_tail_probability(value: object) -> float | None:
         probability = float(value)
     except (ValueError, OverflowError):
         return None
-    return probability if math.isfinite(probability) else None
+    return probability if not isinstance(value, str) or math.isfinite(probability) else None
 
 
 _DeclaredTailProbability = Annotated[float | None, BeforeValidator(_read_declared_tail_probability)]

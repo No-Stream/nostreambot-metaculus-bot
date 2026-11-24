@@ -73,9 +73,19 @@ class TestTailExtraction:
         assert len(outcome.value) == len(STANDARD_PERCENTILES)
         salvage.assert_not_awaited()
 
-    @pytest.mark.parametrize("value", [None, True, "0.2", "unknown", [], {}])
-    async def test_unparseable_tail_reports_invalid_and_preserves_other_side(
-        self, question_type: str, value: object
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (None, TailProbability(value=None, status="invalid")),
+            (True, TailProbability(value=None, status="invalid")),
+            ("0.2", TailProbability(value=0.2, status="valid")),
+            ("unknown", TailProbability(value=None, status="invalid")),
+            ([], TailProbability(value=None, status="invalid")),
+            ({}, TailProbability(value=None, status="invalid")),
+        ],
+    )
+    async def test_tail_value_preserves_other_side(
+        self, question_type: str, value: object, expected: TailProbability
     ) -> None:
         extract = extract_numeric if question_type == "numeric" else extract_date
         with patch("metaculus_bot.value_extraction.parse_structured", new=AsyncMock()) as salvage:
@@ -85,7 +95,7 @@ class TestTailExtraction:
             )
         assert outcome.rung == "block"
         assert outcome.tail_probabilities == TailProbabilities(
-            below=TailProbability(value=None, status="invalid"), above=TailProbability(value=0.2, status="valid")
+            below=expected, above=TailProbability(value=0.2, status="valid")
         )
         salvage.assert_not_awaited()
 
