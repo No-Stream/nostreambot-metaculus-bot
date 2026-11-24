@@ -69,7 +69,10 @@ class TestOpenBoundProbabilityFields:
         prompt = _percentile_prompt(kind, page_url=METACULUS_PAGE_URL, open_lower=True, open_upper=True)
         rule = prompts._OPEN_BOUND_PROBABILITY_RULE.format(
             fields=f"`prob_below_lower_bound` = P(outcome < {lower_bound}); "
-            f"`prob_above_upper_bound` = P(outcome > {upper_bound})"
+            f"`prob_above_upper_bound` = P(outcome > {upper_bound})",
+            consistency_examples="if `prob_below_lower_bound` is 0.04, your 0.01 and 0.025 percentiles must be values "
+            "below the lower bound; if `prob_above_upper_bound` is 0.04, your 0.975 and 0.99 percentiles must be values "
+            "above the upper bound",
         )
         assert _flat(prompt).count(_flat(rule)) == 1
         flat = _flat(rule)
@@ -122,3 +125,17 @@ def test_example_tail_values_do_not_anchor_below_the_metaculus_floor() -> None:
     )
     for field in ("prob_below_lower_bound", "prob_above_upper_bound"):
         assert from_prompt[field] >= METACULUS_OUT_OF_RANGE_TAIL_FLOOR
+
+
+@pytest.mark.parametrize("kind", ["numeric", "date"])
+def test_tails_come_first_and_percentiles_must_agree_with_them(kind: Literal["numeric", "date"]) -> None:
+    """The model states each open tail before its percentiles, so the tail drives the percentiles."""
+    text = _percentile_prompt(kind, page_url=METACULUS_PAGE_URL, open_lower=True, open_upper=True)
+    example = _extract_last_json_block(text)
+    assert list(json.loads(example))[:3] == ["question_type", "prob_below_lower_bound", "prob_above_upper_bound"]
+    flattened = _flat(text)
+    assert "decide these probabilities before your percentiles" in flattened
+    assert (
+        "if `prob_below_lower_bound` is 0.04, your 0.01 and 0.025 percentiles must be values below the lower bound"
+        in flattened
+    )

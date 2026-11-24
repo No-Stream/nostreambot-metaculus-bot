@@ -516,6 +516,8 @@ One constant, shared by the binary, multiple-choice and continuous (numeric, dat
 
 ### `_OPEN_BOUND_PROBABILITY_RULE`
 
+Since 2026-11-24 the stated-tail fields come FIRST in the example block, right after `question_type`, and the rule tells the model to decide them before its percentiles and gives one concrete consistency example per open side (a stated 0.04 below the lower bound means the two lowest standard percentiles sit below that bound; the percentile labels are derived from `STANDARD_PERCENTILES`). The operator asked for the least confusing interface: the tail is the quantity that drives scoring beyond an open bound, so the model commits to it and then fits its percentiles to it rather than the reverse. Pinned by `test_tails_come_first_and_percentiles_must_agree_with_them`.
+
 Base numeric and date percentile prompts require `prob_below_lower_bound` for an open lower side
 and `prob_above_upper_bound` for an open upper side in the STRUCTURED FORECAST block. The rule asks
 the model to reason explicitly about the probability beyond each actual displayed bound, renders

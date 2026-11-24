@@ -1101,7 +1101,8 @@ _OWN_KNOWLEDGE_RULE = (
 _OPEN_BOUND_PROBABILITY_RULE = (
     "Open-bound probabilities: reason explicitly about how likely the outcome is to fall beyond each specified "
     "bound: {fields}. These values set the published probability beyond those bounds. These fields are REQUIRED "
-    "for open sides; omit fields for closed sides. "
+    "for open sides; omit fields for closed sides. Decide these probabilities before your percentiles, then make the "
+    "percentiles agree with them: {consistency_examples}. "
     "Report your honest decimal probabilities in [0, 1), with their sum below 1, and keep them consistent with "
     "`declared_percentiles`."
 )
@@ -1329,9 +1330,17 @@ def _open_bound_probability_blocks(question: NumericQuestion) -> tuple[str, str]
     # The example block must parse as JSON, so it needs a number, and the number anchors the models'
     # stated tails. 0.03 sits near our historical escape rate per open side (1.3% to 3.7%); the first
     # value here, 0.005, was below the structural 1% this field exists to replace.
-    example_fields = "".join(f',\n          "{field}": 0.03' for field in fields)
+    example_fields = "".join(f'\n          "{field}": 0.03,' for field in fields)
+    lowest_two, highest_two = STANDARD_PERCENTILES[:2], STANDARD_PERCENTILES[-2:]
+    consistency_examples = {
+        "prob_below_lower_bound": f"if `prob_below_lower_bound` is 0.04, your {lowest_two[0]:g} and {lowest_two[1]:g} "
+        "percentiles must be values below the lower bound",
+        "prob_above_upper_bound": f"if `prob_above_upper_bound` is 0.04, your {highest_two[0]:g} and {highest_two[1]:g} "
+        "percentiles must be values above the upper bound",
+    }
     rule = _OPEN_BOUND_PROBABILITY_RULE.format(
-        fields="; ".join(f"`{field}` = {meaning}" for field, meaning in fields.items())
+        fields="; ".join(f"`{field}` = {meaning}" for field, meaning in fields.items()),
+        consistency_examples="; ".join(consistency_examples[field] for field in fields),
     )
     return example_fields, f"\n        - {rule}"
 
@@ -1362,12 +1371,12 @@ def _numeric_percentile_blocks(question: NumericQuestion) -> _PercentileBlocks:
 
         ```json
         {{
-          "question_type": "numeric",
+          "question_type": "numeric",{open_bound_fields}
           "declared_percentiles": {{
             "0.01": 0.5, "0.025": 1.2, "0.05": 10.1, "0.1": 12.3, "0.2": 23.4, "0.4": 34.5, "0.5": 45.6,
             "0.6": 56.7, "0.8": 67.8, "0.9": 78.9, "0.95": 89.0, "0.975": 123.4, "0.99": 140.2
           }},
-          "outcome_type": "continuous"{open_bound_fields}
+          "outcome_type": "continuous"
         }}
         ```
 
@@ -1426,10 +1435,10 @@ def _date_percentile_blocks(question: EpochDateQuestion) -> _PercentileBlocks:
 
         ```json
         {{
-          "question_type": "date",
+          "question_type": "date",{open_bound_fields}
           "declared_percentiles": {{
             {example_rows}
-          }}{open_bound_fields}
+          }}
         }}
         ```
 
