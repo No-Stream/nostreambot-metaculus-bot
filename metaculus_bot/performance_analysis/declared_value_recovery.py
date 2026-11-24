@@ -150,9 +150,27 @@ def _parse_block_in_body(
     ``parse_structured_block`` returns None on malformed JSON / validation
     failure, so callers just fall back to the prose regex on None.
     """
-    if extract_json_block(body_text) is None:
+    raw_block = extract_json_block(body_text)
+    if raw_block is None or _declares_other_known_type(raw_block, question_type):
         return None
     return parse_structured_block(body_text, question_type)
+
+
+def _declares_other_known_type(raw_block: str, question_type: str) -> bool:
+    """True when the block names a different known question type.
+
+    Callers probe a comment of unknown type for each type in turn, so a binary block read as numeric
+    is "not this type", not a parse failure; without this check the strict parser logs a mismatch
+    WARNING for every member of every non-numeric comment the collector reads.
+    """
+    try:
+        payload = json.loads(raw_block)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    declared_type = payload.get("question_type")
+    return declared_type in _KNOWN_BLOCK_QUESTION_TYPES and declared_type != question_type
 
 
 def _numeric_percentiles_from_block(body_text: str) -> list[tuple[float, float]] | None:
