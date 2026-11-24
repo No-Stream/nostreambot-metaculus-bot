@@ -193,6 +193,12 @@ larger source excerpt; if a passage does not fit the result budget, it is omitte
 instead of being shortened into a citation. Tool metadata and other explanatory
 text do not become evidence passages.
 
+Oversized source paragraphs are split into bounded excerpts at line or sentence
+boundaries. Tabular sections split at complete rendered rows; an oversized row
+is omitted. Each excerpt remains a contiguous substring of the visible source,
+so later chunks do not repeat a header. Pagination and the unchanged result
+budget can still omit excerpts that are not fully delivered.
+
 ### The three known-API tools (built and wired)
 
 Three more tools are built in `research/known_api/tools.py` (`build_known_api_tools`) and are
