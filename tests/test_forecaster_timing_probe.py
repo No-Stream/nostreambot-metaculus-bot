@@ -84,7 +84,7 @@ async def test_probe_invokes_one_forecaster_and_reports_usage(monkeypatch: pytes
         calls.append(kwargs)
         response = ModelResponse()
         response.choices = [Choices(message=Message(role="assistant", content="answer"), finish_reason="stop", index=0)]
-        response.usage = Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15)  # type: ignore[attr-defined]
+        response.usage = Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15, cost=0.82)  # type: ignore[attr-defined]
         return response
 
     monkeypatch.setattr(ft_general_llm, "acompletion", fake_completion)
@@ -93,6 +93,7 @@ async def test_probe_invokes_one_forecaster_and_reports_usage(monkeypatch: pytes
     assert calls[0]["messages"][0]["content"] == "production prompt"
     assert result["output_tokens"] == 5
     assert result["finish_reason"] == "stop"
+    assert result["openrouter_cost_usd"] == 0.82
     assert result["structured_forecast_parsed"] is False
 
 
@@ -100,7 +101,7 @@ async def test_probe_reports_empty_refusal(monkeypatch: pytest.MonkeyPatch) -> N
     async def fake_completion(**kwargs: object) -> ModelResponse:
         response = ModelResponse()
         response.choices = [Choices(message=Message(role="assistant", content=None), finish_reason="refusal", index=0)]
-        response.usage = Usage(prompt_tokens=10, completion_tokens=0, total_tokens=10)  # type: ignore[attr-defined]
+        response.usage = Usage(prompt_tokens=10, completion_tokens=0, total_tokens=10, cost=0.0)  # type: ignore[attr-defined]
         return response
 
     monkeypatch.setattr(ft_general_llm, "acompletion", fake_completion)

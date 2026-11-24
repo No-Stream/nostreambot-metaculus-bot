@@ -83,7 +83,9 @@ async def run_probe(llm: GeneralLlm, prompt: str) -> dict[str, Any]:
         "reasoning_tokens": details.reasoning_tokens if details else None,
         "finish_reason": response.choices[0].finish_reason,
         "structured_forecast_parsed": parse_structured_block(answer, "numeric") is not None,
-        "cost_usd": response._hidden_params.get("response_cost"),
+        # OpenRouter bills in usage.cost; LiteLLM's own estimate is 0 for models missing from its price table.
+        "openrouter_cost_usd": usage.cost,
+        "litellm_estimated_cost_usd": response._hidden_params.get("response_cost"),
     }
 
 
