@@ -22,6 +22,7 @@ from metaculus_bot.llm_configs import FORECASTER_LLMS, FORECASTER_MODEL_NAMES
 from metaculus_bot.numeric.utils import bound_messages
 from metaculus_bot.prompts import numeric_prompt
 from metaculus_bot.structured_output_schema import parse_structured_block
+from scripts.download_research import SOURCE_ARTIFACT, record_source
 
 ARCHIVE_DIR = Path("backtests/research_archive/by_qid")
 
@@ -39,7 +40,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def load_probe_input(qid: int, archive_dir: Path = ARCHIVE_DIR) -> tuple[NumericQuestion, str]:
     records = [json.loads(line) for line in (archive_dir / f"{qid}.jsonl").read_text().splitlines() if line.strip()]
-    record = max(records, key=lambda item: item["timestamp"])
+    # Only live-capture records hold the research the forecasters saw and a POST page_url;
+    # comment backfills are lossy and carry the question url.
+    artifact_records = [item for item in records if record_source(item) == SOURCE_ARTIFACT]
+    if not artifact_records:
+        raise ValueError(f"No live-capture research record for question {qid}")
+    record = max(artifact_records, key=lambda item: item["timestamp"])
     if record["qid"] != qid or not record["research_text"]:
         raise ValueError("Archive record has the wrong question or no research")
     question = MetaculusApi.get_question_by_url(record["page_url"])

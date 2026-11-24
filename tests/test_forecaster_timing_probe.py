@@ -38,14 +38,42 @@ def test_archive_research_builds_production_prompt(tmp_path: Path, monkeypatch: 
     )
     (tmp_path / "123.jsonl").write_text(
         json.dumps(
-            {"qid": 123, "page_url": question.page_url, "research_text": "Archived evidence", "timestamp": "2026"}
+            {
+                "qid": 123,
+                "post_id": 456,
+                "page_url": question.page_url,
+                "research_text": "Archived evidence",
+                "timestamp": "2026-01-01",
+                "run_id": "123456",
+                "run_mode": "tournament",
+            }
+        )
+        + "\n"
+        # A newer comment-backfill record: lossy research and a QUESTION url, so it must never be used.
+        + json.dumps(
+            {
+                "qid": 123,
+                "on_post": 456,
+                "page_url": "https://www.metaculus.com/questions/123/",
+                "research_text": "Trimmed comment text",
+                "timestamp": "2026-02-01",
+                "run_id": "comment-9",
+                "run_mode": "tournament",
+            }
         )
         + "\n"
     )
-    monkeypatch.setattr("scripts.probes.forecaster_timing_probe.MetaculusApi.get_question_by_url", lambda _: question)
+    fetched_urls: list[str] = []
+
+    def fake_fetch(url: str) -> NumericQuestion:
+        fetched_urls.append(url)
+        return question
+
+    monkeypatch.setattr("scripts.probes.forecaster_timing_probe.MetaculusApi.get_question_by_url", fake_fetch)
     result_question, prompt = load_probe_input(123, tmp_path)
     upper, lower = bound_messages(question)
     assert result_question == question
+    assert fetched_urls == [question.page_url]
     assert prompt == numeric_prompt(question, "Archived evidence", lower, upper)
 
 
