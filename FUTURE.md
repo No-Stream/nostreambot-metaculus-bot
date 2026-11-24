@@ -67,6 +67,14 @@ and planning docs named here may have moved out of the public repo. Neither is a
 
 ## Open, recorded and not built
 
+**Medium priority: revisit pointwise MEAN pooling when the roster grows to four or more members.** The
+2026-11-24 replay over 280 Metaculus numeric and discrete questions found mean minus median at +2.0 spot
+peer per question [+0.0, +4.3] in the five- and six-member eras (n=176) and +0.2 [-1.6, +1.9] in the
+recent mostly-three-member eras (n=104), matching the 2026-09-15 bench. The mean pool is 6-10% wider
+at 5-95 but barely moves mass beyond open bounds; a median-body / mean-tail hybrid came out +0.5
+[-0.0, +1.4]. The operator expects to add a fourth and perhaps a fifth member, at which point re-run
+`scratch/trace_evals_2026-11-23/work/mean_replay/` (artifacts repo) on the new roster's members.
+
 **Low priority: retry AskNews on transient errors, not only rate limits.** `_is_asknews_retryable`
 (`research/providers.py`) retries only 429 and concurrency errors, so a 401 or 5xx during an AskNews auth blip drops
 the AskNews section for that question. On 2026-10-27 two local posts lost it to a few minutes of 401s from

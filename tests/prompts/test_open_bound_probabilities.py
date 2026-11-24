@@ -6,6 +6,7 @@ from typing import Literal
 import pytest
 
 from metaculus_bot import prompts
+from metaculus_bot.constants import METACULUS_OUT_OF_RANGE_TAIL_FLOOR
 from tests.prompt_builders import (
     MANTIC_PAGE_URL,
     METACULUS_PAGE_URL,
@@ -110,3 +111,14 @@ class TestOpenBoundProbabilityFields:
         flat = _flat(prompt)
         assert "asserts a 1% chance of an out-of-range outcome" not in flat
         assert "keeping every percentile inside" not in flat
+
+
+def test_example_tail_values_do_not_anchor_below_the_metaculus_floor() -> None:
+    """The schema example's number anchors what models state; 0.005 sat under the structural 1%."""
+    from_prompt = json.loads(
+        _extract_last_json_block(
+            _percentile_prompt("numeric", page_url=METACULUS_PAGE_URL, open_lower=True, open_upper=True)
+        )
+    )
+    for field in ("prob_below_lower_bound", "prob_above_upper_bound"):
+        assert from_prompt[field] >= METACULUS_OUT_OF_RANGE_TAIL_FLOOR

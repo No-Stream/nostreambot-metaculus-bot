@@ -1320,7 +1320,10 @@ def _open_bound_probability_blocks(question: NumericQuestion) -> tuple[str, str]
     }
     if not fields:
         return "", ""
-    example_fields = "".join(f',\n          "{field}": 0.005' for field in fields)
+    # The example block must parse as JSON, so it needs a number, and the number anchors the models'
+    # stated tails. 0.03 sits near our historical escape rate per open side (1.3% to 3.7%); the first
+    # value here, 0.005, was below the structural 1% this field exists to replace.
+    example_fields = "".join(f',\n          "{field}": 0.03' for field in fields)
     rule = _OPEN_BOUND_PROBABILITY_RULE.format(
         fields="; ".join(f"`{field}` = {meaning}" for field, meaning in fields.items())
     )
