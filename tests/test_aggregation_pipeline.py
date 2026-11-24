@@ -1224,7 +1224,7 @@ class TestTheAggregateMarkerMethod:
         assert isinstance(aggregated, NumericDistribution)
         (line,) = self._aggregate_lines(caplog)
         assert line.startswith(f"NUMERIC_AGGREGATE: question={question.id_of_question} qtype=numeric cdf_size=201 ")
-        assert line.endswith(" tail_floor=0.000000 method=median")
+        assert line.endswith(" tail_floor=0.020000 method=median"), "the Metaculus tail floor lifts the open upper tail"
         assert bot._pipeline.numeric_combine_methods == {}, (
             "popped at the seam, so a record never outlives its question"
         )
@@ -1264,7 +1264,7 @@ class TestTheAggregateMarkerMethod:
         with patch.object(bot._pipeline, "base_combine", return_value=member):
             aggregated = await bot._aggregate_predictions([member], question)
 
-        assert aggregated is member
+        assert isinstance(aggregated, NumericDistribution), "the floor may rebuild the object; it still publishes"
         (line,) = self._aggregate_lines(caplog)
         assert line.endswith(f" method={NUMERIC_COMBINE_METHOD_UNRECORDED}")
         assert NUMERIC_COMBINE_METHOD_UNRECORDED == "unrecorded"

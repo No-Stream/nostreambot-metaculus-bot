@@ -118,11 +118,19 @@ def build_numeric_distribution(
             tail_diagnostics=tail_diagnostics,
         )
         prediction = create_pchip_numeric_distribution(pchip_cdf, percentile_list, question, zero_point)
-    # The legacy fallback has no representation for stated bound probabilities.
-    # Preserve its availability for old responses without overriding a stated tail.
-    except Exception as exc:  # HARNESS-SCAN-EXEMPT-broad-except
+    # Broad on purpose: narrowing this would turn a recoverable build failure into a dropped
+    # forecast. A failed build with stated bound probabilities is retried without them, so the
+    # member keeps its forecast on the pre-stated-tail path and the marker records the discard.
+    except Exception as exc:  # noqa: BLE001  # HARNESS-SCAN-EXEMPT-broad-except
         if p_below_lower_bound is not None or p_above_upper_bound is not None:
-            raise
+            logger.warning(
+                "Stated-tail CDF build failed for Q %s (%s); rebuilding without stated tails",
+                getattr(question, "id_of_question", "N/A"),
+                exc,
+            )
+            if tail_diagnostics is not None:
+                tail_diagnostics.stated_tails_discarded = True
+            return build_numeric_distribution(percentile_list, question, zero_point, model_name=model_name)
         log_pchip_fallback(question, exc)
         prediction = create_fallback_numeric_distribution(percentile_list, question, zero_point, model_name=model_name)
 

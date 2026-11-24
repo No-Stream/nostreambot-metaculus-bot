@@ -103,10 +103,24 @@ batch releases.
 The bot's own account, `nostreambot-bot`, public at `/api/users/81/`. An unauthenticated read of
 that user has no `my_forecasts`, which is why the id is pinned here rather than discovered.
 
+### METACULUS_OUT_OF_RANGE_TAIL_FLOOR
+
+The least mass a published Metaculus numeric, discrete or date aggregate carries beyond each open
+bound (2%), enforced by the same code as the Mantic floor below, in `numeric/out_of_range_floor.py`.
+Since P1 and P99 joined the elicited percentiles (PR #53, 2026-07-11), a forecast with every
+percentile inside the range has carried exactly 1% beyond the bound. Raising a 1% tail to 2% costs
+about 1 spot-peer point per open side when the question resolves in range and gains about 35 when
+it escapes, so it breaks even at a 1.44% escape rate per side. Our history ran 1.3% to 3.7% depending
+on the period, and the offline replay over 334 Metaculus questions came out +33 overall (summer 2026
+-29, fall FutureEval +50). Adopted 2026-11-24 with the stated-tail prompt fields as a backstop, at
+the operator's call. Re-check at each residual round with escapes counted only on questions
+forecast after that date. Receipt: `scratch/trace_evals_2026-11-23/tail_mass_investigation.md` in
+the artifacts repo.
+
 ### MANTIC_OUT_OF_RANGE_TAIL_FLOOR
 
 The least mass a published Mantic numeric, discrete or date aggregate carries beyond each open
-bound, enforced in `numeric/out_of_range_floor.py`. Metaculus aggregates are untouched.
+bound, enforced in `numeric/out_of_range_floor.py`. Metaculus has its own, lower floor above.
 
 Mantic scores an out-of-range resolution against a fixed 0.05 reference, `50 * ln(mass / 0.05)`.
 Five percent there scores 0, while the structural 1% the pipeline publishes when every percentile

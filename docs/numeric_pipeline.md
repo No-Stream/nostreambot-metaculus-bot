@@ -787,8 +787,9 @@ average for any type and gained up to 9.1 for thin-tailed bots
 (`scratch_docs_and_planning/mantic_adversarial_candidates_2026-09-08.md`, section 1).
 Operator-approved 2026-09-08.
 
-**The platform gate.** A Metaculus aggregate comes back as the very same object, byte-identical;
-per-member forecasts are never touched (their `MEMBER_FORECAST` tails keep measuring what the
+**The platform gate.** Metaculus gets its own, lower floor, `METACULUS_OUT_OF_RANGE_TAIL_FLOOR`
+(2%, since 2026-11-24; reasoning and receipts in docs/constants.md), through the same code; an aggregate
+that needs no lift comes back as the very same object. Per-member forecasts are never touched (their `MEMBER_FORECAST` tails keep measuring what the
 models declared); the backtest, ablation and benchmark harnesses replay Metaculus questions, so
 the gate covers them without a flag.
 

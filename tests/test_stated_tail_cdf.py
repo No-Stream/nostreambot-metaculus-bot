@@ -219,7 +219,7 @@ def test_smoothing_keeps_the_applied_endpoints_on_a_saturated_grid() -> None:
     )
 
 
-def test_stated_tail_build_failure_does_not_fall_back_without_anchors(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stated_tail_build_failure_keeps_member_without_stated_tails(monkeypatch: pytest.MonkeyPatch) -> None:
     question = NumericQuestion(
         question_text="How many?",
         lower_bound=0.0,
@@ -233,5 +233,9 @@ def test_stated_tail_build_failure_does_not_fall_back_without_anchors(monkeypatc
         raise RuntimeError("cannot build stated anchors")
 
     monkeypatch.setattr("metaculus_bot.numeric.pipeline.generate_pchip_cdf_with_smoothing", fail_build)
-    with pytest.raises(RuntimeError, match="cannot build stated anchors"):
-        build_numeric_distribution(percentiles, question, None, p_below_lower_bound=0.04)
+    diagnostics = StatedTailDiagnostics()
+    prediction = build_numeric_distribution(
+        percentiles, question, None, p_below_lower_bound=0.04, tail_diagnostics=diagnostics
+    )
+    assert diagnostics.stated_tails_discarded
+    assert len(prediction.cdf) == question.cdf_size

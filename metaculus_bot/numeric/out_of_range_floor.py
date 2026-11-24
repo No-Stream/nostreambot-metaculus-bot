@@ -1,4 +1,9 @@
-"""The Mantic-only floor on the mass a PUBLISHED aggregate places beyond each open bound.
+"""The floor on the mass a PUBLISHED aggregate places beyond each open bound, per platform.
+
+Metaculus gets ``METACULUS_OUT_OF_RANGE_TAIL_FLOOR`` (2%) since 2026-11-24: the structural 1% this
+pipeline builds whenever P1 sits inside the range cost about -80 on each of two fall 2026 escapes,
+and over our history escapes ran at or above the 2% floor's 1.44%-per-side breakeven (receipt:
+``scratch/trace_evals_2026-11-23/tail_mass_investigation.md`` in the artifacts repo).
 
 Mantic (the Crucible competition, a fork of the Metaculus platform) scores a resolution beyond an
 OPEN bound against a fixed 0.05 reference, ``50 * ln(mass / 0.05)``: 5% in that bucket scores 0 and
@@ -14,7 +19,7 @@ mantic_adversarial_candidates_2026-09-08.md``, section 1).
 Where it applies: ``forecaster._aggregate_predictions``, the one seam every aggregation path (median,
 mean, base-combine, stacker, single survivor) returns through, so it is the last touch before the
 publish gate, the comment and the ``NUMERIC_AGGREGATE`` marker read the distribution. Nowhere else:
-a Metaculus aggregate comes back as the very same object, per-member forecasts are never touched
+per-member forecasts are never touched
 (their ``MEMBER_FORECAST`` tails keep measuring what the models declared), and the backtest and
 ablation harnesses replay Metaculus questions, so the platform gate covers them.
 
@@ -58,7 +63,11 @@ from dataclasses import dataclass
 import numpy as np
 from forecasting_tools import MetaculusQuestion, NumericDistribution, Percentile
 
-from metaculus_bot.constants import MANTIC_OUT_OF_RANGE_TAIL_FLOOR, PLATFORM_MANTIC
+from metaculus_bot.constants import (
+    MANTIC_OUT_OF_RANGE_TAIL_FLOOR,
+    METACULUS_OUT_OF_RANGE_TAIL_FLOOR,
+    PLATFORM_MANTIC,
+)
 from metaculus_bot.numeric.config import grid_step_constraints
 from metaculus_bot.numeric.date_axis import numeric_view
 from metaculus_bot.numeric.pchip_cdf import enforce_min_steps
@@ -111,8 +120,10 @@ class TailFloorOutcome:
 
 
 def tail_floor_for_platform(question: MetaculusQuestion) -> float:
-    """``MANTIC_OUT_OF_RANGE_TAIL_FLOOR`` on a Mantic question, ``0.0`` on a Metaculus one."""
-    return MANTIC_OUT_OF_RANGE_TAIL_FLOOR if question_platform(question) == PLATFORM_MANTIC else 0.0
+    """``MANTIC_OUT_OF_RANGE_TAIL_FLOOR`` on a Mantic question, ``METACULUS_OUT_OF_RANGE_TAIL_FLOOR`` otherwise."""
+    if question_platform(question) == PLATFORM_MANTIC:
+        return MANTIC_OUT_OF_RANGE_TAIL_FLOOR
+    return METACULUS_OUT_OF_RANGE_TAIL_FLOOR
 
 
 def floor_out_of_range_tails(cdf: np.ndarray, *, open_lower: bool, open_upper: bool, floor: float) -> FlooredCdf:

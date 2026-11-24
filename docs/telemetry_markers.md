@@ -432,9 +432,10 @@ Per-member, per-open-bound record emitted from `forecaster_runners.py` after bui
 CDF. `question` is `question.id_of_question`, `model` identifies the forecaster, and `bound` is
 `lower` or `upper`. `stated` is the model's probability as a compact number, `none` when absent,
 or `invalid-token` when its value cannot be parsed; the archive coerces numbers normally and
-`none` to `null`. `status` is one of `used`, `missing`, `invalid`, or `clamped`: the member used
+`none` to `null`. `status` is one of `used`, `missing`, `invalid`, `clamped`, or `build_failed_ignored`: the member used
 the valid declaration, inferred a missing tail, rejected an invalid declaration and inferred the
-tail, or limited the declared tail to satisfy the CDF constraints, respectively.
+tail, limited the declared tail to satisfy the CDF constraints, or (last) the CDF build with the stated
+tails failed and the member was rebuilt without them rather than dropped, respectively.
 
 `dropped_percentiles` counts the percentile anchors removed because they contradict that side's
 valid stated tail. `resulting_mass` is the mass outside that bound in the constructed member CDF:
@@ -446,7 +447,7 @@ has two records; closed sides have none. `qid_kind` is `question_id`.
 The exact field order is:
 
 ```text
-NUMERIC_STATED_TAIL: question=<id> model=<model> bound=<lower|upper> stated=<number|none|invalid-token> status=<used|missing|invalid|clamped> dropped_percentiles=<count> resulting_mass=<mass>
+NUMERIC_STATED_TAIL: question=<id> model=<model> bound=<lower|upper> stated=<number|none|invalid-token> status=<used|missing|invalid|clamped|build_failed_ignored> dropped_percentiles=<count> resulting_mass=<mass>
 ```
 
 ### NUMERIC_AGGREGATE_GRID_MISMATCH

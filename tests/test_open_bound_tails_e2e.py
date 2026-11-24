@@ -21,6 +21,7 @@ from forecasting_tools.data_models.numeric_report import NumericReport
 from forecasting_tools.data_models.questions import DateQuestion
 
 from metaculus_bot.aggregation_strategies import AggregationStrategy
+from metaculus_bot.constants import METACULUS_OUT_OF_RANGE_TAIL_FLOOR
 from metaculus_bot.numeric.config import STANDARD_PERCENTILES
 from metaculus_bot.numeric.date_axis import as_epoch_question
 from tests.pipeline_test_helpers import (
@@ -154,13 +155,14 @@ async def test_missing_stated_tails_keep_legacy_cdf_and_emit_missing_markers(
     caplog.set_level(logging.INFO)
     report, calls = await _forecast(question, _response(question), monkeypatch)
 
-    assert cdf_heights(report.prediction)[0] == pytest.approx(0.01, abs=1e-9)
-    assert cdf_heights(report.prediction)[-1] == pytest.approx(0.99, abs=1e-9)
+    assert cdf_heights(report.prediction)[0] == pytest.approx(METACULUS_OUT_OF_RANGE_TAIL_FLOOR, abs=1e-9)
+    assert cdf_heights(report.prediction)[-1] == pytest.approx(1.0 - METACULUS_OUT_OF_RANGE_TAIL_FLOOR, abs=1e-9)
     assert calls == ["forecaster", "forecaster"]
     for bound in ("lower", "upper"):
         markers = _tail_markers(caplog, bound=bound, status="missing")
         assert len(markers) == 2
         assert all(int(marker["dropped_percentiles"]) == 0 for marker in markers)
+        assert all(float(marker["resulting_mass"]) == pytest.approx(0.01) for marker in markers), "members keep 1%"
 
 
 async def test_stated_lower_tail_overrides_conflicting_in_range_p1(

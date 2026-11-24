@@ -39,6 +39,9 @@ MANTIC_FETCH_QUESTION_CEILING: int = 500
 MANTIC_BOT_USER_ID: int = 81
 # Scored against a fixed 0.05 reference. Receipt: docs/constants.md "MANTIC_OUT_OF_RANGE_TAIL_FLOOR".
 MANTIC_OUT_OF_RANGE_TAIL_FLOOR: float = 0.05
+# Least mass beyond each open bound on a published Metaculus aggregate. Receipt: docs/constants.md
+# "METACULUS_OUT_OF_RANGE_TAIL_FLOOR".
+METACULUS_OUT_OF_RANGE_TAIL_FLOOR: float = 0.02
 
 # The hosts we publish to are research self-references. Receipt: docs/constants.md "METACULUS_HOST".
 METACULUS_HOST: str = "metaculus.com"

@@ -594,7 +594,9 @@ def build_guarded_numeric_distribution(
             continue
         status = "missing" if tail is None else tail.status
         if status == "valid":
-            status = "clamped" if clamped else "used"
+            status = (
+                "build_failed_ignored" if diagnostics.stated_tails_discarded else ("clamped" if clamped else "used")
+            )
         stated = (
             "none"
             if tail is None or tail.status == "missing"

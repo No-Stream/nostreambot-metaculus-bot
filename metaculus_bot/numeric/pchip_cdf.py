@@ -49,6 +49,7 @@ class StatedTailDiagnostics:
     upper_clamped: bool = False
     lower_applied_probability: float | None = None
     upper_applied_probability: float | None = None
+    stated_tails_discarded: bool = False
 
 
 @dataclass(frozen=True)
