@@ -76,7 +76,7 @@ session does not run them: it proposes, the operator runs and decides.
 
 - **Resolve "latest per vendor" from a LIVE model-list read, never from memory.**
   The roster design (`FORECASTER_LLMS` in `metaculus_bot/llm_configs.py`) is the
-  newest frontier reasoning model from each vendor, one slot each, and nothing in
+  newest frontier reasoning model from each vendor, with additional slots by operator decision, and nothing in
   the repo can say what that currently resolves to. The 2026-08-31 gemini-slot
   review found that a roster decision needs this one read before anything else.
   OpenRouter's public models endpoint lists every slug with `created`, its
@@ -1054,8 +1054,8 @@ tee'd from `run_logs/` during the run, alongside the run's
     run's, which is the only place the lagged spend is observable. The most
     recent run has no successor yet, so it shows as unsettled until another runs.
 - `CREDIT_ROLE_SPEND:` (`credit_telemetry.py`): one line per (role, key), which
-  pipeline stage spent what, off OpenRouter's own per-call accounting. On a
-  one-question smoke run expect three `forecaster:<vendor>` rows plus the
+  pipeline stage spent what, from per-call accounting. On a
+  one-question smoke run expect four forecaster role rows plus the
   research roles; `usd=n/a` means no cost data, `role=untagged` means a builder
   call site is missing its `role=`. Described under "Credit telemetry" below.
 - `FORECASTERS_SURVIVED:` (`forecaster.py`): the answer to "did every forecaster
@@ -1837,7 +1837,8 @@ calls under the `try` degrades that malformed-but-200 case to a WARNING and
 
 The per-key deltas above say what a run cost; the role lines say which part of
 the pipeline spent it: `forecaster:openai` / `forecaster:anthropic` /
-`forecaster:google` (the vendor slot, so the series survives a model swap),
+`forecaster:anthropic_fable` / `forecaster:google` (the vendor roles retain their
+history across model swaps; Fable has its own role),
 `stacker`, `stacker_fallback`, `parser`, `summarizer`, `crux_analyzer`,
 `native_search`, `targeted_search`, `gap_fill_analyzer`, `gap_fill_resolver`,
 `gap_fill_v2_driver`, `market_query_author`, `market_ranker`,
