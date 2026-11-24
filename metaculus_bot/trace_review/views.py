@@ -664,11 +664,14 @@ def render_detail_page() -> None:
 MEANED_MEMBER_TRAITS: tuple[str, ...] = ("rationale_chars", "percent_count", "hedge_per_1k", "base_rate_number_count")
 
 
-def model_table(members: pd.DataFrame) -> pd.DataFrame:
-    """Per platform, model and question type; every score mean is over rankable rows only."""
-    rankable = members[members["rankable"].fillna(value=False)]
-    group = ["platform", "model", "question_type"]
-    table = members.groupby(group).agg(rows=("forecast_key", "size"), farthest_share=("is_farthest_member", "mean"))
+def model_table(members: pd.DataFrame, forecasts: pd.DataFrame) -> pd.DataFrame:
+    """Per platform, model, question type and config era; score means use rankable rows only."""
+    rows = members.copy()
+    eras_by_forecast_key = forecasts.set_index("forecast_key")["config_era"]
+    rows["config_era"] = rows["forecast_key"].map(eras_by_forecast_key).fillna("unknown")
+    rankable = rows[rows["rankable"].fillna(value=False)]
+    group = ["platform", "model", "question_type", "config_era"]
+    table = rows.groupby(group).agg(rows=("forecast_key", "size"), farthest_share=("is_farthest_member", "mean"))
     scored = rankable.groupby(group).agg(
         rankable=("forecast_key", "size"),
         mean_own_score=("own_score", "mean"),
@@ -676,7 +679,7 @@ def model_table(members: pd.DataFrame) -> pd.DataFrame:
     )
     uncensored = rankable[~rankable["score_censored"].fillna(value=False)]
     ex_floor = uncensored.groupby(group)["own_score"].mean().rename("mean_own_score_ex_floor")
-    traits = members[members["has_rationale"].fillna(value=False)].groupby(group)[list(MEANED_MEMBER_TRAITS)].mean()
+    traits = rows[rows["has_rationale"].fillna(value=False)].groupby(group)[list(MEANED_MEMBER_TRAITS)].mean()
     return table.join([scored, ex_floor, traits]).reset_index().round(3)
 
 
@@ -695,13 +698,14 @@ def render_models_page() -> None:
     st.title("Models")
     st.caption(
         "Score means use only rankable rows: no stacker rows, no stacked records, no members the comment does not "
-        "name, and no numeric curves with too few percentiles. They are not era-bucketed unless an era filter is set. "
+        "name, and no numeric curves with too few percentiles. Rows are grouped by config era. "
         "Trait columns are means over the rationales. Hover a column header for what it measures."
     )
     members = loaded.members[loaded.members["forecast_key"].isin(result.rows["forecast_key"])]
     column_config = {
         "model": st.column_config.TextColumn("Model"),
         "question_type": st.column_config.TextColumn("Type"),
+        "config_era": st.column_config.TextColumn("Era"),
         "rows": st.column_config.NumberColumn("Rows"),
         "rankable": st.column_config.NumberColumn("Rankable rows", help="Rows that enter the score means"),
         "mean_own_score": st.column_config.NumberColumn(
@@ -723,8 +727,8 @@ def render_models_page() -> None:
         "hedge_per_1k": st.column_config.NumberColumn("Hedge words per 1,000 characters", format="%.2f"),
         "base_rate_number_count": st.column_config.NumberColumn("Base rates with a number", format="%.2f"),
     }
-    table = model_table(members).sort_values(
-        ["platform", "question_type", "rows", "model"], ascending=[True, True, False, True]
+    table = model_table(members, result.rows).sort_values(
+        ["platform", "question_type", "config_era", "rows", "model"], ascending=[True, True, True, False, True]
     )
     for platform in sorted(table["platform"].unique()):
         st.subheader(PLATFORM_LABELS.get(platform, platform))

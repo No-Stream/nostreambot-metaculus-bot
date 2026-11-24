@@ -13,6 +13,7 @@ from streamlit.testing.v1 import AppTest
 from metaculus_bot.constants import PLATFORM_MANTIC, PLATFORM_METACULUS
 from metaculus_bot.trace_review.config import BUNDLE_DIR_ENV
 from metaculus_bot.trace_review.filters import KEY_PARAM
+from metaculus_bot.trace_review.views import model_table
 from tests.trace_review.workspace_fixtures import (
     COLLIDING_BINARY,
     MANTIC_DISCRETE,
@@ -179,6 +180,83 @@ def test_the_models_page_renders_one_table_per_platform(monkeypatch, built_bundl
 
     _no_failures(app)
     assert [header.value for header in app.subheader] == ["Mantic", "Metaculus", "Member rows"]
+
+
+def test_model_table_keeps_score_means_separate_by_config_era():
+    members = pd.DataFrame(
+        [
+            {
+                "forecast_key": "forecast-a1",
+                "platform": PLATFORM_METACULUS,
+                "model": "model-a",
+                "question_type": "binary",
+                "rankable": True,
+                "is_farthest_member": False,
+                "own_score": 1.0,
+                "score_minus_published": 0.5,
+                "score_censored": False,
+                "has_rationale": False,
+                "rationale_chars": None,
+                "percent_count": None,
+                "hedge_per_1k": None,
+                "base_rate_number_count": None,
+            },
+            {
+                "forecast_key": "forecast-a2",
+                "platform": PLATFORM_METACULUS,
+                "model": "model-a",
+                "question_type": "binary",
+                "rankable": True,
+                "is_farthest_member": True,
+                "own_score": 3.0,
+                "score_minus_published": 1.5,
+                "score_censored": False,
+                "has_rationale": False,
+                "rationale_chars": None,
+                "percent_count": None,
+                "hedge_per_1k": None,
+                "base_rate_number_count": None,
+            },
+            {
+                "forecast_key": "forecast-b1",
+                "platform": PLATFORM_METACULUS,
+                "model": "model-a",
+                "question_type": "binary",
+                "rankable": True,
+                "is_farthest_member": False,
+                "own_score": 8.0,
+                "score_minus_published": -1.0,
+                "score_censored": False,
+                "has_rationale": False,
+                "rationale_chars": None,
+                "percent_count": None,
+                "hedge_per_1k": None,
+                "base_rate_number_count": None,
+            },
+        ]
+    )
+    forecasts = pd.DataFrame(
+        {
+            "forecast_key": ["forecast-a1", "forecast-a2", "forecast-b1"],
+            "config_era": ["era-a", "era-a", "era-b"],
+        }
+    )
+    members = pd.concat(
+        [members, pd.DataFrame([{**members.iloc[0].to_dict(), "forecast_key": "forecast-unknown"}])],
+        ignore_index=True,
+    )
+
+    table = model_table(members, forecasts).set_index("config_era")
+
+    assert table.index.tolist() == ["era-a", "era-b", "unknown"]
+    assert table.loc["era-a", "rows"] == 2
+    assert table.loc["era-a", "mean_own_score"] == 2.0
+    assert table.loc["era-a", "mean_minus_published"] == 1.0
+    assert table.loc["era-b", "rows"] == 1
+    assert table.loc["era-b", "mean_own_score"] == 8.0
+    assert table.loc["era-b", "mean_minus_published"] == -1.0
+    assert table.loc["unknown", "rows"] == 1
+    assert table.loc["unknown", "mean_own_score"] == 1.0
 
 
 @pytest.mark.parametrize("page", [None, "app_pages/detail.py", "app_pages/models.py"])
