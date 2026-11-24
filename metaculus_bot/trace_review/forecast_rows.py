@@ -153,8 +153,27 @@ def _prob_on_outcome(record: dict) -> float | None:
     if question_type == "multiple_choice" and isinstance(resolution, str):
         options = record.get("options") or []
         return float(published[options.index(resolution)]) if resolution in options and published else None
-    if question_type in NUMERIC_TYPES and resolution in OUT_OF_RANGE_RESOLUTIONS and published:
-        return float(published[0]) if resolution == "below_lower_bound" else 1.0 - float(published[-1])
+    side = _out_of_range_side(record)
+    if side is not None and published:
+        return float(published[0]) if side == "below_lower_bound" else 1.0 - float(published[-1])
+    return None
+
+
+def _out_of_range_side(record: dict) -> str | None:
+    """Which bound a numeric resolution fell past, whether the platform sent the side as a string or
+    sent the value itself (q46143 resolved at 109.9M against a 110M open lower bound)."""
+    resolution = record.get("resolution_parsed")
+    if record["type"] not in NUMERIC_TYPES:
+        return None
+    if resolution in OUT_OF_RANGE_RESOLUTIONS:
+        return resolution
+    if not isinstance(resolution, (int, float)) or isinstance(resolution, bool):
+        return None
+    scaling = record.get("scaling") or {}
+    if scaling.get("range_min") is not None and resolution < float(scaling["range_min"]):
+        return "below_lower_bound"
+    if scaling.get("range_max") is not None and resolution > float(scaling["range_max"]):
+        return "above_upper_bound"
     return None
 
 
@@ -197,7 +216,7 @@ def question_and_outcome(inputs: ForecastInputs) -> dict[str, object]:
         "resolution_raw": record.get("resolution_raw"),
         "resolved_yes": resolution if isinstance(resolution, bool) else None,
         "resolution_value": numeric_resolution,
-        "resolution_out_of_range": resolution if resolution in OUT_OF_RANGE_RESOLUTIONS else None,
+        "resolution_out_of_range": _out_of_range_side(record),
         "published_values": record.get("our_forecast_values"),
         "published_prob_yes": record.get("our_prob_yes"),
         "prob_on_outcome": prob_on_outcome,
