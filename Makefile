@@ -1,4 +1,4 @@
-.PHONY: install lock test test_verbose all lint lint_imports deps format typecheck typecheck_ty cov audit run benchmark precommit precommit_all precommit_install analyze_correlations analyze_correlations_latest backtest_smoke_test backtest_small backtest_medium backtest_large ablation_qa_research ablation_smoke ablation_small ablation_medium ablation_score test_e2e test_live test_fast check_credits sync_research sync_telemetry sync_raw_research sync_all resync_from_store backfill_research download_research download_run_logs download_raw_research backfill_comments score_ghosts close_margin_watch supply_probe supply_probe_mantic probe_slugs verify_pull cost_report dispatch_watch cronjob_dispatch_setup backtest_with_cache run_mantic run_mantic_one strip_bench probe_resolver replay_ladder artifacts_link artifacts_check artifacts_migrate trace_index review
+.PHONY: install lock test test_verbose all lint lint_imports deps format typecheck typecheck_ty cov audit run benchmark precommit precommit_all precommit_install analyze_correlations analyze_correlations_latest backtest_smoke_test backtest_small backtest_medium backtest_large ablation_qa_research ablation_smoke ablation_small ablation_medium ablation_score test_e2e test_live test_fast check_credits sync_research sync_telemetry sync_raw_research sync_all resync_from_store backfill_research download_research download_run_logs download_raw_research backfill_comments score_ghosts close_margin_watch supply_probe supply_probe_mantic probe_slugs verify_pull cost_report dispatch_watch cronjob_dispatch_setup backtest_with_cache run_mantic run_mantic_one strip_bench probe_resolver probe_forecaster_timing replay_ladder artifacts_link artifacts_check artifacts_migrate trace_index review
 
 # Stream logs live from recipes; avoid per-target buffering
 MAKEFLAGS += --output-sync=none
@@ -383,6 +383,9 @@ review:
 probe_resolver:
 	$(if $(QUESTION),,$(error probe_resolver needs QUESTION=<question id>, e.g. make probe_resolver QUESTION=44267))
 	uv run python scripts/probes/gap_fill_resolver_probe.py --question $(QUESTION) $(ARGS)
+
+probe_forecaster_timing:
+	uv run python scripts/probes/forecaster_timing_probe.py $(ARGS)
 
 # Trigger-delivery watch: per bot workflow and per UTC day, how many `schedule` and
 # `workflow_dispatch` runs GitHub Actions ran and how they concluded, against the cron entries

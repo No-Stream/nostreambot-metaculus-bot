@@ -25,6 +25,7 @@ run, surface the exact command and rough cost, then stop.
 | `make benchmark_run_*` | deprecated, still fans the real ensemble over real questions |
 | `make test_live` | the only suite leaving the network; a `:free` slug, so cents, but real calls needing a key |
 | `make probe_resolver QUESTION=<id>` | resolver grid, personal key; refuses without `ARGS="--i-accept-spend"` |
+| `make probe_forecaster_timing ARGS="--qid <id> --model <name> --i-accept-spend"` | one forecaster call; roughly $0.10 Argon or $0.50 Fable |
 | `make strip_bench` | ~$1.25; `ARGS="--dry-run"` is the free view |
 | `uv run python scripts/probes/gemini_verify.py --i-accept-spend` | three live google-genai calls, personal AI Studio key; refuses without the flag |
 | Any bot workflow run or dispatch (`run_bot_on_*.yaml`, `test_bot*.yaml`); any edit to a `schedule:` block or to a research or model flag that adds runs or raises per-run cost | spends and publishes exactly as a local run |
