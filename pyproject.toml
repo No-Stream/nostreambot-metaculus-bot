@@ -292,7 +292,7 @@ exclude = [
 # (argument/return/attribute/call/optional/override) without the "type is
 # partially unknown" annotation toil that strict adds at every untyped
 # third-party (forecasting-tools) boundary for little bug yield. Promoting the
-# core pipeline to strict is a tracked follow-on (see FUTURE.md) — best done
+# core pipeline to strict is a tracked follow-on (see backlog task-27 "Structure, each its own PR") — best done
 # on an already-clean base rather than fighting ~900 errors at once.
 
 # Dependency hygiene: catches an import of a package nothing declares (which works

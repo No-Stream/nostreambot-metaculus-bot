@@ -301,7 +301,7 @@ class AggregationPipeline:
             # sets PLATT_CALIBRATION_ENABLED, and the standing operator decision is that
             # fitted calibration layers are not a lever, so this is recorded rather than
             # wired. Whoever turns Platt on decides whether a floored single-survivor value
-            # should also be calibrated and in which order (see FUTURE.md's calibration
+            # should also be calibrated and in which order (see backlog decision-1 "Calibration and post-hoc layers"
             # entry, which carries the same note).
             if (
                 isinstance(question, BinaryQuestion)

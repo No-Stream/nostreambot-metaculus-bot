@@ -29,9 +29,9 @@ need; the repo-root pointers at the bottom cover quick-start and design history.
 - [AGENTS.md](../AGENTS.md): the terse starting point for coding agents, also symlinked as
   `CLAUDE.md`. It carries the cost gate, the repo's overrides, the layout, the pipeline
   outline, and the standing rules, and points here for depth rather than repeating it.
-- [FUTURE.md](../FUTURE.md): the branch design log. Records intent and history,
-  including shipped, planned, and rejected ideas. Read it for the "why," not for
-  the current state of the code.
+- `.backlog/` (Backlog.md, local and gitignored): the design log. Tasks hold open levers, parked and study-only
+  ideas; decisions hold rejected ideas with their receipts; `backlog doc list` shows "How to use this backlog".
+  Read it for the "why," not for the current state of the code.
 
 For the authoritative model roster, see `metaculus_bot/llm_configs.py`. It is the
 single source of truth for the ensemble and rotates often, so the guides describe

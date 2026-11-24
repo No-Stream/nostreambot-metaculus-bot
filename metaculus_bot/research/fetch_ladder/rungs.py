@@ -112,7 +112,7 @@ def _impersonate_rung_applies(direct: FetchResult) -> bool:
     ``blocked`` shape: absent from ``_NON_OK_FETCH_STATUS``, it falls through to ``error``. A 200
     carrying a challenge or throttle interstitial is not a representable trigger today, because
     Tier 1 has no throttle-phrase check (only gap-fill v2's ``fetch_outcomes`` has one) and such a
-    page classifies as ``js_wall`` or ``thin_page``; FUTURE.md carries that entry, and the
+    page classifies as ``js_wall`` or ``thin_page``; the retired design log (git history) carries that entry, and the
     ``error`` with ``failure_class="tls"`` widening nothing has measured.
     """
     return direct.status == "blocked" and direct.http_status in impersonated_fetch.IMPERSONATE_TRIGGER_STATUSES
@@ -135,7 +135,7 @@ async def _impersonated_body_outcome(response: ImpersonatedResponse, ctx: contex
     No meta-refresh hop. :func:`_resolution_html_outcome` runs one after a no-content
     classification; following it from here would mean deciding which transport dials the target
     and re-entering the whole hop loop from inside a rung, so this router calls
-    :func:`_classify_html_body` directly (FUTURE.md carries the entry).
+    :func:`_classify_html_body` directly (the retired design log (git history) carries the entry).
 
     The page's own context, not :func:`_aux_ctx`. The Wayback and derived-feed rungs use the
     child context because they fetch a DIFFERENT URL on the page's behalf and must not let that
@@ -145,7 +145,7 @@ async def _impersonated_body_outcome(response: ImpersonatedResponse, ctx: contex
     file's own words "the hop got us the bytes, the local read is what the text came from".
     """
     # `_classify_body` rather than its hop-following sibling: this rung owns no redirect loop, and
-    # following one would mean deciding which transport dials the target (FUTURE.md has the entry).
+    # following one would mean deciding which transport dials the target (the retired design log (git history) has the entry).
     outcome = await classify._classify_body(
         response.body, response.url, response.content_type, ctx, http_status=response.status
     )
@@ -476,7 +476,7 @@ async def _rendered_rung(
     held open across a 12-35 s render. It does NOT run outside the per-host gate: the transport
     re-acquires the same loop-wide ``Semaphore(1)`` for the URL's host and holds it across the
     launch-cap queue, the launch, the navigation, the settle and the teardown, because Chromium
-    dials that host itself. Both acquires are unbounded by design (FUTURE.md item 5), which is
+    dials that host itself. Both acquires are unbounded by design (backlog task-14 "The 45 s resolution-source wall discards pages that already succeeded"), which is
     why the transport recomputes the navigation budget only once both are held.
 
     Self-bounding on the shared pattern: skipped below ``RESOLUTION_SOURCE_RENDER_MIN_BUDGET_S``

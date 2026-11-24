@@ -92,6 +92,17 @@ Per question, in `forecaster.py:_research_and_make_predictions`. Stage by stage:
 5. **Publish behind a close-time gate** (`publish_gate.py`): a question past its window is skipped entirely, prediction
    and comment together, and the skip is alertable.
 
+## Open work, parked ideas and rejected decisions: Backlog.md
+
+This repo tracks open levers, parked ideas and rejected decisions in Backlog.md (`.backlog/`, local and gitignored like
+`scratch*/`), not in a plain markdown doc; the old root design-log file is retired. Before proposing work, read
+`backlog task list --plain` and `backlog decision list --plain` (`backlog task <id> --plain` and
+`backlog search <query> --plain` show the detail). Check the decisions before re-proposing anything: a rejected idea
+returns only with new evidence, and its decision says what that evidence is. Record a new lever or parked idea as a task
+(`backlog task create`) and a new rejection as a decision (`backlog decision create "<title>" -s rejected`), with the
+receipt path, date and numbers in the body. Cite items from code and docs as `backlog task-17 "<title>"` or
+`backlog decision-3 "<title>"`. The doc "How to use this backlog" (`backlog doc list`) has the label scheme.
+
 ## Standing rules
 
 Each has cost real work at least once. The group's pointer carries the reasoning and the receipts.
@@ -124,7 +135,7 @@ Each has cost real work at least once. The group's pointer carries the reasoning
   politeness. Their DNS pins, IP assertions, landing-host checks and WebSocket block were built for a threat this
   deployment cannot realise: keep them, never extend them, never cite them as a reason to add branches.
 - Timing, deadline and fallback code gets strictly-safer changes only, since missed deadlines cost real forecasts this
-  quarter. Anything not obviously safer stays put and goes in `FUTURE.md`.
+  quarter. Anything not obviously safer stays put and goes in Backlog.md as a task.
 - `prediction_market` and `resolution_source` return `""` under `is_benchmarking`; never soften a leakage guard.
 
 **Prompts** (`docs/prompts.md`)

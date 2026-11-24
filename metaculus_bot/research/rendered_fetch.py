@@ -512,7 +512,7 @@ def _block_web_socket(web_socket_route: Any) -> None:
     edges, and it is unmeasured. Chromium's own Local Network Access check stands behind the
     Worker residual for local and loopback targets (see the route-guard comment in
     :func:`_render_in_context`), and a filtering forward proxy is the remedy that would make
-    this a boundary (FUTURE.md item 8).
+    this a boundary (item 8 of the retired design log (git history)).
 
     The log line is INFO, deliberately: ``cli.py`` configures the root logger at INFO, so a DEBUG
     line is dropped in every real run, and this line is the only record that a page's socket-fed
@@ -701,7 +701,7 @@ async def _navigate_and_read_dom(
     from, so the compare is like with like, and the predicate fails shut
     (:func:`_landed_off_host`): ``about:blank`` is nobody's host and falls through to the empty
     read it always produced, and every other scheme is a stranger. One deliberate departure from
-    the design note in FUTURE.md item 8, which also asked for the goto response's URL to be
+    the design note in item 8 of the retired design log (git history), which also asked for the goto response's URL to be
     compared when a response exists: only ``page.url`` is checked, because after the settle it is
     the authoritative record of the document whose DOM is read, and the response URL adds no
     DOM-safety value (an off-host response whose document then navigated the frame back onto the
@@ -1035,8 +1035,7 @@ async def render_page(
     loop-wide across concurrent questions; v2's is its own module global). It is acquired
     OUTSIDE the launch cap, in that order, and HELD across the launch-cap queue, the launch,
     the navigation, the settle and the teardown, because Chromium dials that host itself. Both
-    acquires are unbounded by design (bounding them is the operator's reserved call, FUTURE.md
-    item 5), which is why the navigation budget is recomputed only once both are held: pass
+    acquires are unbounded by design (bounding them is the operator's reserved call, backlog task-14 "The 45 s resolution-source wall discards pages that already succeeded"), which is why the navigation budget is recomputed only once both are held: pass
     ``deadline_monotonic_s`` and the goto gets what is left of it less the post-goto tail, or
     the render declines under ``RENDER_MIN_GOTO_MS`` before a browser is launched
     (:func:`_goto_budget_ms`).
@@ -1247,7 +1246,7 @@ async def _render_in_context(
     # Chromium's feature lists and vendor docs rather than observed, because the test suite blocks every real
     # browser launch, and it is a browser default we neither pin nor assert. A filtering forward proxy is the
     # only remedy that covers every channel at connect time,
-    # and it stays deferred as its own change: FUTURE.md item 8 under "Resolution-source fetcher: Tier-2 LLM
+    # and it stays deferred as its own change: item 8 of the retired design log (git history) under "Resolution-source fetcher: Tier-2 LLM
     # fetch + oversized-source summarization" carries the ranked candidates. Harvested JSON passes the guard
     # below like any other response, so a harvestable response is one Chromium was allowed to dial.
     async def _guard_route(route: Any, request: Any) -> None:

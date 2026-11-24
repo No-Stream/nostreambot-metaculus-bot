@@ -189,7 +189,7 @@ groups on the bare `qid`, so a Mantic id and a Metaculus id that meet merge into
 group. The margin today is about 13,700 Mantic posts: open Mantic posts sit in
 the 650s, and the next Metaculus id already in the archive above them is 14333, from the
 evergreen `test_questions` set (`docs/operations.md` "How the mode works" has the
-arithmetic; the revisit is logged in `FUTURE.md`). None of this reaches the residual
+arithmetic; the revisit is logged in backlog task-26 "Mantic, awaiting live data"). None of this reaches the residual
 round dataset, whose cohorts and keys are Metaculus question ids with no platform. The
 collector can pull a Mantic tournament (see "Mantic records" below), and the trace-review
 index is the one consumer that does; the Mantic-side accounting (forecast, forfeit, miss
@@ -1437,7 +1437,7 @@ not match these figures. Today that is moot: no Mantic record enters the round d
 
 There is deliberately NO publish-time `STARVED_OUTER_TAIL` WARN. The reason, and what a
 no-plumbing alternative would have to measure instead, are in the code comment above
-`STARVED_OUTER_TAIL_FLOOR_MULTIPLE` and tracked in `FUTURE.md`.
+`STARVED_OUTER_TAIL_FLOOR_MULTIPLE` and tracked in backlog task-29 "Watch items, no action while they hold".
 
 ## Question-supply counts need post status `closed`
 
@@ -1472,8 +1472,7 @@ decision`), ahead of `parse_resolution`, which would otherwise have filed it und
 question type" and made the exclusion look like a parser bug. The backtest
 (`backtest/question_prep.py`) and the ablation harness (`ablation/run_pdf.py`) carry the same
 exclusion at their own seams, and `scripts/score_ghosts.py` counts date ghosts by type and says
-in its report that none can be scored. The decision is recorded in `FUTURE.md` "Mantic
-Crucible" and holds until a date question has resolved under the live date path. A round pull
+in its report that none can be scored. The decision is recorded in backlog task-26 "Mantic, awaiting live data" and holds until a date question has resolved under the live date path. A round pull
 over a tournament with date questions logs one such WARNING per resolved date question; their
 count is the number of resolved questions the round is not reading.
 

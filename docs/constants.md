@@ -677,7 +677,7 @@ and the second review pass measured 42 s at 5.2 MiB on a heavier synthetic tree.
 
 Sized so a body around 1 to 2 MiB still gets its second pass on a slower GitHub runner. A bigger body
 near the wall is withheld rather than published, and the real lever for those is
-`RENDERED_DOM_MAX_CHARS` (see `FUTURE.md`). The budget is read against the wall remaining after the
+`RENDERED_DOM_MAX_CHARS` (see the retired design log (git history)). The budget is read against the wall remaining after the
 default pass, so that pass's own cost counts.
 
 ## Inline chart configs (Highcharts), read straight out of the page we already hold
@@ -793,7 +793,7 @@ content stream decompresses past the cap into that page's `''` rather than an un
 The clock also starts late. `extract_pdf_text` reads the declared page count and walks the whole
 bookmark outline before `_read_pages` computes any deadline, and this budget covers neither: the
 measured ceiling is about 16 s for a body built to maximize both, so the real worst case is that
-prologue plus this budget plus one page. See `FUTURE.md`, "The PDF parse overruns `max_seconds`".
+prologue plus this budget plus one page. See the retired design log (git history), "The PDF parse overruns `max_seconds`".
 
 ### DOCUMENT_TEXT_PDF_MAX_BYTES
 
@@ -1738,7 +1738,7 @@ A chart-image side channel. When on, and `TS_ANCHOR_ENABLED` is also on, the pro
 (the series plus its P10 to P90 band, sized in `research/ts_chart.py`) for single-level questions and stashes it
 per qid; the forecaster passes it to each base model as a vision message.
 
-Off everywhere until the text-versus-image A/B, see `FUTURE.md` "TS anchor chart image". Independent of
+Off everywhere until the text-versus-image A/B, see backlog task-33 "TS-anchor chart image A/B". Independent of
 `TS_ANCHOR_ENABLED` so the text anchor can ship before the costlier, unvalidated image does. Note that matplotlib
 is a dev-only dependency, so under the bot workflows' `--no-dev` install, flipping this on degrades to the
 text-only anchor with one ERROR log.

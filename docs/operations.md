@@ -106,7 +106,7 @@ session does not run them: it proposes, the operator runs and decides.
 - **A roster change is a config-era boundary.** Residual analysis buckets by the
   merge-to-main timestamp, so make any swap once, in the same merge as everything
   else that shifts the forecast distribution, before the first question, never
-  mid-window (`FUTURE.md`, "FREEZE the triple").
+  mid-window (the retired design log (git history), "FREEZE the triple").
 - **Refresh the tournament constants** (`TOURNAMENT_ID`, the date checks in
   `constants.py`) and flip the cup reminder off once configured
   (`FALL_CUP_CONFIGURED`), or every scheduled run reddens on the reminder.
@@ -279,7 +279,7 @@ Gemini has two separate routes, which is the other easy thing to confuse:
   Google credits are used, or disable "Always use for this provider" on that BYOK
   key), then re-verify with one live call. See
   `metaculus_bot/fallback_openrouter.py:should_route_via_donated_key` and
-  `FUTURE.md` "Gemini on the donated OpenRouter key".
+  the retired design log (git history) "Gemini on the donated OpenRouter key".
 - **Gemini grounded search** (`research/gemini_search.py`) always uses the
   personal `GOOGLE_API_KEY`. The donated toggle does not touch it, and neither
   does anything else on the OpenRouter side. What that key costs is its own
@@ -389,7 +389,7 @@ is pinned to the personal key with no donated attempt, no 429 and no fallback-co
 models run through a free-tier Google AI Studio BYOK key on the donated account that has no Pro
 free tier (limit 0, so every call 429s), so a donated attempt would always fail over to personal
 anyway. The pin is a temporary workaround; see the `TODO(gemini-3.1-pro-donated)` tag on that
-constant, the "Known exception" paragraph above, and `FUTURE.md` "Gemini on the donated OpenRouter
+constant, the "Known exception" paragraph above, and the retired design log (git history) "Gemini on the donated OpenRouter
 key".
 
 #### Prompt-echo truncation (`_PROMPT_ECHO_MARKERS`, `_without_prompt_echo`)
@@ -500,7 +500,7 @@ non-litellm caller, and a provider that words the failure without a recognizable
 request, so the personal key genuinely can serve the same call. Two donated-key quirks produce
 them: the server-side allowed-providers preferences ("no allowed providers"), and the Metaculus
 data-collection guardrail that excludes OpenAI's native-search endpoint ("No endpoints available
-matching your guardrail restrictions and data policy"), for which see `FUTURE.md` "Resolve
+matching your guardrail restrictions and data policy"), for which see the retired design log (git history) "Resolve
 OAI_ANTH_OPENROUTER_KEY data-policy block". They are classified by text on purpose, and checked on
 every status including 403: OpenRouter returns them as 404, the same status as a plain missing
 model, which must not fall back, so the status alone cannot tell the two apart.
@@ -1133,7 +1133,7 @@ The margin is smaller than "hundreds versus tens of thousands": the evergreen
 is already below the Mantic counter, harmless because the bot only archives the
 open tournament posts it forecasts), so with the open Mantic posts in the 650s
 the next Metaculus key above them is 14333, about 13,700 Mantic posts away. The
-revisit is logged in `FUTURE.md`.
+revisit is logged in backlog task-26 "Mantic, awaiting live data".
 
 Three things differ from Metaculus in the API, each with its fix:
 
@@ -1300,7 +1300,7 @@ prompts already carried the same wording: `_scoring_sentence` renders in all thr
   unfloored behaviour, and the per-question `NUMERIC_AGGREGATE` marker carries the published
   tails beside additive `oor_low_raw=` / `oor_high_raw=` / `tail_floor=` fields, so the floor
   can be benchmarked on this bot's own forecasts once live telemetry accumulates (the ask is
-  recorded in `FUTURE.md` "Mantic Crucible").
+  recorded in backlog task-26 "Mantic, awaiting live data").
 - **Platform-aware scoring text** (item 6). The numeric prompt no longer claims a uniform 0.01
   PDF floor or that sharpness above 35 stops paying, two Metaculus facts that told the model the
   out-of-range cliff was an order of magnitude shallower than it is; `_CONTINUOUS_SCORING_RULE`

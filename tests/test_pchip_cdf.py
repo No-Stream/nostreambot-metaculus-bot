@@ -592,7 +592,7 @@ class TestAggressiveMinStepEnforcement:
     ``_MIN_STEP_TOLERANCE`` the post-check and final assertion always had, so the
     saturated grid builds as-is and only a genuine shortfall reaches the raise. After
     that change the tier is reachable through ``generate_pchip_cdf`` only as that
-    ValueError, so its success branch is pinned by direct call below; FUTURE.md holds
+    ValueError, so its success branch is pinned by direct call below; the retired design log (git history) holds
     it as a dead-code cleanup candidate.
     """
 

@@ -262,7 +262,7 @@ cannot resolve, and a percentile declaration put about a quarter of the mass on 
 ln(0.75) = -14.4` baseline points for no information. On a count grid of 13 bins or fewer,
 13 strictly increasing percentile values cannot even exist, so the model repeats integers and
 the pipeline reads a degenerate declaration. Motivation, corpus counts and the rejected
-alternative (an `excluded_bins` list on the percentile block): `FUTURE.md`, "Mantic Crucible".
+alternative (an `excluded_bins` list on the percentile block): backlog decision-7 "excluded_bins list on the percentile block (Mantic Crucible)".
 
 **The gate** is `elicit_per_bin` (`numeric/config.py`): the question's platform is in
 `PMF_ELICITATION_PLATFORMS`, the grid is an outcome space (`grid_is_outcome_space`: a
@@ -512,7 +512,7 @@ builder on every bound shape, and the offline pooling paths. The fallback builde
 closed/closed branch used to return upstream's CDF raw, with no step or endpoint enforcement
 and no `CDF_MAXSTEP_CLIP` marker possible; a tight declaration on the modal Mantic date shape
 produced a 0.297 bin against the 0.2 cap and an HTTP 400 on the lone-survivor path, and the
-branch was removed on 2026-09-08 (the history is in FUTURE.md under "Sentinel-value sweep
+branch was removed on 2026-09-08 (the history is in the retired design log (git history) under "Sentinel-value sweep
 leftovers", sixth item).
 
 ### Open vs. closed bounds: a one-sided constraint, not a box
@@ -711,7 +711,7 @@ agree. The pool never gives a bin less than a third of the mass any member put t
 `aggregation_pipeline._numeric_combine_strategy` returns MEAN when `elicit_per_bin` holds for
 the question's numeric view and the configured strategy otherwise, so percentile members keep
 the MEDIAN everywhere, on both platforms (the benchmarked median-over-mean decision in
-`FUTURE.md` stands for them). The `NUMERIC_AGGREGATE` marker's trailing `method=` records which rule ran: `mean` (pooled
+backlog decision-9 "Mean over median, always-on stacking, stacker as judge, coherence weighting" stands for them). The `NUMERIC_AGGREGATE` marker's trailing `method=` records which rule ran: `mean` (pooled
 per-bin members), `median`, `stacked` or `single`; `unrecorded` means the aggregation never
 recorded a method and is a bug signal.
 

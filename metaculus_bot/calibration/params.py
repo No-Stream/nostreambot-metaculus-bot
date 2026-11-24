@@ -15,7 +15,7 @@ Given (1) + (2), shipping a fixed-coefficient calibration risks introducing
 ensemble-drift bias that exceeds the modest expected benefit. Identity is
 the considered choice. The infrastructure (math, fit CLI, integration hook)
 remains so the analysis can be re-run cheaply when more data accumulates or
-the ensemble stabilizes — see ``FUTURE.md`` for the runbook.
+the ensemble stabilizes — see backlog decision-1 "Calibration and post-hoc layers" for the runbook.
 
 The deviation caps in ``metaculus_bot.constants`` are also dormant until
 non-identity params are checked in here — they apply on top of any

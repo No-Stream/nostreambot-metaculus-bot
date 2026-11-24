@@ -1,6 +1,6 @@
 """Pin the backtest question universe against the forecasting-tools 0.2.54 -> 0.2.92 upgrade.
 
-Seam (FUTURE.md Workstream W5): ``question_prep._fetch_with_retries`` builds an
+Seam (Workstream W5 of the retired design log (git history)): ``question_prep._fetch_with_retries`` builds an
 ``ApiFilter`` for the resolved-question backtest fetch WITHOUT setting
 ``allowed_types`` — it relies on the upstream default. On 0.2.54 that default is
 ``["binary", "numeric", "multiple_choice", "date", "discrete"]``, which excludes

@@ -1227,7 +1227,7 @@ derived-feed-then-browser escalations on a host; why it is held across the pair 
 rungs sit in this order" above. It is per question rather than loop-wide on purpose: the
 cross-question shape still serializes on the loop-wide host gate exactly as before, and a loop-wide
 gate here would be one more unbounded process-global acquire in front of a wall that discards
-finished work (`FUTURE.md` item 5, the operator's call).
+finished work (backlog task-14 "The 45 s resolution-source wall discards pages that already succeeded", the operator's call).
 
 Two module-level tables in `context.py` are derived from each other rather than spelled twice.
 `_RUNG_WALL_SKIP_PHRASE` maps each route to the human phrase its wall-budget skip logs, so the one

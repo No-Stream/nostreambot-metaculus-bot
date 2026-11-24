@@ -37,7 +37,7 @@ class TestApiKeyUtils:
         counter bump. A flash model in the same env still uses the special key.
 
         Temporary workaround; see DONATED_KEY_BLOCKED_GOOGLE_MODELS
-        (``TODO(gemini-3.1-pro-donated)``) and FUTURE.md.
+        (``TODO(gemini-3.1-pro-donated)``) and the retired design log (git history).
         """
         monkeypatch.setenv("OAI_ANTH_OPENROUTER_KEY", "special_key")
         monkeypatch.setenv("OPENROUTER_API_KEY", "general_key")

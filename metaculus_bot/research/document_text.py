@@ -543,7 +543,7 @@ def _read_pages(
     100 levels of nesting), and a body built to maximize both measured a ceiling around 16 s. So
     the real worst case for one parse is the prologue plus ``max_seconds`` plus one page, and a
     caller that cancels the surrounding coroutine stops none of it, because the worker runs in a
-    thread. Recorded in FUTURE.md under "The PDF parse overruns ``max_seconds``".
+    thread. Recorded in the retired design log (git history) under "The PDF parse overruns ``max_seconds``".
     """
     deadline = monotonic() + max_seconds
     limit = min(page_count, max_pages)
@@ -586,7 +586,7 @@ def _read_outline(reader: PdfReader) -> tuple[tuple[str, int], ...]:
 # Counts entries APPENDED, so a nested list or an untitled Destination is popped without
 # incrementing it. That makes this a cap on what the walk can hand the digest, and not a cap on
 # how much of pypdf's tree the walk visits; pypdf's own OUTLINE_MAX_ENTRIES = 100_000 is the only
-# bound on the visit itself. Recorded in FUTURE.md under "The PDF parse overruns `max_seconds`".
+# bound on the visit itself. Recorded in the retired design log (git history) under "The PDF parse overruns `max_seconds`".
 OUTLINE_MAX_ENTRIES_WALKED = 2_000
 
 

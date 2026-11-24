@@ -51,7 +51,7 @@ async def _fetch_one_hop(
     trafilatura passes rather than one: the second is skipped under
     ``RESOLUTION_SOURCE_PRECISION_RETRY_MIN_BUDGET_S`` of remaining wall, which bounds the
     worst case without moving the work. Moving it would trade a measured hazard for an
-    unmeasured restructure (FUTURE.md carries the entry); the meta-refresh hop that follows
+    unmeasured restructure (the retired design log (git history) carries the entry); the meta-refresh hop that follows
     the classification needs the decoded text inside this loop either way.
     """
     async with guard._sem_for_host(host_sems, current_url):

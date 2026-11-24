@@ -104,7 +104,7 @@ FORECASTER_LLMS: list[GeneralLlm] = [
     # scratch/ensemble_power_model_2026-07-20/) found the triple non-inferior on
     # binary/MC and only a fragile numeric lean toward the full roster (+3.24,
     # 95% CI [-2.5, +9.1], P(loss>1pt/Q)=0.80, driven by 2 questions) — accepted as
-    # a ship-and-watch bet; see FUTURE.md "Frozen-triple numeric watch". Dropping
+    # a ship-and-watch bet; see the retired design log (git history) "Frozen-triple numeric watch". Dropping
     # grok (x-ai, 404s on the donated key) also ends routine personal-key forecaster
     # spend: only the gemini-3.1-pro-preview personal-key PIN bills
     # OPENROUTER_API_KEY now; the other two slots route via the donated key.
@@ -115,7 +115,7 @@ FORECASTER_LLMS: list[GeneralLlm] = [
     # default->high clearly worth it but high->xhigh UNMEASURED, so we stop paying
     # the unmeasured premium here (the three slots measure within 12% of each other,
     # $0.24 to $0.27 a question, 2026-09-09). opus-4.8 keeps xhigh below as the remaining premium bet
-    # (FUTURE.md "Price the high->xhigh reasoning-effort premium"). (2026-07-15
+    # (backlog task-22 "High versus xhigh reasoning effort"). (2026-07-15
     # had bumped this high -> xhigh.) GPT-6.1 Sol supports low, medium, high,
     # xhigh and max reasoning effort per the official model documentation.
     # 2026-09-22: sol -> gpt-6-sol (GPT-6 release) and high -> xhigh (operator), matching the
@@ -222,7 +222,7 @@ RESEARCHER_LLM = SUMMARIZER_LLM
 STACKER_LLM: GeneralLlm = build_llm_with_openrouter_fallback(
     # 2026-07-20: fable-5 → opus-4.8 (fable-5 pulled from BOTH roles after
     # content=None failures in the 2026-07-19 test_bot run — see the forecaster-slot
-    # comment above + FUTURE.md). Stacking is prod-disabled, so this is
+    # comment above + backlog task-34 "claude-fable-5 for the Anthropic forecaster slots"). Stacking is prod-disabled, so this is
     # backtest/ablation-only exposure today. 2026-09-22: opus-4.8 -> opus-5.5
     # (Anthropic release); verbosity removed, since it overrode reasoning.effort (see the
     # forecaster slot above). Anthropic uses

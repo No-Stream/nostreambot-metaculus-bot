@@ -1,5 +1,5 @@
 """Seam-pinning tests for the forecasting-tools numeric/MC data-model contracts
-that the 0.2.54 -> 0.2.92 upgrade is known to touch (FUTURE.md Workstream B).
+that the 0.2.54 -> 0.2.92 upgrade is known to touch (Workstream B of the retired design log (git history)).
 
 All tests are green on the currently-installed 0.2.54. They fall into two
 kinds:

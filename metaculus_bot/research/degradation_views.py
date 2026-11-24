@@ -84,7 +84,7 @@ def provider_degradation_count() -> int:
     looks to it like a venue with nothing to say. A third rule (Signal B, a
     venue contributing nothing while >=2 siblings answered) was deleted
     2026-08-04 as unsound under ranked retrieval — see provider_health's module
-    docstring and FUTURE.md; the surviving cross-run intent is unjudgeable
+    docstring and backlog decision-26 "venue_no_contribution provider-health rule"; the surviving cross-run intent is unjudgeable
     inside one question.
 
     Suppressed findings are excluded here but still logged in full and still

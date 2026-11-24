@@ -36,7 +36,7 @@ forecasts, buckets them by configuration era (the stretches between changes to t
 the pipeline), and traces the largest misses back to the research the bot read and the
 reasoning it published. The recurring finding is that the worst misses come with all three
 models agreeing on a shared briefing. `docs/performance_analysis.md` has the conventions, and
-`FUTURE.md` records the decisions those rounds led to.
+The local Backlog.md (`.backlog/`; `backlog decision list --plain`) records the decisions those rounds led to.
 
 ## How it works
 
@@ -146,7 +146,7 @@ create. `docs/operations.md` covers the workflows, the credentials and the cost 
 | `docs/performance_analysis.md` | How the bot's scores are analyzed, and the conventions behind the numbers. |
 | `docs/operations.md` | Running the bot: setup, credentials, workflows, backtests, credit telemetry. |
 
-`FUTURE.md` is the design log. It records each idea's history, including the ones that were
-rejected and why, so it explains the reasoning behind the current code. The guides above
+The local Backlog.md in `.backlog/` is the design log: tasks hold open and parked ideas, decisions hold the
+rejected ones with their receipts (`backlog task list --plain`, `backlog decision list --plain`), and so it explains the reasoning behind the current code. The guides above
 describe the code as it is. `AGENTS.md` is the terse starting point for contributors, including
 coding agents. The code is released under the MIT License ([LICENSE](LICENSE)).
