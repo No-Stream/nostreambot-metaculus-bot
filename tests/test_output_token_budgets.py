@@ -11,14 +11,13 @@ from metaculus_bot.llm_configs import (
 from metaculus_bot.structured_parse import PercentileListWrapper, _build_constrained_llm
 
 
-def test_forecaster_budgets_preserve_timeouts_and_effort():
+def test_forecaster_budgets_preserve_timeouts():  # Effort per slot: tests/test_roster_november.py
     for llm in FORECASTER_LLMS:
         kwargs = llm.litellm_kwargs
         is_google = "/google/" in llm.model
         assert kwargs["max_tokens"] == (65_536 if is_google else 128_000)
         assert kwargs["timeout"] == 480
         assert kwargs["stream"] is False
-        assert kwargs["reasoning"] == {"effort": "high"}
 
 
 def test_other_production_slots_use_full_verified_allowance():

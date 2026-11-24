@@ -145,7 +145,8 @@ FORECASTER_LLMS: list[GeneralLlm] = [
         "openrouter/anthropic/claude-fable-5.2",
         reasoning={"effort": "high"},
     ),
-    # Google slot, explicitly set to high effort.
+    # Google slot at medium, its long-standing provider default, set explicitly. 2026-11-24: high took 411 s
+    # of the 600 s FORECASTER_SOFT_DEADLINE and $0.38 on Q46727 (timing probe), against 69-96 s at medium.
     # 2026-11-14: back to gemini-4-argon after gemini-4-carbon at effort=high (PR #83, 2026-11-13) hit
     # FORECASTER_SOFT_DEADLINE on all 3 questions it saw (Q46727, Q46728, Mantic 879), while Argon had
     # finished 5 of 5 the day before in 69-96s. See docs/roster_history.md 2026-11-14.
@@ -154,7 +155,7 @@ FORECASTER_LLMS: list[GeneralLlm] = [
     # Some Argon routes advertise a much larger limit, but 65,536 is the
     # verified ceiling shared by all routes; preserve provider fallback options.
     _forecaster_slot(
-        "openrouter/google/gemini-4-argon", reasoning={"effort": "high"}, max_tokens=GEMINI_OUTPUT_TOKEN_LIMIT
+        "openrouter/google/gemini-4-argon", reasoning={"effort": "medium"}, max_tokens=GEMINI_OUTPUT_TOKEN_LIMIT
     ),
 ]
 
