@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-from metaculus_bot.performance_analysis.member_replay import member_cdf, member_scoring_inputs
+from metaculus_bot.performance_analysis.member_replay import member_cdf, member_reasoning, member_scoring_inputs
 from metaculus_bot.performance_analysis.scaling import NUMERIC_TYPES, cdf_and_grid
 from metaculus_bot.trace_review.member_rows import KIND_PMF, ROLE_STACKER, pmf_cdf
 
@@ -225,7 +225,7 @@ def _member_curve(member: pd.Series, record: dict) -> list[float] | None:
     if inputs is None:
         return None
     try:
-        return member_cdf(value, inputs)
+        return member_cdf(value, inputs, reasoning=member_reasoning(record, member["model"]))
     except (ValueError, RuntimeError):
         return None
 

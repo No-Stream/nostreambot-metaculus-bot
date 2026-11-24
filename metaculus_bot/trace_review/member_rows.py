@@ -22,6 +22,7 @@ from metaculus_bot.performance_analysis.member_replay import (
     is_censored,
     is_replayable,
     member_cdf,
+    member_reasoning,
     member_scoring_inputs,
     replay_solo_score,
     score_member_cdf,
@@ -134,7 +135,7 @@ def _numeric_cdf(value: MemberValue, record: dict) -> list[float] | None:
         cdf = pmf_cdf(value.value)
         return cdf if len(cdf) == inputs.cdf_size else None
     try:
-        return member_cdf(value.value, inputs)
+        return member_cdf(value.value, inputs, reasoning=member_reasoning(record, value.model))
     except (ValueError, RuntimeError):
         return None
 
@@ -155,7 +156,7 @@ def own_score(value: MemberValue, record: dict) -> float | None:
             return score_member_cdf(cdf, inputs)
         except (ValueError, ZeroDivisionError):
             return None
-    return replay_solo_score(record, value.value)
+    return replay_solo_score(record, value.value, model=value.model)
 
 
 def _score_censored(value: MemberValue, record: dict) -> bool | None:

@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-from forecasting_tools import PredictedOptionList
+from forecasting_tools import NumericQuestion, Percentile, PredictedOptionList
 from forecasting_tools.data_models.multiple_choice_report import PredictedOption
 
 from metaculus_bot.aggregation_strategies import (
@@ -39,9 +39,11 @@ from metaculus_bot.aggregation_strategies import (
 )
 from metaculus_bot.numeric.config import OPEN_TAIL_MIN_MASS, PCHIP_CDF_POINTS, grid_step_constraints
 from metaculus_bot.numeric.pchip_cdf import generate_pchip_cdf, safe_cdf_bounds
+from metaculus_bot.numeric.pipeline import build_numeric_distribution
 from metaculus_bot.numeric.utils import aggregate_binary_mean
 from metaculus_bot.performance_analysis.collector import resolve_numeric_record_to_score_inputs
-from metaculus_bot.performance_analysis.parsing import declared_anchors
+from metaculus_bot.performance_analysis.declared_value_recovery import _parse_block_in_body
+from metaculus_bot.performance_analysis.parsing import declared_anchors, parse_per_model_reasoning_text
 from metaculus_bot.scoring_common import (
     BOUNDARY_BASELINE,
     binary_log_score,
@@ -49,6 +51,8 @@ from metaculus_bot.scoring_common import (
     numeric_log_score,
     resolution_to_bucket_index,
 )
+from metaculus_bot.structured_output_schema import NumericStructured
+from metaculus_bot.value_extraction import _tail_probabilities_from_block
 
 NUMERIC_RECORD_TYPES: tuple[str, ...] = ("numeric", "discrete")
 
@@ -130,13 +134,48 @@ def member_scoring_inputs(record: dict, *, n_points: int | None = None) -> Membe
     )
 
 
-def member_cdf(percentile_pairs: Sequence[Sequence[float]], inputs: MemberScoringInputs) -> list[float]:
+def member_reasoning(record: dict, model: str | None) -> str:
+    """Recover this member's original fenced declaration from its comment."""
+    if model is None:
+        return ""
+    return parse_per_model_reasoning_text(record.get("comment_text") or "").get(model, "")
+
+
+def member_cdf(
+    percentile_pairs: Sequence[Sequence[float]], inputs: MemberScoringInputs, *, reasoning: str = ""
+) -> list[float]:
     """One member's declared curve as a CDF on ``inputs.cdf_size`` points.
 
     Raises ``ValueError`` / ``RuntimeError`` from the PCHIP build, which each caller reports
     in its own vocabulary: a dossier warns and drops the row, a replay drops the member.
     """
     anchors, _conflicts = declared_anchors(percentile_pairs)
+    block = _parse_block_in_body(reasoning, "numeric") if reasoning else None
+    below = above = None
+    if isinstance(block, NumericStructured):
+        tails = _tail_probabilities_from_block(
+            block, open_lower_bound=inputs.open_lower, open_upper_bound=inputs.open_upper
+        )
+        below = tails.below.value if inputs.open_lower and tails.below.status == "valid" else None
+        above = tails.above.value if inputs.open_upper and tails.above.status == "valid" else None
+    if below is not None or above is not None:
+        question = NumericQuestion(
+            question_text="Member replay",
+            lower_bound=inputs.lower_bound,
+            upper_bound=inputs.upper_bound,
+            open_lower_bound=inputs.open_lower,
+            open_upper_bound=inputs.open_upper,
+            cdf_size=inputs.cdf_size,
+        )
+        percentiles = [Percentile(percentile=level / 100.0, value=value) for level, value in anchors.items()]
+        distribution = build_numeric_distribution(
+            percentiles,
+            question,
+            inputs.zero_point,
+            p_below_lower_bound=below,
+            p_above_upper_bound=above,
+        )
+        return [point.percentile for point in distribution.get_cdf()]
     cdf, _diagnostics = generate_pchip_cdf(
         anchors,
         open_upper_bound=inputs.open_upper,
@@ -147,6 +186,8 @@ def member_cdf(percentile_pairs: Sequence[Sequence[float]], inputs: MemberScorin
         min_step=inputs.min_step,
         max_step=inputs.max_step,
         num_points=inputs.cdf_size,
+        p_below_lower_bound=below,
+        p_above_upper_bound=above,
     )
     return cdf
 
@@ -272,7 +313,9 @@ def replay_subset_score(
     return _replay_numeric(record, members, models, method=method, n_points=n_points)
 
 
-def replay_solo_score(record: dict, value: Any, *, n_points: int | None = None) -> float | None:
+def replay_solo_score(
+    record: dict, value: Any, *, n_points: int | None = None, model: str | None = None
+) -> float | None:
     """Metaculus log score of one member's own forecast, with no aggregation applied.
 
     A member's declared distribution is scored as declared: production's clamps belong to the
@@ -292,7 +335,7 @@ def replay_solo_score(record: dict, value: Any, *, n_points: int | None = None) 
     if inputs is None:
         return None
     try:
-        return score_member_cdf(member_cdf(value, inputs), inputs)
+        return score_member_cdf(member_cdf(value, inputs, reasoning=member_reasoning(record, model)), inputs)
     except (ValueError, RuntimeError, ZeroDivisionError):
         return None
 
@@ -355,7 +398,7 @@ def _replay_numeric(
     cdfs: list[list[float]] = []
     for model in models:
         try:
-            cdfs.append(member_cdf(members[model], inputs))
+            cdfs.append(member_cdf(members[model], inputs, reasoning=member_reasoning(record, model)))
         except (ValueError, RuntimeError):
             continue
     if not cdfs:
