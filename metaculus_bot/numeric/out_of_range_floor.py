@@ -21,7 +21,7 @@ mean, base-combine, stacker, single survivor) returns through, so it is the last
 publish gate, the comment and the ``NUMERIC_AGGREGATE`` marker read the distribution. Nowhere else:
 per-member forecasts are never touched
 (their ``MEMBER_FORECAST`` tails keep measuring what the models declared), and the backtest and
-ablation harnesses replay Metaculus questions, so the platform gate covers them.
+ablation harnesses replay Metaculus questions and receive the same 2% floor.
 
 What it does, per side: an open tail under the floor is raised toward it, an open tail already at or
 above it is left alone (a tail is never reduced), and a closed bound stays at its exact 0.0 or 1.0
@@ -107,8 +107,8 @@ class TailFloorOutcome:
     """What the seam publishes and logs: the distribution to publish and the marker's tail fields.
 
     ``distribution`` is the input object itself when nothing was floored. ``floor`` is the level the
-    moved tails were raised to (``FlooredCdf.floor``), ``0.0`` when none moved (a Metaculus
-    question, a closed-bound question, tails already at or above the floor, or an interior already
+    moved tails were raised to (``FlooredCdf.floor``), ``0.0`` when none moved (a
+    closed-bound question, tails already at or above the floor, or an interior already
     at its minimum).
     """
 

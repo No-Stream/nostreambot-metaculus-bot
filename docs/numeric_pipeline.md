@@ -791,12 +791,13 @@ Operator-approved 2026-09-08.
 (2%, since 2026-11-24; reasoning and receipts in docs/constants.md), through the same code; an aggregate
 that needs no lift comes back as the very same object. Per-member forecasts are never touched (their `MEMBER_FORECAST` tails keep measuring what the
 models declared); the backtest, ablation and benchmark harnesses replay Metaculus questions, so
-the gate covers them without a flag.
+the same 2% floor applies there too. Backtest and ablation results from before 2026-11-24
+are not directly comparable with later results because the floor now applies there.
 
 **Telemetry.** `NUMERIC_AGGREGATE` keeps `oor_low` / `oor_high` as the PUBLISHED tails and adds
 three trailing fields: `oor_low_raw` / `oor_high_raw`, the aggregate's own tails before the
 floor, and `tail_floor`, the level the moved tails were actually raised to: `0.050000` normally,
-less where the other tail capped the raise, and `0.000000` when nothing moved (Metaculus, a
+less where the other tail capped the raise, and `0.000000` when nothing moved (a
 closed-bound question, tails already at or above the floor, an interior already at its minimum).
 Raw against published is how the floor gets benchmarked on this bot's own forecasts once live
 Mantic telemetry accumulates.

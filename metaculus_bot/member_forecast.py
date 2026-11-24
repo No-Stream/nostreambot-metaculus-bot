@@ -35,7 +35,7 @@ whenever every percentile sits inside. On a Mantic question the published aggreg
 tails are raised to ``MANTIC_OUT_OF_RANGE_TAIL_FLOOR`` (``numeric/out_of_range_floor.py``);
 ``oor_low_raw`` / ``oor_high_raw`` keep the aggregate's own tails and ``tail_floor`` is the
 level the moved tails were actually raised to (the floor, or less where the other tail's mass
-capped the raise; ``0`` on Metaculus, on a closed-bound question, or when nothing moved), so
+capped the raise; ``0`` on a closed-bound question or when nothing moved), so
 the floor can be benchmarked on this bot's own
 forecasts from the archive, and the member lines keep measuring what the models declared.
 

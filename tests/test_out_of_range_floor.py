@@ -4,8 +4,7 @@ Mantic scores an outcome beyond an OPEN bound against a fixed 5% reference (``50
 5% there scores 0, the structural 1% this pipeline publishes when every percentile sits inside the
 range scores -80.5. Mantic's writers set the ranges and half its date questions resolved above the
 displayed range in Series 1, so the PUBLISHED aggregate of a Mantic numeric, discrete or date question
-gets each open tail raised to ``MANTIC_OUT_OF_RANGE_TAIL_FLOOR``; Metaculus aggregates stay
-byte-identical and per-member forecasts are never touched.
+gets each open tail raised to ``MANTIC_OUT_OF_RANGE_TAIL_FLOOR``; Metaculus aggregates receive their own lower floor and per-member forecasts are never touched.
 
 A tail rises only as far as the other tail leaves room for: the server needs every one of the grid's
 N steps to be at least ``round(0.01 / N, 9)``, so when one open tail already holds most of the mass
