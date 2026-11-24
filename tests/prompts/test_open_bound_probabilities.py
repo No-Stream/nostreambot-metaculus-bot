@@ -154,3 +154,11 @@ def test_bound_guidance_matches_schema() -> None:
     upper, lower = bound_messages(question)
     assert "prob_above_upper_bound" not in upper + lower
     assert "prob_below_lower_bound" not in upper + lower
+
+
+@pytest.mark.parametrize("kind", ["numeric", "date"])
+def test_example_values_are_labelled_as_format_placeholders(kind: Literal["numeric", "date"]) -> None:
+    """The example tail of 0.03 beside in-range example percentiles would break the consistency rule if read
+    as a forecast, so the example must say its values only show the format."""
+    text = _flat(_percentile_prompt(kind, page_url=METACULUS_PAGE_URL, open_lower=False, open_upper=True))
+    assert "the values shown are format placeholders, not a suggested distribution" in text

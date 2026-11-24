@@ -1370,7 +1370,8 @@ def _numeric_percentile_blocks(question: NumericQuestion) -> _PercentileBlocks:
     )
     schema_block = f"""\
         Schema (`declared_percentiles` is REQUIRED and MUST contain all {EXPECTED_PERCENTILE_COUNT} standard
-        percentiles — {_STANDARD_PERCENTILES_DECIMAL_CSV}; `outcome_type` is REQUIRED):
+        percentiles — {_STANDARD_PERCENTILES_DECIMAL_CSV}; `outcome_type` is REQUIRED; the values shown are format
+        placeholders, not a suggested distribution):
 
         ```json
         {{
@@ -1434,7 +1435,8 @@ def _date_percentile_blocks(question: EpochDateQuestion) -> _PercentileBlocks:
     one_day = format_epoch(float(example_epochs[len(example_epochs) // 2]), "day")
     schema_block = f"""\
         Schema (`declared_percentiles` is REQUIRED and MUST contain all {EXPECTED_PERCENTILE_COUNT} standard
-        percentiles — {_STANDARD_PERCENTILES_DECIMAL_CSV}):
+        percentiles — {_STANDARD_PERCENTILES_DECIMAL_CSV}; the values shown are format
+        placeholders, not a suggested distribution):
 
         ```json
         {{
