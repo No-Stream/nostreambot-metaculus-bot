@@ -11,7 +11,7 @@ def test_four_forecasters_have_their_effort_and_distinct_spend_roles() -> None:
     assert efforts == {
         "openrouter/openai/gpt-6.1-sol": "high",
         "openrouter/anthropic/claude-opus-5.5": "high",
-        "openrouter/anthropic/claude-fable-5.2": "high",
+        "openrouter/anthropic/claude-fable-5.2": "medium",
         "openrouter/google/gemini-4-argon": "medium",
     }
     roles = [llm.litellm_kwargs["metadata"][ROLE_METADATA_KEY] for llm in FORECASTER_LLMS]

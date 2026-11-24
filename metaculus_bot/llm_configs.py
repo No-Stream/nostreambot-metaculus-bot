@@ -141,9 +141,11 @@ FORECASTER_LLMS: list[GeneralLlm] = [
         "openrouter/anthropic/claude-opus-5.5",
         reasoning={"effort": "high"},
     ),
+    # 2026-11-24: medium, not high. The timing probe on Q46727 at high took 143 s but cost $0.82 per call,
+    # which would put the bot near the operator's ~$2/question ceiling; see docs/roster_history.md.
     _forecaster_slot(
         "openrouter/anthropic/claude-fable-5.2",
-        reasoning={"effort": "high"},
+        reasoning={"effort": "medium"},
     ),
     # Google slot at medium, its long-standing provider default, set explicitly. 2026-11-24: high took 411 s
     # of the 600 s FORECASTER_SOFT_DEADLINE and $0.38 on Q46727 (timing probe), against 69-96 s at medium.

@@ -11,16 +11,18 @@ from metaculus_bot.fallback_openrouter import DirectAnthropicFallbackLlm
 from metaculus_bot.llm_configs import FORECASTER_LLMS, mantic_forecasters
 
 
-def test_direct_request_contains_high_effort(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_direct_request_carries_the_slot_effort(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("personal_ant_key", "test-key")
     direct = [llm for llm in mantic_forecasters() if isinstance(llm, DirectAnthropicFallbackLlm)]
     assert len(direct) == 2
     config = AnthropicConfig()
     for llm in direct:
+        slot_effort = llm._openrouter_llm.litellm_kwargs["reasoning"]["effort"]
+        assert llm._direct_llm.litellm_kwargs["reasoning_effort"] == slot_effort
         model = llm._direct_llm.model.removeprefix("anthropic/")
-        params = config.map_openai_params({"reasoning_effort": "high"}, {}, model, True)
+        params = config.map_openai_params({"reasoning_effort": slot_effort}, {}, model, True)
         body = config.transform_request(model, [{"role": "user", "content": "test"}], params, {}, {})
-        assert body["output_config"] == {"effort": "high"}
+        assert body["output_config"] == {"effort": slot_effort}
 
 
 def test_missing_key_keeps_openrouter(monkeypatch: pytest.MonkeyPatch) -> None:

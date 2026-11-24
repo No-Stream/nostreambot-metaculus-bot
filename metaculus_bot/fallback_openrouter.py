@@ -496,7 +496,7 @@ class DirectAnthropicFallbackLlm(GeneralLlm):
         self._direct_llm = GeneralLlm(
             model=direct_model,
             api_key=api_key,
-            reasoning_effort="high",
+            reasoning_effort=openrouter_llm.litellm_kwargs["reasoning"]["effort"],
             allowed_tries=1,
             timeout=openrouter_llm.litellm_kwargs["timeout"],
             max_tokens=openrouter_llm.litellm_kwargs["max_tokens"],

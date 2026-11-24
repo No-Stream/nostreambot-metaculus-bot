@@ -20,14 +20,16 @@ Last verified against the code on 2026-09-04.
 
 ## Roster-change history
 
-**2026-11-24 (four forecasters, high effort):** Fall triage adds Fable 5.2 at high effort and sets
-Sol and Opus to high; Argon stays at medium, now set explicitly. The reasoning-effort research found high approximately matched xhigh
-for Sol and Opus while freeing budget; Artificial Analysis reported Fable 5.2 at 62 on high versus
-56 on medium. Argon was first set to high too, but the `make probe_forecaster_timing` call on
-Q46727 took 411 s of the 600 s forecaster deadline, with 32,650 output tokens and $0.38, against
-69-96 s at medium in production, so it went back to medium before merge. Receipts are `scratch/trace_evals_2026-11-23/reasoning_effort_high_vs_xhigh.md` and
-`scratch/trace_evals_2026-11-23/fable52_effort.md` in the artifacts repo. This is a config-era
-boundary; record the era at merge using the merge committer timestamp.
+**2026-11-24 (four forecasters; Sol and Opus at high, Fable 5.2 and Argon at medium):** Fall triage adds
+Fable 5.2 as a fourth member on the shared key and moves Sol and Opus from xhigh to high. The reasoning-effort
+research found high approximately matched xhigh for Sol and Opus while freeing budget. Fable 5.2 and Argon run at
+medium after one `make probe_forecaster_timing` call each on Q46727 at high. Argon took 411 s of the 600 s
+forecaster deadline (and of the 480 s per-call timeout), with 32,650 output tokens and $0.38, against 69-96 s at
+medium in production. Fable 5.2 took 143 s but OpenRouter billed $0.82 for the call, which would have put the bot
+at roughly $1.8-1.9 per question against the operator's ~$2 ceiling; Artificial Analysis scores it 62 at high and 56
+at medium. On Mantic, the direct Anthropic route inherits each slot's effort. Receipts are
+`scratch/trace_evals_2026-11-23/reasoning_effort_high_vs_xhigh.md` and `scratch/trace_evals_2026-11-23/fable52_effort.md`
+in the artifacts repo. This is a config-era boundary; record the era at merge using the merge committer timestamp.
 
 **2026-11-14 (Google slot back to Gemini 4 Argon at the provider-default effort):** `gemini-4-carbon` at
 `reasoning.effort` `high` hit `FORECASTER_SOFT_DEADLINE` (600s) on all three questions it saw after PR #83
