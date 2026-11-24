@@ -10,7 +10,7 @@ from typing import Any
 
 from forecasting_tools import GeneralLlm
 
-from metaculus_bot.constants import GEMINI_OUTPUT_TOKEN_LIMIT, OPENROUTER_OUTPUT_TOKEN_LIMIT
+from metaculus_bot.constants import GEMINI_OUTPUT_TOKEN_LIMIT, OPENROUTER_OUTPUT_TOKEN_LIMIT, PERSONAL_ANTHROPIC_KEY_ENV
 from metaculus_bot.fallback_openrouter import DirectAnthropicFallbackLlm, build_llm_with_openrouter_fallback
 
 __all__ = [
@@ -78,7 +78,7 @@ def forecaster_role(model: str) -> str:
 
 
 def _forecaster_slot(model: str, **kwargs: Any) -> GeneralLlm:
-    """One roster member, booked in the CREDIT_ROLE_SPEND ledger under ``forecaster:<vendor>``.
+    """One roster member, booked in the CREDIT_ROLE_SPEND ledger under ``forecaster:<vendor>``, or ``forecaster:anthropic_fable`` for Fable.
 
     The role is derived from the slug rather than written beside it so a roster swap cannot
     leave a slot mislabeled.
@@ -116,13 +116,14 @@ FORECASTER_LLMS: list[GeneralLlm] = [
     # reasoning-effort audit (scratch/reasoning_effort_audit_2026-07-20/) found
     # default->high clearly worth it but high->xhigh UNMEASURED, so we stop paying
     # the unmeasured premium here (the three slots measure within 12% of each other,
-    # $0.24 to $0.27 a question, 2026-09-09). opus-4.8 keeps xhigh below as the remaining premium bet
+    # $0.24 to $0.27 a question, 2026-09-09). opus-4.8 kept xhigh as the remaining premium bet at the time
     # (backlog task-22 "High versus xhigh reasoning effort"). (2026-07-15
     # had bumped this high -> xhigh.) GPT-6.1 Sol supports low, medium, high,
     # xhigh and max reasoning effort per the official model documentation.
     # 2026-09-22: sol -> gpt-6-sol (GPT-6 release) and high -> xhigh (operator), matching the
     # Anthropic slot; a single prod-prompt timing probe checked it against FORECASTER_SOFT_DEADLINE.
     # 2026-09-29: gpt-6-sol -> gpt-6.1-sol; effort and deadline settings unchanged.
+    # 2026-11-24: Sol effort xhigh -> high.
     _forecaster_slot(
         "openrouter/openai/gpt-6.1-sol",
         reasoning={"effort": "high"},
@@ -137,6 +138,7 @@ FORECASTER_LLMS: list[GeneralLlm] = [
     # output_config.effort knob and "verbosity wins if both are passed" (OpenRouter Claude 4.7
     # migration guide), so this slot had been running at effort HIGH, not the xhigh declared here,
     # since at least 2026-02. Never send verbosity alongside reasoning.effort on an Anthropic slot.
+    # 2026-11-24: Opus declared effort xhigh -> high.
     _forecaster_slot(
         "openrouter/anthropic/claude-opus-5.5",
         reasoning={"effort": "high"},
@@ -181,7 +183,7 @@ _MANTIC_ANTHROPIC_MODELS = {
 
 def mantic_forecasters() -> list[GeneralLlm]:
     """Use the personal Anthropic key for Mantic when it is configured."""
-    api_key = os.getenv("personal_ant_key")  # noqa: SIM112  # Existing Actions secret name.
+    api_key = os.getenv(PERSONAL_ANTHROPIC_KEY_ENV)
     if not api_key:
         logging.getLogger(__name__).info("Personal Anthropic key unset; Mantic forecasters use OpenRouter")
         return FORECASTER_LLMS

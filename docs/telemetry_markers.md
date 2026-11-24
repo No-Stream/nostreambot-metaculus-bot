@@ -1637,6 +1637,6 @@ audit to members used in the aggregate.
 # ANTHROPIC_FORECAST_ROUTE
 
 Mantic Anthropic forecaster calls record the model, `route` (`direct` or `fallback`),
-and `reason` (`success`, `credit`, `auth`, `rate_limit`, or `server`). The fallback
+and `reason` (`success`, `credit`, `auth`, `rate_limit`, `server`, or `other`). The fallback
 uses the personal OpenRouter key and shares the forecaster deadline.
 

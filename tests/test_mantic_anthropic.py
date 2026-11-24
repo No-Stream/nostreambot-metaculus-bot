@@ -1,8 +1,10 @@
 """Offline checks for Mantic's direct Anthropic route."""
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from litellm.exceptions import APIError
 from litellm.llms.anthropic.chat.transformation import AnthropicConfig
@@ -44,13 +46,14 @@ async def test_direct_failure_falls_back(monkeypatch: pytest.MonkeyPatch, status
     openrouter_invoke.assert_awaited_once_with("prompt", None)
 
 
-async def test_timeout_does_not_fall_back(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("failure", [TimeoutError(), httpx.ReadTimeout("timeout"), asyncio.CancelledError()])
+async def test_timeout_does_not_fall_back(monkeypatch: pytest.MonkeyPatch, failure: BaseException) -> None:
     monkeypatch.setenv("personal_ant_key", "test-key")
     llm = next(llm for llm in mantic_forecasters() if isinstance(llm, DirectAnthropicFallbackLlm))
-    llm._direct_llm.invoke = AsyncMock(side_effect=TimeoutError())
+    llm._direct_llm.invoke = AsyncMock(side_effect=failure)
     openrouter_invoke = AsyncMock()
     monkeypatch.setattr(llm._openrouter_llm, "invoke", openrouter_invoke)
-    with pytest.raises(TimeoutError):
+    with pytest.raises(type(failure)):
         await llm.invoke("prompt")
     openrouter_invoke.assert_not_awaited()
 
@@ -68,3 +71,15 @@ async def test_slow_server_failure_does_not_fall_back(monkeypatch: pytest.Monkey
     with pytest.raises(APIError):
         await llm.invoke("prompt")
     openrouter_invoke.assert_not_awaited()
+
+
+@pytest.mark.parametrize("failure", [ValueError("invalid request"), ConnectionError("offline")])
+async def test_unclassified_direct_failure_falls_back(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, failure: Exception
+) -> None:
+    monkeypatch.setenv("personal_ant_key", "test-key")
+    llm = next(llm for llm in mantic_forecasters() if isinstance(llm, DirectAnthropicFallbackLlm))
+    llm._direct_llm.invoke = AsyncMock(side_effect=failure)
+    monkeypatch.setattr(llm._openrouter_llm, "invoke", AsyncMock(return_value="ok"))
+    assert await llm.invoke("prompt") == "ok"
+    assert "reason=other" in caplog.text

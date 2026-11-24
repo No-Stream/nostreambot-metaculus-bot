@@ -5,6 +5,7 @@ import sys
 import time
 from typing import Any
 
+import httpx
 import litellm.exceptions
 from forecasting_tools import GeneralLlm
 
@@ -507,9 +508,11 @@ class DirectAnthropicFallbackLlm(GeneralLlm):
         started = time.monotonic()
         try:
             result = await self._direct_llm.invoke(prompt, system_prompt)
+        except (TimeoutError, httpx.TimeoutException, litellm.exceptions.Timeout):
+            raise
         except Exception as exc:
-            reason = direct_anthropic_failure_reason(exc)
-            if reason is None or time.monotonic() - started >= TRANSIENT_RETRY_MAX_ELAPSED_S:
+            reason = direct_anthropic_failure_reason(exc) or "other"
+            if time.monotonic() - started >= TRANSIENT_RETRY_MAX_ELAPSED_S:
                 raise
             logger.warning("ANTHROPIC_FORECAST_ROUTE: model=%s route=fallback reason=%s", self.model, reason)
             return await self._openrouter_llm.invoke(prompt, system_prompt)

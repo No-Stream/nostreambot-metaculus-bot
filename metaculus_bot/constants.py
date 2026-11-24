@@ -209,6 +209,7 @@ ASKNEWS_CLIENT_ID_ENV: str = "ASKNEWS_CLIENT_ID"
 ASKNEWS_SECRET_ENV: str = "ASKNEWS_SECRET"  # noqa: S105  # env var NAME, not a credential
 EXA_API_KEY_ENV: str = "EXA_API_KEY"
 METACULUS_TOKEN_ENV: str = "METACULUS_TOKEN"  # noqa: S105  # env var NAME, not a credential
+PERSONAL_ANTHROPIC_KEY_ENV: str = "personal_ant_key"
 MANTIC_TOKEN_ENV: str = "MANTIC_TOKEN"  # noqa: S105  # env var NAME, not a credential; personal, never donated
 # Master switch; a Mantic run sets it false and fails shut. Receipt: docs/constants.md "donated_openrouter_key_enabled".
 DONATED_OPENROUTER_KEY_ENABLED_ENV: str = "DONATED_OPENROUTER_KEY_ENABLED"
