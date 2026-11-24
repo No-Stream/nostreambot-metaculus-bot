@@ -233,7 +233,7 @@ class TestManticOutOfRangeBaseRate:
             assert "one in four of the discrete ones, one in eight of the continuous ones" in flat
             assert "one in seven" not in flat
             assert "one in fifteen" not in flat
-            assert "asserts a 1% chance of an out-of-range outcome" in flat
+            assert "asserts a 1% chance of an out-of-range outcome" not in flat
             # It follows the bound messages, which is where the model reads about open bounds.
             assert prompt.index("ubm") < prompt.index("one in five past quantitative questions")
 

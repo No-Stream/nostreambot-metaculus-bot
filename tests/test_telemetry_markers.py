@@ -856,6 +856,11 @@ NUMERIC_DEGENERATE_DECLARATION_UNLABELLED_LINE = (
     "NUMERIC_DEGENERATE_DECLARATION: question=77 model=unknown n_unique=1 "
     "span=1.5e-06 value_eps=1e-07 spread_applied=false"
 )
+NUMERIC_STATED_TAIL_LINE = (
+    "2026-11-24 23:07:17,044 - metaculus_bot.forecaster_runners - INFO - "
+    "NUMERIC_STATED_TAIL: question=77 model=openrouter/openai/gpt-5.6-sol bound=lower "
+    "stated=0.15 status=used dropped_percentiles=2 resulting_mass=0.150000"
+)
 NUMERIC_AGGREGATE_GRID_MISMATCH_LINE = (
     "2026-08-25 23:07:17,044 - metaculus_bot.numeric.utils - WARNING - "
     "NUMERIC_AGGREGATE_GRID_MISMATCH: question=44620 model_index=2 got_points=201 expected_points=11 "
@@ -933,6 +938,53 @@ class TestNumericDegenerateDeclaration:
         assert rec["model"] == "unknown"
         # %.6g renders this sub-epsilon span in exponent form, which the unit-mismatch guard judges as a number.
         assert rec["span"] == pytest.approx(1.5e-06)
+
+
+class TestNumericStatedTail:
+    def test_fields(self) -> None:
+        rec = _parse_one(NUMERIC_STATED_TAIL_LINE)
+        assert rec["marker"] == "numeric_stated_tail"
+        assert rec["model"] == "openrouter/openai/gpt-5.6-sol"
+        assert rec["bound"] == "lower"
+        assert rec["stated"] == pytest.approx(0.15)
+        assert rec["status"] == "used"
+        assert rec["dropped_percentiles"] == 2
+        assert rec["resulting_mass"] == pytest.approx(0.15)
+
+    def test_question_ref_is_a_question_id(self) -> None:
+        rec = _parse_one(NUMERIC_STATED_TAIL_LINE)
+        assert rec["qid"] == 77
+        assert rec["qid_kind"] == "question_id"
+
+    @pytest.mark.parametrize(
+        ("stated", "status", "resulting_mass", "expected_stated"),
+        [
+            ("none", "missing", "0.001000", None),
+            ("invalid-token", "invalid", "0.001000", "invalid-token"),
+            ("0.9", "clamped", "0.800000", 0.9),
+        ],
+    )
+    def test_upper_tail_outcomes(
+        self, stated: str, status: str, resulting_mass: str, expected_stated: float | str | None
+    ) -> None:
+        line = NUMERIC_STATED_TAIL_LINE.replace("bound=lower", "bound=upper").replace(
+            "stated=0.15 status=used dropped_percentiles=2 resulting_mass=0.150000",
+            f"stated={stated} status={status} dropped_percentiles=0 resulting_mass={resulting_mass}",
+        )
+        rec = _parse_one(line)
+        assert rec["bound"] == "upper"
+        assert rec["stated"] == expected_stated
+        assert rec["status"] == status
+        assert rec["dropped_percentiles"] == 0
+        assert rec["resulting_mass"] == pytest.approx(float(resulting_mass))
+
+    def test_each_open_side_is_harvested(self) -> None:
+        harvested = parse_log_text(
+            "\n".join([NUMERIC_STATED_TAIL_LINE, NUMERIC_STATED_TAIL_LINE.replace("bound=lower", "bound=upper")]),
+            **_META,
+        )
+        assert [rec["bound"] for rec in harvested["numeric_stated_tail"]] == ["lower", "upper"]
+        assert [rec["seq"] for rec in harvested["numeric_stated_tail"]] == [0, 1]
 
 
 class TestNumericAggregateGridMismatch:

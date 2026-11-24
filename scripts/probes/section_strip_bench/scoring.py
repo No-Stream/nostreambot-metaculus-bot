@@ -140,8 +140,12 @@ async def _score_numeric_reply(
         prompt_notes=build_parse_notes(question),
         question_id=question.id_of_question,
         model_name=model_name,
+        open_lower_bound=question.open_lower_bound,
+        open_upper_bound=question.open_upper_bound,
     )
-    prediction = build_guarded_numeric_distribution(extracted.value, question, model_name=model_name)
+    prediction = build_guarded_numeric_distribution(
+        extracted.value, question, model_name=model_name, tail_probabilities=extracted.tail_probabilities
+    )
     cdf = [float(point.percentile) for point in prediction.get_cdf()]
     declared = [[float(p.percentile), float(p.value)] for p in prediction.declared_percentiles]
     return Scored(score_numeric(cdf, question, resolution), declared, extracted.rung, extracted.block_present)

@@ -6,6 +6,7 @@ and planning docs named here may have moved out of the public repo. Neither is a
 
 ## Open, operator decides
 
+- **Metaculus open-tail floor deferred, 2026-11-24:** at the next residual round, use only forecasts after 2026-11-24, bucket by era and roster, and ship a 2% floor only after at least 150 open sides with under 2% published mass (at least half after the fall roster change) have a one-sided 90% escape-rate lower bound above the 1.44% break-even; receipt: `scratch/trace_evals_2026-11-23/tail_mass_investigation.md`, recommendation 1.
 - **Gemini 4 Carbon in the Google slot: decided against, 2026-11-19; Argon stays.** Reverted to Argon on
   2026-11-14 after Carbon at effort `high` hit the 600s soft deadline on 3 of 3 questions (`docs/roster_history.md`).
   On 2026-11-19 the operator approved three timed calls on the prod binary prompt for Q46548, all through the personal

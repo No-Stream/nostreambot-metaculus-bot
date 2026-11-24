@@ -39,6 +39,18 @@ _UNPLACED_MASS_TOLERANCE: float = 1e-9
 _MIN_STEP_TOLERANCE: float = 1e-10
 
 
+@dataclass
+class StatedTailDiagnostics:
+    """Repairs made while applying explicit probabilities at the question bounds."""
+
+    lower_dropped_percentiles: tuple[float, ...] = ()
+    upper_dropped_percentiles: tuple[float, ...] = ()
+    lower_clamped: bool = False
+    upper_clamped: bool = False
+    lower_applied_probability: float | None = None
+    upper_applied_probability: float | None = None
+
+
 @dataclass(frozen=True)
 class _MaxStepRepair:
     """A max-step repair's output plus what the cap displaced (the marker's fields)."""
@@ -368,14 +380,53 @@ def _percentile_arrays_with_boundaries(
     open_upper_bound: bool,
     lower_bound: float,
     upper_bound: float,
+    tail_probabilities: tuple[float, float] | None = None,
+    p_below_lower_bound: float | None = None,
+    p_above_upper_bound: float | None = None,
+    tail_diagnostics: StatedTailDiagnostics | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Split the declaration into (percentile fractions, values), adding closed-bound anchors."""
+    """Add boundary anchors, preferring stated tail probabilities over conflicting percentiles."""
     percentile_labels, declared_values = zip(*sorted(percentile_values.items()), strict=False)
     percentiles = np.array(percentile_labels) / 100.0  # Convert to [0,1] range
     values = np.array(declared_values)
 
     if np.any(np.diff(values) <= 0):
         raise ValueError("Percentile values must be strictly increasing after de-duplication")
+
+    if tail_probabilities is not None:
+        lower_probability, upper_probability = tail_probabilities
+        lower_conflicts = np.zeros(len(values), dtype=bool)
+        upper_conflicts = np.zeros(len(values), dtype=bool)
+        if p_below_lower_bound is not None:
+            lower_conflicts = (
+                ((values > lower_bound) & (percentiles < lower_probability))
+                | ((values < lower_bound) & (percentiles > lower_probability))
+                | (values == lower_bound)
+            )
+            if tail_diagnostics is not None:
+                tail_diagnostics.lower_dropped_percentiles = tuple(
+                    label for label, dropped in zip(percentile_labels, lower_conflicts, strict=True) if dropped
+                )
+        if p_above_upper_bound is not None:
+            upper_level = 1.0 - upper_probability
+            upper_conflicts = (
+                ((values < upper_bound) & (percentiles > upper_level))
+                | ((values > upper_bound) & (percentiles < upper_level))
+                | (values == upper_bound)
+            )
+            if tail_diagnostics is not None:
+                tail_diagnostics.upper_dropped_percentiles = tuple(
+                    label for label, dropped in zip(percentile_labels, upper_conflicts, strict=True) if dropped
+                )
+        keep = ~(lower_conflicts | upper_conflicts)
+        # The omitted side retains its legacy endpoint unless grid feasibility
+        # required reducing its tail mass to accommodate the stated side.
+        values = np.concatenate(([lower_bound, upper_bound], values[keep]))
+        percentiles = np.concatenate(([lower_probability, 1.0 - upper_probability], percentiles[keep]))
+        order = np.argsort(values, kind="stable")
+        values, percentiles = values[order], percentiles[order]
+        unique = np.concatenate(([True], np.diff(values) > 0.0))
+        return percentiles[unique], values[unique]
 
     if not open_lower_bound and lower_bound < values[0] - 1e-9:
         percentiles = np.insert(percentiles, 0, 0.0)
@@ -386,6 +437,53 @@ def _percentile_arrays_with_boundaries(
         values = np.append(values, upper_bound)
 
     return percentiles, values
+
+
+def _feasible_tail_probabilities(
+    cdf: np.ndarray,
+    *,
+    p_below_lower_bound: float | None,
+    p_above_upper_bound: float | None,
+    open_lower_bound: bool,
+    open_upper_bound: bool,
+    min_step: float,
+    diagnostics: StatedTailDiagnostics,
+) -> tuple[float, float]:
+    """Keep stated tails within the endpoint and grid-mass constraints."""
+    for probability in (p_below_lower_bound, p_above_upper_bound):
+        if probability is not None and (not np.isfinite(probability) or not 0.0 <= probability <= 1.0):
+            raise ValueError(f"Invalid stated tail probability: {probability}")
+
+    lower_floor = OPEN_TAIL_MIN_MASS if open_lower_bound else 0.0
+    upper_floor = OPEN_TAIL_MIN_MASS if open_upper_bound else 0.0
+    tail_capacity = 1.0 - (len(cdf) - 1) * min_step
+    if tail_capacity < lower_floor + upper_floor:
+        raise ValueError("Grid minimum steps leave no room for the required open-tail probabilities")
+
+    lower = float(cdf[0]) if p_below_lower_bound is None else p_below_lower_bound
+    upper = 1.0 - float(cdf[-1]) if p_above_upper_bound is None else p_above_upper_bound
+    lower = float(np.clip(lower, lower_floor, tail_capacity - upper_floor)) if open_lower_bound else 0.0
+    upper = float(np.clip(upper, upper_floor, tail_capacity - lower_floor)) if open_upper_bound else 0.0
+
+    if lower + upper > tail_capacity:
+        if p_below_lower_bound is None:
+            lower = tail_capacity - upper
+        elif p_above_upper_bound is None:
+            upper = tail_capacity - lower
+        else:
+            mass_above_floors = lower + upper - lower_floor - upper_floor
+            available_above_floors = tail_capacity - lower_floor - upper_floor
+            scale = available_above_floors / mass_above_floors
+            lower = lower_floor + (lower - lower_floor) * scale
+            upper = upper_floor + (upper - upper_floor) * scale
+
+    if p_below_lower_bound is not None:
+        diagnostics.lower_applied_probability = lower
+        diagnostics.lower_clamped = lower != p_below_lower_bound
+    if p_above_upper_bound is not None:
+        diagnostics.upper_applied_probability = upper
+        diagnostics.upper_clamped = upper != p_above_upper_bound
+    return lower, upper
 
 
 def _evaluate_pchip_on_grid(
@@ -607,6 +705,9 @@ def generate_pchip_cdf(
     question_id: int | str | None = None,
     question_url: str | None = None,
     model_name: str = "",
+    p_below_lower_bound: float | None = None,
+    p_above_upper_bound: float | None = None,
+    tail_diagnostics: StatedTailDiagnostics | None = None,
 ) -> tuple[list[float], bool]:
     """
     Generate a robust continuous CDF using PCHIP interpolation with strict constraint enforcement.
@@ -626,6 +727,11 @@ def generate_pchip_cdf(
     ``model_name`` only labels the ``CDF_MAXSTEP_CLIP`` marker (which forecaster's
     declaration the cap had to clip); callers that build an ensemble CDF pass a label for
     the aggregation stage instead.
+
+    Explicit tail probabilities add bound anchors and remove contradictory percentile
+    declarations. They are clamped only as required by open-tail floors and the grid's
+    minimum total interior mass; ``tail_diagnostics`` records the applied values and
+    dropped labels. Omitted probabilities keep the legacy construction.
 
     Raises:
         ValueError: If input validation fails
@@ -652,6 +758,39 @@ def generate_pchip_cdf(
         zero_point=zero_point,
         num_points=num_points,
     )
+
+    if p_below_lower_bound is not None or p_above_upper_bound is not None:
+        diagnostics = tail_diagnostics if tail_diagnostics is not None else StatedTailDiagnostics()
+        lower_probability, upper_probability = _feasible_tail_probabilities(
+            cdf_y,
+            p_below_lower_bound=p_below_lower_bound,
+            p_above_upper_bound=p_above_upper_bound,
+            open_lower_bound=open_lower_bound,
+            open_upper_bound=open_upper_bound,
+            min_step=min_step,
+            diagnostics=diagnostics,
+        )
+        percentiles, values = _percentile_arrays_with_boundaries(
+            cleaned,
+            open_lower_bound=open_lower_bound,
+            open_upper_bound=open_upper_bound,
+            lower_bound=lower_bound,
+            upper_bound=upper_bound,
+            tail_probabilities=(lower_probability, upper_probability),
+            p_below_lower_bound=p_below_lower_bound,
+            p_above_upper_bound=p_above_upper_bound,
+            tail_diagnostics=diagnostics,
+        )
+        cdf_y = _evaluate_pchip_on_grid(
+            percentiles,
+            values,
+            open_lower_bound=open_lower_bound,
+            open_upper_bound=open_upper_bound,
+            lower_bound=lower_bound,
+            upper_bound=upper_bound,
+            zero_point=zero_point,
+            num_points=num_points,
+        )
 
     # Repair ladder, cheapest first: uniform pre-mix, min-step sweep, saturated-tail
     # ramp, then boundary + max-step enforcement.

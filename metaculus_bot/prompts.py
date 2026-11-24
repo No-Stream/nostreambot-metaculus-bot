@@ -994,9 +994,9 @@ class _ContinuousAxis:
 class _Elicitation:
     """The text that differs between the two ways the template asks for a distribution.
 
-    ``_percentile_elicitation`` is today's text verbatim: the Metaculus render of the numeric and
-    date prompts is pinned byte for byte (``tests/prompts/test_pmf_prompt.py``), so a percentile
-    fill changes only with the operator's say. ``_pmf_elicitation`` is the per-bin wording, which
+    ``_percentile_elicitation`` supplies the percentile wording, with its shared lines pinned in
+    ``tests/prompts/test_pmf_prompt.py`` and its open-bound fields in ``test_open_bound_probabilities.py``.
+    ``_pmf_elicitation`` is the per-bin wording, which
     never names a percentile. The slots whose text also depends on the question kind (the axis
     block, the schema, the final-check lead, the Mantic out-of-range sentence) are built inside
     each elicitation from the view's type.
@@ -1091,19 +1091,26 @@ _UNKNOWN_UNKNOWNS_BULLET = (
     "{tail_instruction} to cover unknown unknowns you can actually name — but not padded out of generic caution."
 )
 
+# Explicit tails replace inferred probabilities. Receipt: docs/prompts.md "_OPEN_BOUND_PROBABILITY_RULE".
+_OPEN_BOUND_PROBABILITY_RULE = (
+    "Open-bound probabilities: reason explicitly about how likely the outcome is to fall beyond each specified "
+    "bound: {fields}. These values set the published probability beyond those bounds. These fields are REQUIRED "
+    "for open sides; omit fields for closed sides. "
+    "Report your honest decimal probabilities in [0, 1), with their sum below 1, and keep them consistent with "
+    "`declared_percentiles`."
+)
+
 
 # Mantic only, and only for an open bound. Receipt: docs/prompts.md "_MANTIC_OUT_OF_RANGE_RATE_DATE".
 _MANTIC_OUT_OF_RANGE_RATE_DATE = (
     "On this platform about half of past date questions with an open upper bound resolved AFTER it (101 of 188 "
     'in Series 1), so treat "the event has not happened by the upper bound" as a live central case and not a '
-    "tail: if that is your view, your P50 belongs above the upper bound. Keeping every percentile inside the "
-    "displayed range asserts a 1% chance of an out-of-range outcome."
+    "tail: if that is your view, your P50 belongs above the upper bound."
 )
 _MANTIC_OUT_OF_RANGE_RATE_QUANTITY = (
     "On this platform about one in five past quantitative questions resolved outside the displayed range (one "
-    "in four of the discrete ones, one in eight of the continuous ones), so keeping every percentile inside the "
-    "range asserts a 1% chance of an out-of-range outcome; if your view puts more than that beyond an open bound, "
-    "place percentiles beyond it."
+    "in four of the discrete ones, one in eight of the continuous ones), so give each open side the "
+    "out-of-range probability your reasoning supports."
 )
 # The same measured facts for a per-bin question; the action differs (a reserved key, not a percentile), so not a slot fill.
 _MANTIC_OUT_OF_RANGE_RATE_DATE_PMF = (
@@ -1295,8 +1302,34 @@ class _PercentileBlocks(NamedTuple):
     final_check_lead: str
 
 
+def _open_bound_probability_blocks(question: NumericQuestion) -> tuple[str, str]:
+    nominal_upper, nominal_lower = nominal_bounds(question)
+    if isinstance(question, EpochDateQuestion):
+        lower_bound = format_epoch(nominal_lower, question.date_granularity)
+        upper_bound = format_epoch(nominal_upper, question.date_granularity)
+    else:
+        lower_bound = str(nominal_lower)
+        upper_bound = str(nominal_upper)
+    fields = {
+        field: meaning
+        for field, meaning, is_open in (
+            ("prob_below_lower_bound", f"P(outcome < {lower_bound})", question.open_lower_bound),
+            ("prob_above_upper_bound", f"P(outcome > {upper_bound})", question.open_upper_bound),
+        )
+        if is_open
+    }
+    if not fields:
+        return "", ""
+    example_fields = "".join(f',\n          "{field}": 0.005' for field in fields)
+    rule = _OPEN_BOUND_PROBABILITY_RULE.format(
+        fields="; ".join(f"`{field}` = {meaning}" for field, meaning in fields.items())
+    )
+    return example_fields, f"\n        - {rule}"
+
+
 def _numeric_percentile_blocks(question: NumericQuestion) -> _PercentileBlocks:
     nom_upper, nom_lower = nominal_bounds(question)
+    open_bound_fields, open_bound_rule = _open_bound_probability_blocks(question)
     axis_block = "\n".join(
         [
             "        ── Units & Bounds ──",
@@ -1325,7 +1358,7 @@ def _numeric_percentile_blocks(question: NumericQuestion) -> _PercentileBlocks:
             "0.01": 0.5, "0.025": 1.2, "0.05": 10.1, "0.1": 12.3, "0.2": 23.4, "0.4": 34.5, "0.5": 45.6,
             "0.6": 56.7, "0.8": 67.8, "0.9": 78.9, "0.95": 89.0, "0.975": 123.4, "0.99": 140.2
           }},
-          "outcome_type": "continuous"
+          "outcome_type": "continuous"{open_bound_fields}
         }}
         ```
 
@@ -1334,7 +1367,7 @@ def _numeric_percentile_blocks(question: NumericQuestion) -> _PercentileBlocks:
           equal); floating-point numbers in the base unit; no scientific notation.
         - `outcome_type`: set to "discrete_integer" if the quantity is inherently a
           whole number (counts, rankings, number of events, number of countries),
-          "continuous" otherwise (temperatures, percentages, dollar amounts, ratios)."""
+          "continuous" otherwise (temperatures, percentages, dollar amounts, ratios).{open_bound_rule}"""
     return _PercentileBlocks(
         axis_block=axis_block,
         schema_block=schema_block,
@@ -1351,6 +1384,7 @@ def _numeric_percentile_blocks(question: NumericQuestion) -> _PercentileBlocks:
 
 def _date_percentile_blocks(question: EpochDateQuestion) -> _PercentileBlocks:
     nom_upper, nom_lower = nominal_bounds(question)
+    open_bound_fields, open_bound_rule = _open_bound_probability_blocks(question)
     granularity = question.date_granularity
     lower_date = format_epoch(nom_lower, granularity)
     upper_date = format_epoch(nom_upper, granularity)
@@ -1386,7 +1420,7 @@ def _date_percentile_blocks(question: EpochDateQuestion) -> _PercentileBlocks:
           "question_type": "date",
           "declared_percentiles": {{
             {example_rows}
-          }}
+          }}{open_bound_fields}
         }}
         ```
 
@@ -1395,7 +1429,7 @@ def _date_percentile_blocks(question: EpochDateQuestion) -> _PercentileBlocks:
           allowed, but not for every percentile, so the 0.01 and 0.99 values must differ. To put
           all of your mass on one day, give increasing UTC timestamps inside that day (e.g.
           {one_day}T02:00:00Z through {one_day}T22:00:00Z). A decrease is rejected, as are a bare
-          year, a month, or a number; write the full calendar date (or UTC timestamp)."""
+          year, a month, or a number; write the full calendar date (or UTC timestamp).{open_bound_rule}"""
     return _PercentileBlocks(
         axis_block=axis_block,
         schema_block=schema_block,
@@ -1408,7 +1442,7 @@ def _date_percentile_blocks(question: EpochDateQuestion) -> _PercentileBlocks:
 
 
 def _percentile_elicitation(view: NumericQuestion) -> _Elicitation:
-    """Thirteen percentiles on the axis: today's text, verbatim."""
+    """Percentiles on the axis, plus explicit probabilities for its open sides."""
     blocks = _date_percentile_blocks(view) if isinstance(view, EpochDateQuestion) else _numeric_percentile_blocks(view)
     return _Elicitation(
         spread_noun="the width of your prediction interval",

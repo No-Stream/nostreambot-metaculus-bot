@@ -54,6 +54,7 @@ from metaculus_bot.numeric.config import EXPECTED_PERCENTILE_COUNT, STANDARD_PER
 from metaculus_bot.numeric.date_axis import EpochDateQuestion, as_epoch_question, format_epoch, numeric_qtype
 from metaculus_bot.numeric.diagnostics import log_final_prediction, log_open_bound_piling_diagnostics
 from metaculus_bot.numeric.discrete_snap import OutcomeTypeResult
+from metaculus_bot.numeric.pchip_cdf import StatedTailDiagnostics
 from metaculus_bot.numeric.pipeline import build_numeric_distribution, sanitize_percentiles
 from metaculus_bot.numeric.pmf_cdf import build_pmf_distribution, published_pmf
 from metaculus_bot.numeric.pmf_grid import PmfGrid, pmf_grid
@@ -63,7 +64,14 @@ from metaculus_bot.numeric.validation import detect_unit_mismatch
 from metaculus_bot.prompts import binary_prompt, date_prompt, multiple_choice_prompt, numeric_prompt, pmf_prompt
 from metaculus_bot.structured_output_schema import NumericStructured, parse_structured_block
 from metaculus_bot.structured_parse import parse_structured
-from metaculus_bot.value_extraction import extract_binary, extract_date, extract_mc, extract_numeric, extract_pmf
+from metaculus_bot.value_extraction import (
+    TailProbabilities,
+    extract_binary,
+    extract_date,
+    extract_mc,
+    extract_numeric,
+    extract_pmf,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -365,8 +373,12 @@ async def run_numeric_forecast(
         prompt_notes=parse_notes,
         question_id=qid,
         model_name=forecaster_llm.model,
+        open_lower_bound=question.open_lower_bound,
+        open_upper_bound=question.open_upper_bound,
     )
-    prediction = build_guarded_numeric_distribution(outcome.value, question, model_name=forecaster_llm.model)
+    prediction = build_guarded_numeric_distribution(
+        outcome.value, question, model_name=forecaster_llm.model, tail_probabilities=outcome.tail_probabilities
+    )
     return ReasonedPrediction(prediction_value=prediction, reasoning=reasoning), discrete_vote
 
 
@@ -410,8 +422,12 @@ async def run_date_forecast(
         prompt_notes=build_date_parse_notes(epoch_question),
         question_id=question.id_of_question,
         model_name=forecaster_llm.model,
+        open_lower_bound=epoch_question.open_lower_bound,
+        open_upper_bound=epoch_question.open_upper_bound,
     )
-    prediction = build_guarded_numeric_distribution(outcome.value, epoch_question, model_name=forecaster_llm.model)
+    prediction = build_guarded_numeric_distribution(
+        outcome.value, epoch_question, model_name=forecaster_llm.model, tail_probabilities=outcome.tail_probabilities
+    )
     return ReasonedPrediction(prediction_value=prediction, reasoning=reasoning)
 
 
@@ -521,7 +537,11 @@ async def _resolve_discrete_vote(
 
 
 def build_guarded_numeric_distribution(
-    declared_percentiles: list[Percentile], question: NumericQuestion, *, model_name: str
+    declared_percentiles: list[Percentile],
+    question: NumericQuestion,
+    *,
+    model_name: str,
+    tail_probabilities: TailProbabilities | None = None,
 ) -> NumericDistribution:
     """Sanitize -> build the PCHIP CDF -> withhold on a unit mismatch.
 
@@ -535,7 +555,61 @@ def build_guarded_numeric_distribution(
     order-of-magnitude error can never reach publish.
     """
     sanitized_percentiles, zero_point = sanitize_percentiles(declared_percentiles, question, model_name=model_name)
-    prediction = build_numeric_distribution(sanitized_percentiles, question, zero_point, model_name=model_name)
+    diagnostics = StatedTailDiagnostics()
+    below = tail_probabilities.below if tail_probabilities is not None else None
+    above = tail_probabilities.above if tail_probabilities is not None else None
+    prediction = build_numeric_distribution(
+        sanitized_percentiles,
+        question,
+        zero_point,
+        model_name=model_name,
+        p_below_lower_bound=(
+            below.value if below is not None and below.status == "valid" and question.open_lower_bound else None
+        ),
+        p_above_upper_bound=(
+            above.value if above is not None and above.status == "valid" and question.open_upper_bound else None
+        ),
+        tail_diagnostics=diagnostics,
+    )
+    masses = out_of_range_mass(prediction)
+    for is_open, bound, tail, clamped, dropped, mass in (
+        (
+            question.open_lower_bound,
+            "lower",
+            below,
+            diagnostics.lower_clamped,
+            diagnostics.lower_dropped_percentiles,
+            masses[0],
+        ),
+        (
+            question.open_upper_bound,
+            "upper",
+            above,
+            diagnostics.upper_clamped,
+            diagnostics.upper_dropped_percentiles,
+            masses[1],
+        ),
+    ):
+        if not is_open:
+            continue
+        status = "missing" if tail is None else tail.status
+        if status == "valid":
+            status = "clamped" if clamped else "used"
+        stated = (
+            "none"
+            if tail is None or tail.status == "missing"
+            else ("invalid-token" if tail.value is None else str(tail.value))
+        )
+        logger.info(
+            "NUMERIC_STATED_TAIL: question=%s model=%s bound=%s stated=%s status=%s dropped_percentiles=%d resulting_mass=%.6f",
+            question.id_of_question,
+            model_name,
+            bound,
+            stated,
+            status,
+            len(dropped),
+            mass,
+        )
     logger.info(format_percentile_roundtrip_marker(prediction, declared_percentiles, question, model=model_name))
     logger.info(
         format_member_forecast_marker(

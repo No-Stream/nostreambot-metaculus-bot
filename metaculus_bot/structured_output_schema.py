@@ -80,6 +80,19 @@ def _reject_boolean_probability(value: object) -> object:
 _Probability = Annotated[float, BeforeValidator(_reject_boolean_probability)]
 
 
+def _read_declared_tail_probability(value: object) -> float | None:
+    """Keep numeric declarations for audit; unusable optional tails cannot discard percentiles."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        return float(value)
+    except OverflowError:
+        return None
+
+
+_DeclaredTailProbability = Annotated[float | None, BeforeValidator(_read_declared_tail_probability)]
+
+
 # ---------------------------------------------------------------------------
 # Shared submodels
 # ---------------------------------------------------------------------------
@@ -358,6 +371,8 @@ class NumericStructured(BaseModel):
     question_type: Literal["numeric"]
     prior: StatedPrior | None = None
     declared_percentiles: dict[float, float] | None = None
+    prob_below_lower_bound: _DeclaredTailProbability = None
+    prob_above_upper_bound: _DeclaredTailProbability = None
     outcome_type: NumericOutcomeType | None = None
     scenarios: list[ScenarioBranch] = Field(default_factory=list)
 
@@ -422,6 +437,8 @@ class DateStructured(BaseModel):
 
     question_type: Literal["date"]
     declared_percentiles: dict[float, datetime]
+    prob_below_lower_bound: _DeclaredTailProbability = None
+    prob_above_upper_bound: _DeclaredTailProbability = None
 
     @field_validator("declared_percentiles", mode="before")
     @classmethod

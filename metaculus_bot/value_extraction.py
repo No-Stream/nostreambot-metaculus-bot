@@ -28,7 +28,7 @@ import math
 import re
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import pairwise
 from typing import Literal
 
@@ -131,6 +131,45 @@ def _repair_infidelity_reason(candidate: str, repaired: str) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class TailProbability:
+    """One optional tail declaration, keeping an invalid stated number for telemetry."""
+
+    value: float | None = None
+    status: Literal["valid", "missing", "invalid"] = "missing"
+
+
+@dataclass(frozen=True)
+class TailProbabilities:
+    """Per-side declarations from the same accepted block as the percentiles."""
+
+    below: TailProbability = field(default_factory=TailProbability)
+    above: TailProbability = field(default_factory=TailProbability)
+
+
+def _tail_probability(value: float | None, *, declared: bool) -> TailProbability:
+    if not declared:
+        return TailProbability()
+    valid = value is not None and math.isfinite(value) and 0.0 <= value < 1.0
+    return TailProbability(value=value, status="valid" if valid else "invalid")
+
+
+def _tail_probabilities_from_block(
+    block: StructuredBlock, *, open_lower_bound: bool, open_upper_bound: bool
+) -> TailProbabilities:
+    if not isinstance(block, (NumericStructured, DateStructured)):
+        raise TypeError(f"expected a percentile block, got {type(block).__name__}")
+    below = _tail_probability(block.prob_below_lower_bound, declared="prob_below_lower_bound" in block.model_fields_set)
+    above = _tail_probability(block.prob_above_upper_bound, declared="prob_above_upper_bound" in block.model_fields_set)
+    if open_lower_bound and open_upper_bound and below.status == "valid" and above.status == "valid":
+        assert below.value is not None
+        assert above.value is not None
+        if below.value + above.value >= 1.0:
+            below = TailProbability(value=below.value, status="invalid")
+            above = TailProbability(value=above.value, status="invalid")
+    return TailProbabilities(below=below, above=above)
+
+
 @dataclass
 class ExtractionOutcome[T]:
     """A validated forecast value plus which ladder rung produced it."""
@@ -138,6 +177,7 @@ class ExtractionOutcome[T]:
     value: T
     rung: Rung
     block_present: bool
+    tail_probabilities: TailProbabilities | None = None
 
 
 @dataclass
@@ -146,6 +186,7 @@ class _DeterministicHit[T]:
 
     value: T
     rung: Rung
+    tail_probabilities: TailProbabilities | None = None
 
 
 def _log_extraction(
@@ -176,6 +217,7 @@ def _try_candidate[T](
     label: str,
     failures: list[str],
     question_id: int | None,
+    extract_tail_probabilities: Callable[[StructuredBlock], TailProbabilities] | None,
 ) -> _DeterministicHit[T] | None:
     """Strict-parse then ``json_repair`` ONE candidate body; None when neither yields a value.
 
@@ -196,7 +238,11 @@ def _try_candidate[T](
         strict = parse_structured_payload(candidate, qtype, log_failures=False)
         if strict is not None:
             try:
-                return _DeterministicHit(value=validate(convert_block(strict)), rung="block")
+                return _DeterministicHit(
+                    value=validate(convert_block(strict)),
+                    rung="block",
+                    tail_probabilities=extract_tail_probabilities(strict) if extract_tail_probabilities else None,
+                )
             except (ValueError, TypeError) as exc:
                 # Why: json_repair cannot alter valid JSON; see docs/value_extraction.md "The ladder: design notes".
                 failures.append(f"block: {label}: {exc}")
@@ -230,7 +276,11 @@ def _try_candidate[T](
             len(candidate),
             len(repaired),
         )
-    return _DeterministicHit(value=value, rung="repair")
+    return _DeterministicHit(
+        value=value,
+        rung="repair",
+        tail_probabilities=extract_tail_probabilities(payload_model) if extract_tail_probabilities else None,
+    )
 
 
 async def _run_ladder[T](
@@ -242,6 +292,7 @@ async def _run_ladder[T](
     llm_extract: Callable[[], Awaitable[T]],
     question_id: int | None,
     model_name: str,
+    extract_tail_probabilities: Callable[[StructuredBlock], TailProbabilities] | None = None,
 ) -> ExtractionOutcome[T]:
     """Shared rung driver. ``convert_block``/``validate`` raise ValueError to fail a rung."""
     failures: list[str] = []
@@ -273,6 +324,7 @@ async def _run_ladder[T](
             label=f"candidate {rank + 1}/{len(walk)}",
             failures=failures,
             question_id=question_id,
+            extract_tail_probabilities=extract_tail_probabilities,
         )
         if hit is None:
             continue
@@ -288,7 +340,9 @@ async def _run_ladder[T](
                 " | ".join(failures),
             )
         _log_extraction(qtype, hit.rung, block_present=block_present, question_id=question_id, model_name=model_name)
-        return ExtractionOutcome(value=hit.value, rung=hit.rung, block_present=block_present)
+        return ExtractionOutcome(
+            value=hit.value, rung=hit.rung, block_present=block_present, tail_probabilities=hit.tail_probabilities
+        )
 
     # --- Rung 3: LLM parser salvage ---------------------------------------
     try:
@@ -306,7 +360,12 @@ async def _run_ladder[T](
             " | ".join(failures),
         )
         _log_extraction(qtype, "llm", block_present=block_present, question_id=question_id, model_name=model_name)
-        return ExtractionOutcome(value=value, rung="llm", block_present=block_present)
+        return ExtractionOutcome(
+            value=value,
+            rung="llm",
+            block_present=block_present,
+            tail_probabilities=TailProbabilities() if extract_tail_probabilities else None,
+        )
 
     # --- Rung 4: typed failure --------------------------------------------
     raise ValueExtractionError(
@@ -421,6 +480,8 @@ async def extract_numeric(
     prompt_notes: str = "",
     question_id: int | None = None,
     model_name: str = "",
+    open_lower_bound: bool = True,
+    open_upper_bound: bool = True,
 ) -> ExtractionOutcome[list[Percentile]]:
     """Extract the ``STANDARD_PERCENTILES`` set (caller feeds it to ``sanitize_percentiles``).
 
@@ -439,6 +500,9 @@ async def extract_numeric(
         llm_extract=_llm,
         question_id=question_id,
         model_name=model_name,
+        extract_tail_probabilities=lambda block: _tail_probabilities_from_block(
+            block, open_lower_bound=open_lower_bound, open_upper_bound=open_upper_bound
+        ),
     )
 
 
@@ -472,6 +536,8 @@ async def extract_date(
     prompt_notes: str = "",
     question_id: int | None = None,
     model_name: str = "",
+    open_lower_bound: bool = True,
+    open_upper_bound: bool = True,
 ) -> ExtractionOutcome[list[Percentile]]:
     """Extract a date question's ``STANDARD_PERCENTILES`` set as EPOCH SECONDS (UTC floats).
 
@@ -498,6 +564,9 @@ async def extract_date(
         llm_extract=_llm,
         question_id=question_id,
         model_name=model_name,
+        extract_tail_probabilities=lambda block: _tail_probabilities_from_block(
+            block, open_lower_bound=open_lower_bound, open_upper_bound=open_upper_bound
+        ),
     )
 
 

@@ -276,6 +276,16 @@ MARKER_SPECS: list[MarkerSpec] = [
         qid_kind=QID_KIND_QUESTION_ID,  # numeric/pipeline.py emits question.id_of_question
     ),
     MarkerSpec(
+        "numeric_stated_tail",
+        # Why: separates declared tails from constructed mass. Receipt: docs/telemetry_markers.md "NUMERIC_STATED_TAIL".
+        re.compile(
+            r"NUMERIC_STATED_TAIL:\s*question=(?P<question>\S+)\s+model=(?P<model>.+?)"
+            r"\s+bound=(?P<bound>\S+)\s+stated=(?P<stated>\S+)\s+status=(?P<status>\S+)"
+            r"\s+dropped_percentiles=(?P<dropped_percentiles>\S+)\s+resulting_mass=(?P<resulting_mass>\S+)"
+        ),
+        qid_kind=QID_KIND_QUESTION_ID,  # forecaster_runners.py emits question.id_of_question
+    ),
+    MarkerSpec(
         "numeric_aggregate_grid_mismatch",
         # Why: any record means a length drifted. Receipt: docs/telemetry_markers.md "NUMERIC_AGGREGATE_GRID_MISMATCH".
         re.compile(
