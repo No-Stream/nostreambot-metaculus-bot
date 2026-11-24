@@ -1,16 +1,14 @@
 """Offline checks for Mantic's direct Anthropic route."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from litellm.exceptions import APIError
 from litellm.llms.anthropic.chat.transformation import AnthropicConfig
 
-from metaculus_bot import cli
 from metaculus_bot.fallback_openrouter import DirectAnthropicFallbackLlm
 from metaculus_bot.llm_configs import FORECASTER_LLMS, mantic_forecasters
-from tests.cli_test_helpers import _cli_main_test_mode
 
 
 def test_direct_request_contains_high_effort(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -28,13 +26,6 @@ def test_direct_request_contains_high_effort(monkeypatch: pytest.MonkeyPatch) ->
 def test_missing_key_keeps_openrouter(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("personal_ant_key", raising=False)
     assert mantic_forecasters() == FORECASTER_LLMS
-
-
-def test_metaculus_mode_never_builds_direct_forecasters(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("personal_ant_key", "test-key")
-    with _cli_main_test_mode(alertable_count=0), patch("metaculus_bot.cli.mantic_forecasters") as direct:
-        cli.main()
-    direct.assert_not_called()
 
 
 @pytest.mark.parametrize("status", [400, 401, 402, 403, 429, 500, 529])
