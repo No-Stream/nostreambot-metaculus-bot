@@ -249,7 +249,7 @@ class TestProductionKwargShapesReachAcompletion:
         effort knob and verbosity wins, which silently ran the Opus slot at high, not xhigh.
         """
         assert FORECASTER_LLMS, "roster must be non-empty for this pin to mean anything"
-        saw_xhigh_reasoning = False
+        saw_high_reasoning = False
 
         for llm in FORECASTER_LLMS:
             declared = llm.litellm_kwargs
@@ -264,14 +264,14 @@ class TestProductionKwargShapesReachAcompletion:
             assert sent["max_tokens"] == declared["max_tokens"]
             if "reasoning" in declared:
                 assert sent["reasoning"] == declared["reasoning"]
-                if declared["reasoning"] == _PROD_REASONING_XHIGH:
-                    saw_xhigh_reasoning = True
+                if declared["reasoning"] == {"effort": "high"}:
+                    saw_high_reasoning = True
             if "extra_body" in declared:
                 assert sent["extra_body"] == declared["extra_body"]
             sends_verbosity = "verbosity" in sent or "verbosity" in (sent.get("extra_body") or {})
             assert not ("reasoning" in sent and sends_verbosity), f"{llm.model} sends verbosity beside reasoning"
 
-        assert saw_xhigh_reasoning, "expected a forecaster with reasoning={'effort':'xhigh'} in the roster"
+        assert saw_high_reasoning, "expected a forecaster with reasoning={'effort':'high'} in the roster"
 
 
 def test_no_llm_config_sends_verbosity_beside_reasoning() -> None:

@@ -64,14 +64,14 @@ _FORECASTER_CONFIG = {**REASONING_MODEL_CONFIG, "allowed_tries": 1}
 def forecaster_role(model: str) -> str:
     """``forecaster:<vendor>`` for an ``openrouter/<vendor>/<model>`` roster slug.
 
-    The CREDIT_ROLE_SPEND spend line every roster slot books under. The roster is
-    latest-per-vendor, one slot each, so the VENDOR is the stable identity of a slot
-    across model rotations — a per-model role would start a new time series at every swap
-    and defeat the era-over-era cost comparison this exists for.
+    The Fable slot has its own role. Other slots retain their vendor roles so their
+    cost histories remain comparable across model rotations.
     """
     parts = model.split("/")
     if len(parts) < 3 or parts[0] != "openrouter":
         raise ValueError(f"forecaster_role expects an openrouter/<vendor>/<model> slug, got {model!r}")
+    if parts[1] == "anthropic" and "fable" in parts[2]:
+        return "forecaster:anthropic_fable"
     return f"forecaster:{parts[1]}"
 
 
@@ -123,7 +123,7 @@ FORECASTER_LLMS: list[GeneralLlm] = [
     # 2026-09-29: gpt-6-sol -> gpt-6.1-sol; effort and deadline settings unchanged.
     _forecaster_slot(
         "openrouter/openai/gpt-6.1-sol",
-        reasoning={"effort": "xhigh"},
+        reasoning={"effort": "high"},
     ),
     # Anthropic slot. 2026-07-15: enabled:True (provider-default adaptive thinking)
     # -> explicit effort=xhigh. Anthropic also exposes "max" one tier above xhigh —
@@ -137,9 +137,13 @@ FORECASTER_LLMS: list[GeneralLlm] = [
     # since at least 2026-02. Never send verbosity alongside reasoning.effort on an Anthropic slot.
     _forecaster_slot(
         "openrouter/anthropic/claude-opus-5.5",
-        reasoning={"effort": "xhigh"},
+        reasoning={"effort": "high"},
     ),
-    # Google slot. No explicit reasoning-effort kwarg; use provider defaults (medium).
+    _forecaster_slot(
+        "openrouter/anthropic/claude-fable-5.2",
+        reasoning={"effort": "high"},
+    ),
+    # Google slot, explicitly set to high effort.
     # 2026-11-14: back to gemini-4-argon after gemini-4-carbon at effort=high (PR #83, 2026-11-13) hit
     # FORECASTER_SOFT_DEADLINE on all 3 questions it saw (Q46727, Q46728, Mantic 879), while Argon had
     # finished 5 of 5 the day before in 69-96s. See docs/roster_history.md 2026-11-14.
@@ -147,7 +151,9 @@ FORECASTER_LLMS: list[GeneralLlm] = [
     # integration returned quota 0 for Argon in the 2026-10-13 live probe.
     # Some Argon routes advertise a much larger limit, but 65,536 is the
     # verified ceiling shared by all routes; preserve provider fallback options.
-    _forecaster_slot("openrouter/google/gemini-4-argon", max_tokens=GEMINI_OUTPUT_TOKEN_LIMIT),
+    _forecaster_slot(
+        "openrouter/google/gemini-4-argon", reasoning={"effort": "high"}, max_tokens=GEMINI_OUTPUT_TOKEN_LIMIT
+    ),
 ]
 
 
