@@ -61,7 +61,12 @@ async def run_probe(llm: GeneralLlm, prompt: str) -> dict[str, Any]:
 
     started = time.monotonic()
     with patch.object(ft_general_llm, "acompletion", capture):
-        answer = await llm.invoke(prompt)
+        try:
+            answer = await llm.invoke(prompt)
+        except (AssertionError, RuntimeError):
+            if not responses or responses[-1].choices[0].message.content not in (None, ""):
+                raise
+            answer = ""
     elapsed = time.monotonic() - started
     response = responses[-1]
     usage = response.usage

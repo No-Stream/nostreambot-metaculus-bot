@@ -1,14 +1,16 @@
 """Offline checks for Mantic's direct Anthropic route."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from litellm.exceptions import APIError
 from litellm.llms.anthropic.chat.transformation import AnthropicConfig
 
+from metaculus_bot import cli
 from metaculus_bot.fallback_openrouter import DirectAnthropicFallbackLlm
 from metaculus_bot.llm_configs import FORECASTER_LLMS, mantic_forecasters
+from tests.cli_test_helpers import _cli_main_test_mode
 
 
 def test_direct_request_contains_high_effort(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -28,6 +30,13 @@ def test_missing_key_keeps_openrouter(monkeypatch: pytest.MonkeyPatch) -> None:
     assert mantic_forecasters() == FORECASTER_LLMS
 
 
+def test_metaculus_mode_never_builds_direct_forecasters(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("personal_ant_key", "test-key")
+    with _cli_main_test_mode(alertable_count=0), patch("metaculus_bot.cli.mantic_forecasters") as direct:
+        cli.main()
+    direct.assert_not_called()
+
+
 @pytest.mark.parametrize("status", [400, 401, 402, 403, 429, 500, 529])
 async def test_direct_failure_falls_back(monkeypatch: pytest.MonkeyPatch, status: int) -> None:
     monkeypatch.setenv("personal_ant_key", "test-key")
@@ -36,19 +45,21 @@ async def test_direct_failure_falls_back(monkeypatch: pytest.MonkeyPatch, status
     llm._direct_llm.invoke = AsyncMock(
         side_effect=APIError(status_code=status, message=message, llm_provider="anthropic", model="test")
     )
-    llm._openrouter_llm.invoke = AsyncMock(return_value="ok")
+    openrouter_invoke = AsyncMock(return_value="ok")
+    monkeypatch.setattr(llm._openrouter_llm, "invoke", openrouter_invoke)
     assert await llm.invoke("prompt") == "ok"
-    llm._openrouter_llm.invoke.assert_awaited_once_with("prompt", None)
+    openrouter_invoke.assert_awaited_once_with("prompt", None)
 
 
 async def test_timeout_does_not_fall_back(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("personal_ant_key", "test-key")
     llm = next(llm for llm in mantic_forecasters() if isinstance(llm, DirectAnthropicFallbackLlm))
     llm._direct_llm.invoke = AsyncMock(side_effect=TimeoutError())
-    llm._openrouter_llm.invoke = AsyncMock()
+    openrouter_invoke = AsyncMock()
+    monkeypatch.setattr(llm._openrouter_llm, "invoke", openrouter_invoke)
     with pytest.raises(TimeoutError):
         await llm.invoke("prompt")
-    llm._openrouter_llm.invoke.assert_not_awaited()
+    openrouter_invoke.assert_not_awaited()
 
 
 async def test_slow_server_failure_does_not_fall_back(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -59,7 +70,8 @@ async def test_slow_server_failure_does_not_fall_back(monkeypatch: pytest.Monkey
     llm._direct_llm.invoke = AsyncMock(
         side_effect=APIError(status_code=529, message="overloaded", llm_provider="anthropic", model="test")
     )
-    llm._openrouter_llm.invoke = AsyncMock()
+    openrouter_invoke = AsyncMock()
+    monkeypatch.setattr(llm._openrouter_llm, "invoke", openrouter_invoke)
     with pytest.raises(APIError):
         await llm.invoke("prompt")
-    llm._openrouter_llm.invoke.assert_not_awaited()
+    openrouter_invoke.assert_not_awaited()

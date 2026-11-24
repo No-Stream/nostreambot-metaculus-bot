@@ -56,7 +56,7 @@ async def test_probe_invokes_one_forecaster_and_reports_usage(monkeypatch: pytes
         calls.append(kwargs)
         response = ModelResponse()
         response.choices = [Choices(message=Message(role="assistant", content="answer"), finish_reason="stop", index=0)]
-        response.usage = Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+        response.usage = Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15)  # type: ignore[attr-defined]
         return response
 
     monkeypatch.setattr(ft_general_llm, "acompletion", fake_completion)
@@ -65,4 +65,17 @@ async def test_probe_invokes_one_forecaster_and_reports_usage(monkeypatch: pytes
     assert calls[0]["messages"][0]["content"] == "production prompt"
     assert result["output_tokens"] == 5
     assert result["finish_reason"] == "stop"
+    assert result["structured_forecast_parsed"] is False
+
+
+async def test_probe_reports_empty_refusal(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_completion(**kwargs: object) -> ModelResponse:
+        response = ModelResponse()
+        response.choices = [Choices(message=Message(role="assistant", content=None), finish_reason="refusal", index=0)]
+        response.usage = Usage(prompt_tokens=10, completion_tokens=0, total_tokens=10)  # type: ignore[attr-defined]
+        return response
+
+    monkeypatch.setattr(ft_general_llm, "acompletion", fake_completion)
+    result = await run_probe(FORECASTER_LLMS[0], "production prompt")
+    assert result["finish_reason"] == "content_filter"  # LiteLLM normalizes refusal to content_filter.
     assert result["structured_forecast_parsed"] is False
