@@ -1,9 +1,10 @@
 ---
 id: TASK-34
 title: claude-fable-5 for the Anthropic forecaster slots
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-24 18:24'
+updated_date: '2026-11-24 22:48'
 labels:
   - parked
   - roster
