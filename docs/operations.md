@@ -3011,3 +3011,11 @@ richer red signal.
 The startup half of `cli.py`, the logging levels, the two hardening patches, the identity
 preflight and the research-archive labels, is in `docs/architecture.md` "CLI startup
 wiring".
+# Mantic Anthropic forecasters
+
+Mantic uses `personal_ant_key` for direct Anthropic forecaster calls when set. Fast
+authentication, credit, rate-limit and server failures retry the same prompt on the
+personal OpenRouter key within the existing forecaster deadline. When the direct key is
+unset, the forecasters use OpenRouter. `ANTHROPIC_FORECAST_ROUTE` records each direct
+success or fallback; direct spend is tagged `direct` in the role ledger.
+

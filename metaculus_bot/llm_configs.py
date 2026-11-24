@@ -4,12 +4,14 @@ Keeping these objects in a single module avoids merge-conflicts and makes it
 possible to tweak/benchmark models without touching application code.
 """
 
+import logging
+import os
 from typing import Any
 
 from forecasting_tools import GeneralLlm
 
 from metaculus_bot.constants import GEMINI_OUTPUT_TOKEN_LIMIT, OPENROUTER_OUTPUT_TOKEN_LIMIT
-from metaculus_bot.fallback_openrouter import build_llm_with_openrouter_fallback
+from metaculus_bot.fallback_openrouter import DirectAnthropicFallbackLlm, build_llm_with_openrouter_fallback
 
 __all__ = [
     "DISAGREEMENT_ANALYZER_LLM",
@@ -167,6 +169,26 @@ def _forecaster_display_name(llm: GeneralLlm) -> str:
 
 
 FORECASTER_MODEL_NAMES: list[str] = [_forecaster_display_name(llm) for llm in FORECASTER_LLMS]
+
+_MANTIC_ANTHROPIC_MODELS = {
+    "openrouter/anthropic/claude-opus-5.5": "anthropic/claude-opus-5-5",
+    "openrouter/anthropic/claude-fable-5.2": "anthropic/claude-fable-5-2",
+}
+
+
+def mantic_forecasters() -> list[GeneralLlm]:
+    """Use the personal Anthropic key for Mantic when it is configured."""
+    api_key = os.getenv("personal_ant_key")  # noqa: SIM112  # Existing Actions secret name.
+    if not api_key:
+        logging.getLogger(__name__).info("Personal Anthropic key unset; Mantic forecasters use OpenRouter")
+        return FORECASTER_LLMS
+    return [
+        DirectAnthropicFallbackLlm(llm, _MANTIC_ANTHROPIC_MODELS[llm.model], api_key, forecaster_role(llm.model))
+        if llm.model in _MANTIC_ANTHROPIC_MODELS
+        else llm
+        for llm in FORECASTER_LLMS
+    ]
+
 
 # Summarizer: compresses raw AskNews article markdown into an analyst briefing
 # (AskNews-only; all other providers already emit LLM prose). sol → terra

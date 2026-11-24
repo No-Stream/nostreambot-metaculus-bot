@@ -111,6 +111,10 @@ def _parse_line_ts(line: str) -> str | None:
 # Why: question= leads on gap-fill v2/ghost, trails elsewhere. Receipt: docs/telemetry_markers.md "Parsing notes".
 MARKER_SPECS: list[MarkerSpec] = [
     MarkerSpec(
+        "anthropic_forecast_route",
+        re.compile(r"ANTHROPIC_FORECAST_ROUTE:\s*model=(?P<model>\S+)\s+route=(?P<route>\S+)\s+reason=(?P<reason>\S+)"),
+    ),
+    MarkerSpec(
         "extraction_rung",
         re.compile(
             r"EXTRACTION_RUNG:\s*question=(?P<question>\S+)\s+model=(?P<model>.+?)"

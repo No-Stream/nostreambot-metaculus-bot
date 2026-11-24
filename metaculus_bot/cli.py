@@ -52,6 +52,7 @@ from metaculus_bot.llm_configs import (
     RESEARCHER_LLM,
     STACKER_LLM,
     SUMMARIZER_LLM,
+    mantic_forecasters,
 )
 from metaculus_bot.mantic import (
     build_mantic_client,
@@ -406,7 +407,7 @@ def _run_cli() -> None:
 
     # dict[str, Any] because "forecasters" holds a list the parent's invariant annotation cannot express.
     llms: dict[str, Any] = {
-        "forecasters": FORECASTER_LLMS,
+        "forecasters": mantic_forecasters() if run_mode == "mantic" else FORECASTER_LLMS,
         "stacker": STACKER_LLM,
         "analyzer": DISAGREEMENT_ANALYZER_LLM,
         "summarizer": SUMMARIZER_LLM,

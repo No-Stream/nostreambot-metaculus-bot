@@ -1634,3 +1634,9 @@ fields.
 Members without original percentile anchors, such as PMF members, emit no marker. Member
 telemetry precedes the unit guard, as `MEMBER_FORECAST` does; join survivors when restricting an
 audit to members used in the aggregate.
+# ANTHROPIC_FORECAST_ROUTE
+
+Mantic Anthropic forecaster calls record the model, `route` (`direct` or `fallback`),
+and `reason` (`success`, `credit`, `auth`, `rate_limit`, or `server`). The fallback
+uses the personal OpenRouter key and shares the forecaster deadline.
+
