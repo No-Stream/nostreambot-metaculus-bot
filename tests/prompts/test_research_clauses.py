@@ -555,7 +555,7 @@ class TestPredictionMarketFraming:
         knowledge to fill research gaps — distinct from any market-specific clause."""
         lowered = " ".join(prompt.lower().split())
         assert "use your own expertise and knowledge, not only the provided research" in lowered
-        assert "you are not required to ground every claim in the research" in lowered
+        assert "label the basis of every number or fact your forecast leans on" in lowered
 
     def test_binary_prompt_frames_markets_as_strong_evidence(self) -> None:
         self._assert_strong_evidence_framing(binary_prompt(_binary_q(), research=_RESEARCH_WITH_MARKETS))

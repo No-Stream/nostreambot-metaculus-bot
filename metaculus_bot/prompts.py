@@ -709,9 +709,7 @@ def binary_prompt(question: BinaryQuestion, research: str) -> str:
         f"""
             You are a senior forecaster preparing a public report for expert peers.
             {_scoring_sentence(question)}
-            Use your own expertise and knowledge, not only the provided research — if you know a relevant fact from
-            your training that the research reports don't cover, you may rely on it. You are not required to ground
-            every claim in the research; just be clear when you're drawing on your own knowledge versus the research.
+            {_OWN_KNOWLEDGE_RULE}
             {
             _strong_evidence_market_clause(
                 research=research,
@@ -852,9 +850,7 @@ def multiple_choice_prompt(question: MultipleChoiceQuestion, research: str) -> s
         f"""
         You are a **senior forecaster** preparing a rigorous public report for expert peers.
         {_scoring_sentence(question)} Avoid over-confidence.
-        Use your own expertise and knowledge, not only the provided research — if you know a relevant fact from your
-        training that the research reports don't cover, you may rely on it. You are not required to ground every claim
-        in the research; just be clear when you're drawing on your own knowledge versus the research.
+        {_OWN_KNOWLEDGE_RULE}
         {
             _strong_evidence_market_clause(
                 research=research,
@@ -1089,6 +1085,16 @@ _WIDTH_BULLET = (
 )
 _UNKNOWN_UNKNOWNS_BULLET = (
     "{tail_instruction} to cover unknown unknowns you can actually name — but not padded out of generic caution."
+)
+
+# Recall is allowed but must be labelled. Receipt: docs/prompts.md "_OWN_KNOWLEDGE_RULE".
+_OWN_KNOWLEDGE_RULE = (
+    "Use your own expertise and knowledge, not only the provided research: if you know a relevant fact from your "
+    "training that the research reports don't cover, you may rely on it, and recalling a base rate or making your "
+    "own estimate is welcome. Label the basis of every number or fact your forecast leans on: (research) when it "
+    "is in the reports above, (recalled, unverified) when it comes from your training, and (my estimate) when you "
+    "inferred or judged it, with a word on how confident you are. Never present a recalled or estimated figure as "
+    "an established fact."
 )
 
 # Explicit tails replace inferred probabilities. Receipt: docs/prompts.md "_OPEN_BOUND_PROBABILITY_RULE".
@@ -1596,9 +1602,7 @@ def _continuous_prompt(
         {_scoring_sentence(question)} Accuracy **and** calibration
         (especially {elicitation.spread_noun}) are critical; how to set {elicitation.spread_short}
         is step (8) of the template below.
-        Use your own expertise and knowledge, not only the provided research — if you know a relevant fact from your
-        training that the research reports don't cover, you may rely on it. You are not required to ground every claim
-        in the research; just be clear when you're drawing on your own knowledge versus the research.{ts_anchor_clause}
+        {_OWN_KNOWLEDGE_RULE}{ts_anchor_clause}
         {
             _strong_evidence_market_clause(
                 research=research,

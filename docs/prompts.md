@@ -510,6 +510,10 @@ which the member is deliberately not told about. The last sentence states what
 extraction rung fails on a missing key, which is why the rule asks for every key by name. The full
 entry is under "Per-bin elicitation" above.
 
+### `_OWN_KNOWLEDGE_RULE`
+
+One constant, shared by the binary, multiple-choice and continuous (numeric, date, per-bin) base prompts, replacing three copies of the older "use your own expertise ... just be clear when you're drawing on your own knowledge" paragraph. Models may recall facts and base rates from training and make their own estimates; the rule asks them to label the basis of every load-bearing number: `(research)`, `(recalled, unverified)` or `(my estimate)`, with a word on confidence, and never to state a recalled or estimated figure as established fact. Measured failure (2026-11-24 hallucination audit, 24 fall questions, `scratch/trace_evals_2026-11-23/hallucination_audit.md` in the artifacts repo): material unlabelled figures appeared in 6 of 12 gemini-4-argon and 5 of 12 claude-opus-5.5 rationales against 0 of 22 for gpt-6.1-sol, which already labels its own estimates; the invented items were almost all priors stated as historical regularities (for example "Florida charter amendments typically pass at 60-80%"). The operator's framing is Open Philanthropy's "reasoning transparency": judgement is welcome, but its support should be visible. Presence pins: `tests/prompts/test_own_knowledge_rule.py` and `TestPredictionMarketFraming` in `tests/prompts/test_research_clauses.py`; the stacking prompts must not carry it.
+
 ### `_OPEN_BOUND_PROBABILITY_RULE`
 
 Base numeric and date percentile prompts require `prob_below_lower_bound` for an open lower side
