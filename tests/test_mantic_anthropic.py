@@ -14,7 +14,7 @@ from metaculus_bot.llm_configs import FORECASTER_LLMS, mantic_forecasters
 
 
 def test_direct_request_carries_the_slot_effort(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("personal_ant_key", "test-key")
+    monkeypatch.setenv("PERSONAL_ANT_KEY", "test-key")
     direct = [llm for llm in mantic_forecasters() if isinstance(llm, DirectAnthropicFallbackLlm)]
     assert len(direct) == 2
     config = AnthropicConfig()
@@ -28,13 +28,13 @@ def test_direct_request_carries_the_slot_effort(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_missing_key_keeps_openrouter(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("personal_ant_key", raising=False)
+    monkeypatch.delenv("PERSONAL_ANT_KEY", raising=False)
     assert mantic_forecasters() == FORECASTER_LLMS
 
 
 @pytest.mark.parametrize("status", [400, 401, 402, 403, 429, 500, 529])
 async def test_direct_failure_falls_back(monkeypatch: pytest.MonkeyPatch, status: int) -> None:
-    monkeypatch.setenv("personal_ant_key", "test-key")
+    monkeypatch.setenv("PERSONAL_ANT_KEY", "test-key")
     llm = next(llm for llm in mantic_forecasters() if isinstance(llm, DirectAnthropicFallbackLlm))
     message = "credit balance is too low" if status == 400 else "failure"
     llm._direct_llm.invoke = AsyncMock(
@@ -48,7 +48,7 @@ async def test_direct_failure_falls_back(monkeypatch: pytest.MonkeyPatch, status
 
 @pytest.mark.parametrize("failure", [TimeoutError(), httpx.ReadTimeout("timeout"), asyncio.CancelledError()])
 async def test_timeout_does_not_fall_back(monkeypatch: pytest.MonkeyPatch, failure: BaseException) -> None:
-    monkeypatch.setenv("personal_ant_key", "test-key")
+    monkeypatch.setenv("PERSONAL_ANT_KEY", "test-key")
     llm = next(llm for llm in mantic_forecasters() if isinstance(llm, DirectAnthropicFallbackLlm))
     llm._direct_llm.invoke = AsyncMock(side_effect=failure)
     openrouter_invoke = AsyncMock()
@@ -59,7 +59,7 @@ async def test_timeout_does_not_fall_back(monkeypatch: pytest.MonkeyPatch, failu
 
 
 async def test_slow_server_failure_does_not_fall_back(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("personal_ant_key", "test-key")
+    monkeypatch.setenv("PERSONAL_ANT_KEY", "test-key")
     llm = next(llm for llm in mantic_forecasters() if isinstance(llm, DirectAnthropicFallbackLlm))
     times = iter([0.0, 31.0])
     monkeypatch.setattr("metaculus_bot.fallback_openrouter.time", SimpleNamespace(monotonic=lambda: next(times)))
@@ -77,7 +77,7 @@ async def test_slow_server_failure_does_not_fall_back(monkeypatch: pytest.Monkey
 async def test_unclassified_direct_failure_falls_back(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, failure: Exception
 ) -> None:
-    monkeypatch.setenv("personal_ant_key", "test-key")
+    monkeypatch.setenv("PERSONAL_ANT_KEY", "test-key")
     llm = next(llm for llm in mantic_forecasters() if isinstance(llm, DirectAnthropicFallbackLlm))
     llm._direct_llm.invoke = AsyncMock(side_effect=failure)
     monkeypatch.setattr(llm._openrouter_llm, "invoke", AsyncMock(return_value="ok"))

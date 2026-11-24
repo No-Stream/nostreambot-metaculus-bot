@@ -138,7 +138,7 @@ jobs:
           # and the master switch below makes cli fail shut if a future edit re-enables
           # donated routing without also re-adding the secret.
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          personal_ant_key: ${{ secrets.personal_ant_key }}
+          PERSONAL_ANT_KEY: ${{ secrets.PERSONAL_ANT_KEY }}
           DONATED_OPENROUTER_KEY_ENABLED: 'false'
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ASKNEWS_CLIENT_ID: ${{ secrets.ASKNEWS_CLIENT_ID }}
