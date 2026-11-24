@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import numpy as np
@@ -115,3 +116,29 @@ def test_a_continuous_density_is_mass_over_bin_width():
     assert centres.tolist() == [0.5, 2.0]
     assert density.tolist() == [0.5, 0.25]
     assert float(np.sum(density * np.diff(grid))) == pytest.approx(1.0)
+
+
+def test_numeric_chart_uses_member_stated_open_upper_bound_probability(bundle_forecasts, bundle_members):
+    forecast = (
+        bundle_forecasts[bundle_forecasts["forecast_key"] == forecast_key(PLATFORM_METACULUS, NUMERIC_BACKFILLED)]
+        .iloc[0]
+        .copy()
+    )
+    member = (
+        bundle_members[bundle_members["forecast_key"] == forecast_key(PLATFORM_METACULUS, NUMERIC_BACKFILLED)]
+        .iloc[0]
+        .copy()
+    )
+    member["model"] = "example-model"
+    member["percentiles_json"] = json.dumps([[0.025, 80e9], [0.5, 81e9], [0.975, 90e9]])
+    forecast["open_upper_bound"] = True
+    comment_text = (
+        "## R1: Forecaster 1 Reasoning\nModel: example-model\n\n"
+        '```json\n{"question_type":"numeric","prob_above_upper_bound":0.10, '
+        '"declared_percentiles":{"0.1":80e9,"0.5":81e9,"0.9":90e9}}\n```'
+    )
+
+    figure = forecast_figure(forecast, pd.DataFrame([member]), cumulative=True, comment_text=comment_text)
+    member_trace = _trace(figure, "example-model")
+
+    assert 1.0 - member_trace.y[-1] == pytest.approx(0.10, abs=1e-8)

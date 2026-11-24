@@ -56,7 +56,7 @@ BINARY_MARGIN_TOP = 100
 LABEL_ROW_SHIFT_PX = 22
 
 
-def replay_record(forecast: pd.Series) -> dict:
+def replay_record(forecast: pd.Series, comment_text: str | None = None) -> dict:
     """The fields of a performance record the replay helpers read, rebuilt from a forecast row."""
     resolution = forecast["resolution_value"]
     if pd.isna(resolution):
@@ -69,6 +69,7 @@ def replay_record(forecast: pd.Series) -> dict:
         "open_upper_bound": bool(forecast["open_upper_bound"]),
         "resolution_parsed": None if pd.isna(resolution) else resolution,
         "options": forecast["options"],
+        "comment_text": comment_text or "",
     }
 
 
@@ -256,8 +257,15 @@ def _mark_resolution(figure: go.Figure, forecast: pd.Series, grid: np.ndarray) -
     _label_line(figure, edge, text, RESOLUTION_COLOR, row=0, xanchor=xanchor)
 
 
-def numeric_figure(forecast: pd.Series, members: pd.DataFrame, cumulative: bool, dark_theme: bool) -> go.Figure:
-    record = replay_record(forecast)
+def numeric_figure(
+    forecast: pd.Series,
+    members: pd.DataFrame,
+    cumulative: bool,
+    dark_theme: bool,
+    *,
+    comment_text: str | None = None,
+) -> go.Figure:
+    record = replay_record(forecast, comment_text)
     grid_and_cdf = cdf_and_grid(record)
     figure = go.Figure()
     if grid_and_cdf is None:
@@ -320,7 +328,12 @@ def numeric_figure(forecast: pd.Series, members: pd.DataFrame, cumulative: bool,
 
 
 def forecast_figure(
-    forecast: pd.Series, members: pd.DataFrame, *, cumulative: bool = False, dark_theme: bool = True
+    forecast: pd.Series,
+    members: pd.DataFrame,
+    *,
+    cumulative: bool = False,
+    dark_theme: bool = True,
+    comment_text: str | None = None,
 ) -> go.Figure:
     question_type = forecast["question_type"]
     if question_type == "binary":
@@ -328,5 +341,5 @@ def forecast_figure(
     if question_type == "multiple_choice":
         return multiple_choice_figure(forecast, members)
     if question_type in NUMERIC_TYPES:
-        return numeric_figure(forecast, members, cumulative, dark_theme)
+        return numeric_figure(forecast, members, cumulative, dark_theme, comment_text=comment_text)
     raise ValueError(f"no figure for question type {question_type!r}")

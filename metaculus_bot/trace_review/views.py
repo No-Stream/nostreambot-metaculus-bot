@@ -606,7 +606,7 @@ def _comment_tab(comment_text: str | None, key: str) -> None:
             st.markdown(readable_markdown(comment_text))
 
 
-def _forecast_chart(forecast: pd.Series, members: pd.DataFrame, key: str) -> None:
+def _forecast_chart(forecast: pd.Series, members: pd.DataFrame, key: str, comment_text: str | None) -> None:
     cumulative = False
     if forecast["question_type"] in NUMERIC_TYPES:
         density = CHART_DENSITY_DISCRETE if forecast["question_type"] == "discrete" else CHART_DENSITY
@@ -614,7 +614,8 @@ def _forecast_chart(forecast: pd.Series, members: pd.DataFrame, key: str) -> Non
         cumulative = shown == CHART_CUMULATIVE
     dark_theme = st.context.theme.type != "light"
     st.plotly_chart(
-        forecast_figure(forecast, members, cumulative=cumulative, dark_theme=dark_theme), key=f"figure_{key}"
+        forecast_figure(forecast, members, cumulative=cumulative, dark_theme=dark_theme, comment_text=comment_text),
+        key=f"figure_{key}",
     )
 
 
@@ -637,10 +638,10 @@ def render_detail_page() -> None:
     members = loaded.members[loaded.members["forecast_key"] == key]
     _navigation(result.rows["forecast_key"].tolist(), key)
     _header(forecast)
-    _forecast_chart(forecast, members, key)
     texts = bundle.load_texts_for(loaded.directory, loaded.built_at, key)
     telemetry = bundle.load_telemetry_for(loaded.directory, loaded.built_at, key)
     comment_text = str(texts["comment_text"]) if texts["comment_text"] else None
+    _forecast_chart(forecast, members, key, comment_text)
     rationales, research, gap_fill, telemetry_tab, comment = st.tabs(
         ["Rationales", "Research", "Gap-fill v2", "Telemetry", "Comment"]
     )

@@ -15,7 +15,7 @@ import pytest
 from metaculus_bot.constants import MANTIC_TOKEN_ENV, PLATFORM_MANTIC, PLATFORM_METACULUS
 from metaculus_bot.performance_analysis import collector
 from metaculus_bot.performance_analysis.member_replay import replay_solo_score
-from metaculus_bot.trace_review.__main__ import parse_args
+from metaculus_bot.trace_review.__main__ import main, parse_args
 from metaculus_bot.trace_review.build import build_index
 from metaculus_bot.trace_review.config import (
     BUNDLE_TABLE_FILES,
@@ -60,6 +60,16 @@ from tests.trace_review.workspace_fixtures import (
     install_doubles,
     metaculus_fresh_posts,
 )
+
+
+def test_cli_skips_index_rebuild_when_scratch_has_no_round_dataset(tmp_path, monkeypatch, caplog):
+    scratch_dir = tmp_path / "scratch"
+    scratch_dir.mkdir()
+
+    main(["--scratch-dir", str(scratch_dir), "--skip-fresh-pull", "--output-dir", str(tmp_path / "bundle")])
+
+    assert "no residual round dataset under scratch/; skipping trace-review index rebuild" in caplog.text
+
 
 TABLE_SCHEMAS = {
     FORECASTS_FILE: FORECAST_COLUMNS,
