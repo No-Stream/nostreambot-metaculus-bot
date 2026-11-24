@@ -82,12 +82,13 @@ _Probability = Annotated[float, BeforeValidator(_reject_boolean_probability)]
 
 def _read_declared_tail_probability(value: object) -> float | None:
     """Keep numeric declarations for audit; unusable optional tails cannot discard percentiles."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
         return None
     try:
-        return float(value)
-    except OverflowError:
+        probability = float(value)
+    except (ValueError, OverflowError):
         return None
+    return probability if math.isfinite(probability) else None
 
 
 _DeclaredTailProbability = Annotated[float | None, BeforeValidator(_read_declared_tail_probability)]

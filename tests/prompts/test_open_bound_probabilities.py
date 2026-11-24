@@ -7,6 +7,7 @@ import pytest
 
 from metaculus_bot import prompts
 from metaculus_bot.constants import METACULUS_OUT_OF_RANGE_TAIL_FLOOR
+from metaculus_bot.numeric.utils import bound_messages
 from tests.prompt_builders import (
     MANTIC_PAGE_URL,
     METACULUS_PAGE_URL,
@@ -51,6 +52,7 @@ class TestOpenBoundProbabilityFields:
         ):
             assert (field in schema) is is_open
             assert (field in prompt) is is_open
+            assert "ONLY way you express probability mass" not in prompt
             if is_open:
                 assert 0 <= schema[field] < 1
                 outside_probabilities.append(schema[field])
@@ -139,3 +141,15 @@ def test_tails_come_first_and_percentiles_must_agree_with_them(kind: Literal["nu
         "if `prob_below_lower_bound` is 0.04, your 0.01 and 0.025 percentiles must be values below the lower bound"
         in flattened
     )
+
+
+def test_bound_guidance_matches_schema() -> None:
+    question = _numeric_q()
+    question.open_lower_bound = question.open_upper_bound = True
+    upper, lower = bound_messages(question, stated_tail_fields=True)
+    assert "prob_above_upper_bound" in upper
+    assert "prob_below_lower_bound" in lower
+    assert "ONLY way you express probability mass" not in upper + lower
+    upper, lower = bound_messages(question)
+    assert "prob_above_upper_bound" not in upper + lower
+    assert "prob_below_lower_bound" not in upper + lower

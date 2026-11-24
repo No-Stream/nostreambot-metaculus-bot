@@ -248,7 +248,7 @@ def _displayed_bounds(question: NumericQuestion) -> tuple[str | float, str | flo
     return upper_bound_value, lower_bound_value
 
 
-def bound_messages(question: NumericQuestion) -> tuple[str, str]:
+def bound_messages(question: NumericQuestion, *, stated_tail_fields: bool = False) -> tuple[str, str]:
     """Return upper & lower bound helper messages for numeric prompts.
 
     For discrete questions, if nominal bounds are missing, derive them using half-step logic.
@@ -284,6 +284,17 @@ def bound_messages(question: NumericQuestion) -> tuple[str, str]:
         )
     else:
         lower_bound_message = f"The lower bound is closed: the outcome can not be lower than {lower_bound_number}."
+    if stated_tail_fields:
+        if question.open_upper_bound:
+            upper_bound_message = (
+                f"The upper bound is open, so the outcome can resolve above {upper_bound_number}; "
+                "make your percentiles consistent with `prob_above_upper_bound`."
+            )
+        if question.open_lower_bound:
+            lower_bound_message = (
+                f"The lower bound is open, so the outcome can resolve below {lower_bound_number}; "
+                "make your percentiles consistent with `prob_below_lower_bound`."
+            )
     return upper_bound_message, lower_bound_message
 
 

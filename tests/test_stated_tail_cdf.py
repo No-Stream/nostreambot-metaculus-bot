@@ -9,9 +9,11 @@ import pytest
 from forecasting_tools.data_models.numeric_report import Percentile
 from forecasting_tools.data_models.questions import NumericQuestion
 
+import metaculus_bot.numeric.pipeline as pipeline
 from metaculus_bot.numeric.config import OPEN_TAIL_MIN_MASS, STANDARD_PERCENTILES, grid_step_constraints
 from metaculus_bot.numeric.pchip_cdf import StatedTailDiagnostics, generate_pchip_cdf
 from metaculus_bot.numeric.pipeline import build_numeric_distribution
+from metaculus_bot.structured_output_schema import _read_declared_tail_probability
 from tests.pipeline_test_helpers import assert_server_accepts_cdf
 
 
@@ -239,3 +241,40 @@ def test_stated_tail_build_failure_keeps_member_without_stated_tails(monkeypatch
     )
     assert diagnostics.stated_tails_discarded
     assert len(prediction.cdf) == question.cdf_size
+
+
+@pytest.mark.parametrize("cdf_size", [9, 201])
+def test_failed_stated_build_discards_diagnostics_and_retries(cdf_size: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    question = NumericQuestion(
+        question_text="How many?",
+        lower_bound=0.0,
+        upper_bound=100.0,
+        open_lower_bound=True,
+        open_upper_bound=True,
+        cdf_size=cdf_size,
+    )
+    percentiles = [Percentile(percentile=level, value=100.0 * level) for level in STANDARD_PERCENTILES]
+    diagnostics = StatedTailDiagnostics()
+    target = "_build_discrete_distribution" if cdf_size != 201 else "generate_pchip_cdf_with_smoothing"
+    original = getattr(pipeline, target)
+
+    def fail_stated(*args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("p_above_upper_bound") is not None:
+            diagnostics.upper_dropped_percentiles = (99.0,)
+            diagnostics.upper_applied_probability = 0.1
+            raise RuntimeError("stated build failed")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline, target, fail_stated)
+    prediction = build_numeric_distribution(
+        percentiles, question, None, p_above_upper_bound=0.1, tail_diagnostics=diagnostics
+    )
+    assert len(prediction.get_cdf()) == cdf_size
+    assert diagnostics.stated_tails_discarded
+    assert diagnostics.upper_dropped_percentiles == ()
+    assert diagnostics.upper_applied_probability is None
+
+
+@pytest.mark.parametrize(("value", "expected"), [(" 0.08 ", 0.08), (True, None), ("nan", None), ("bad", None)])
+def test_declared_tail_accepts_finite_numeric_strings(value: object, expected: float | None) -> None:
+    assert _read_declared_tail_probability(value) == expected

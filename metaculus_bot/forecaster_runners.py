@@ -350,7 +350,7 @@ async def run_numeric_forecast(
         )
         return per_bin, None
 
-    upper_bound_message, lower_bound_message = bound_messages(question)
+    upper_bound_message, lower_bound_message = bound_messages(question, stated_tail_fields=True)
     prompt = numeric_prompt(question, research, lower_bound_message, upper_bound_message)
     forecaster_input = _forecaster_input(prompt, chart_b64)
     # Broad, 30s-gated retry — see run_binary_forecast for the rationale.
@@ -405,7 +405,7 @@ async def run_date_forecast(
             epoch_question, research, forecaster_llm, parser_llm, chart_b64=chart_b64, label="forecaster_date"
         )
 
-    upper_bound_message, lower_bound_message = bound_messages(epoch_question)
+    upper_bound_message, lower_bound_message = bound_messages(epoch_question, stated_tail_fields=True)
     prompt = date_prompt(epoch_question, research, lower_bound_message, upper_bound_message)
     forecaster_input = _forecaster_input(prompt, chart_b64)
     # Broad, 30s-gated retry — see run_binary_forecast for the rationale.

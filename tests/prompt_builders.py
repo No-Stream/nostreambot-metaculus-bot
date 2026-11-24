@@ -190,7 +190,7 @@ def _pmf_prompt_text(question: DiscreteQuestion | DateQuestion | None = None, re
 def _date_prompt_text(question: DateQuestion | None = None, research: str = "r") -> str:
     """``date_prompt`` on ``question`` (default post 651) with its real, date-rendered bound messages."""
     q = question if question is not None else _date_q()
-    upper_message, lower_message = bound_messages(as_epoch_question(q))
+    upper_message, lower_message = bound_messages(as_epoch_question(q), stated_tail_fields=True)
     return date_prompt(q, research=research, lower_bound_message=lower_message, upper_bound_message=upper_message)
 
 

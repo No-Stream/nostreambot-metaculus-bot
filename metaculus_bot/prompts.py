@@ -1309,6 +1309,9 @@ class _PercentileBlocks(NamedTuple):
     final_check_lead: str
 
 
+_EXAMPLE_TAIL_PROBABILITY: float = 0.03
+
+
 def _open_bound_probability_blocks(question: NumericQuestion) -> tuple[str, str]:
     nominal_upper, nominal_lower = nominal_bounds(question)
     if isinstance(question, EpochDateQuestion):
@@ -1330,7 +1333,7 @@ def _open_bound_probability_blocks(question: NumericQuestion) -> tuple[str, str]
     # The example block must parse as JSON, so it needs a number, and the number anchors the models'
     # stated tails. 0.03 sits near our historical escape rate per open side (1.3% to 3.7%); the first
     # value here, 0.005, was below the structural 1% this field exists to replace.
-    example_fields = "".join(f'\n          "{field}": 0.03,' for field in fields)
+    example_fields = "".join(f'\n          "{field}": {_EXAMPLE_TAIL_PROBABILITY},' for field in fields)
     lowest_two, highest_two = STANDARD_PERCENTILES[:2], STANDARD_PERCENTILES[-2:]
     consistency_examples = {
         "prob_below_lower_bound": f"if `prob_below_lower_bound` is 0.04, your {lowest_two[0]:g} and {lowest_two[1]:g} "

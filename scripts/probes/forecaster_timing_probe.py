@@ -51,7 +51,7 @@ def load_probe_input(qid: int, archive_dir: Path = ARCHIVE_DIR) -> tuple[Numeric
     question = MetaculusApi.get_question_by_url(record["page_url"])
     if not isinstance(question, NumericQuestion) or question.id_of_question != qid:
         raise ValueError("Archive question must identify a numeric Metaculus question")
-    upper, lower = bound_messages(question)
+    upper, lower = bound_messages(question, stated_tail_fields=True)
     return question, numeric_prompt(question, record["research_text"], lower, upper)
 
 
