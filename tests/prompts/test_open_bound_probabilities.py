@@ -33,7 +33,8 @@ def _percentile_prompt(kind: Literal["numeric", "date"], *, page_url: str, open_
     question.open_upper_bound = open_upper
     if kind == "date":
         return _date_prompt_text(question)
-    return prompts.numeric_prompt(question, research="r", lower_bound_message="lbm", upper_bound_message="ubm")
+    upper, lower = bound_messages(question, stated_tail_fields=True)
+    return prompts.numeric_prompt(question, research="r", lower_bound_message=lower, upper_bound_message=upper)
 
 
 class TestOpenBoundProbabilityFields:
