@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import Sequence
 from dataclasses import replace
 from time import monotonic
 from urllib.parse import urlparse
@@ -73,7 +74,7 @@ from metaculus_bot.research.agentic.tool_descriptions import (
     SEARCH_WEB_DESCRIPTION,
     VIEW_IMAGE_DESCRIPTION,
 )
-from metaculus_bot.research.agentic.types import EvidencePassage, ToolOutcome, ToolSpec
+from metaculus_bot.research.agentic.types import EvidencePagination, EvidencePassage, ToolOutcome, ToolSpec
 from metaculus_bot.research.fetch_ladder import run_cache
 from metaculus_bot.research.fetch_ladder.context import LadderContext, LocalReadReceipt, QuestionRungBudget
 from metaculus_bot.research.fetch_ladder.digest import bm25_digest
@@ -89,8 +90,8 @@ from metaculus_bot.research.http_fetch import pdf_parse_semaphore
 from metaculus_bot.research.image_leads import render_image_leads
 from metaculus_bot.research.resolution_fetch_result import FetchResult
 from metaculus_bot.research.robots_policy import ROBOTS_FETCH_TIMEOUT_S, google_extended_blocks_url, robots_host
-from metaculus_bot.research.source_documents import ParsedSource
-from metaculus_bot.research.source_evidence import SourceExcerpt
+from metaculus_bot.research.source_documents import ParsedSource, SourceSection
+from metaculus_bot.research.source_evidence import SourceExcerpt, bounded_passages
 
 logger = logging.getLogger(__name__)
 
@@ -135,20 +136,200 @@ def _source_text_passages(
     passages = []
     paragraphs = text.split("\n\n")
     for index, paragraph in enumerate(paragraphs):
-        if not paragraph.strip() or len(paragraph) > GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS:
+        if not paragraph.strip():
             continue
         if paragraph.startswith(("[Partial document read:", "Navigation only;", "Archive members ", "Sheets ")):
             continue
+        excerpts = bounded_passages(paragraph)
+        for excerpt_index, excerpt in enumerate(excerpts):
+            passages.append(
+                EvidencePassage(
+                    source_url=source_url,
+                    text=excerpt,
+                    retrieval_method=retrieval_method,
+                    content_origin="source_text",
+                    clipped=(index == 0 and excerpt_index == 0 and clipped_start)
+                    or (index == len(paragraphs) - 1 and excerpt_index == len(excerpts) - 1 and clipped_end),
+                )
+            )
+    return passages
+
+
+def _local_section_passages(
+    source_url: str,
+    full_text: str,
+    text: str,
+    retrieval_method: str,
+    *,
+    source_start_char: int,
+    source_section_end_char: int,
+    tabular: bool,
+) -> list[EvidencePassage]:
+    """Build position-stamped passages from complete table rows or bounded prose excerpts."""
+    if tabular:
+        return _local_tabular_passages(
+            source_url,
+            full_text,
+            text,
+            retrieval_method,
+            source_start_char=source_start_char,
+            source_section_end_char=source_section_end_char,
+        )
+    return _local_prose_passages(
+        source_url,
+        full_text,
+        text,
+        retrieval_method,
+        source_start_char=source_start_char,
+    )
+
+
+def _local_tabular_passages(
+    source_url: str,
+    full_text: str,
+    text: str,
+    retrieval_method: str,
+    *,
+    source_start_char: int,
+    source_section_end_char: int,
+) -> list[EvidencePassage]:
+    passages: list[EvidencePassage] = []
+    local_start = 0
+    if source_start_char > 0 and full_text[source_start_char - 1 : source_start_char] != "\n":
+        first_row_end = text.find("\n")
+        if first_row_end < 0:
+            return passages
+        local_start = first_row_end + 1
+
+    while local_start < len(text):
+        line_end = text.find("\n", local_start)
+        if line_end < 0:
+            if source_start_char + len(text) != source_section_end_char:
+                break
+            next_local_start = len(text)
+            passage_local_end = len(text)
+        else:
+            next_local_start = line_end + 1
+            passage_local_end = line_end
+
+        if passage_local_end > local_start:
+            passage_text = text[local_start:passage_local_end]
+            if len(passage_text) <= GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS:
+                passage_start = source_start_char + local_start
+                passage_end = source_start_char + passage_local_end
+                passages.append(
+                    _positioned_local_passage(
+                        source_url,
+                        passage_text,
+                        retrieval_method,
+                        full_text=full_text,
+                        source_start_char=passage_start,
+                        source_end_char=passage_end,
+                    )
+                )
+        local_start = next_local_start
+    return passages
+
+
+def _local_prose_passages(
+    source_url: str,
+    full_text: str,
+    text: str,
+    retrieval_method: str,
+    *,
+    source_start_char: int,
+) -> list[EvidencePassage]:
+    passages: list[EvidencePassage] = []
+    local_cursor = 0
+    for excerpt in bounded_passages(text):
+        excerpt_start = text.find(excerpt, local_cursor)
+        if excerpt_start < 0:
+            raise RuntimeError("bounded local prose passage is missing from its source section")
+        excerpt_end = excerpt_start + len(excerpt)
+        passage_start = source_start_char + excerpt_start
+        passage_end = source_start_char + excerpt_end
         passages.append(
-            EvidencePassage(
-                source_url=source_url,
-                text=paragraph,
-                retrieval_method=retrieval_method,
-                content_origin="source_text",
-                clipped=(index == 0 and clipped_start) or (index == len(paragraphs) - 1 and clipped_end),
+            _positioned_local_passage(
+                source_url,
+                excerpt,
+                retrieval_method,
+                full_text=full_text,
+                source_start_char=passage_start,
+                source_end_char=passage_end,
             )
         )
+        local_cursor = excerpt_end
     return passages
+
+
+def _positioned_local_passage(
+    source_url: str,
+    text: str,
+    retrieval_method: str,
+    *,
+    full_text: str,
+    source_start_char: int,
+    source_end_char: int,
+) -> EvidencePassage:
+    return EvidencePassage(
+        source_url=source_url,
+        text=text,
+        retrieval_method=retrieval_method,
+        content_origin="source_text",
+        clipped=not _source_boundary(full_text, source_start_char) or not _source_boundary(full_text, source_end_char),
+        source_start_char=source_start_char,
+        source_end_char=source_end_char,
+    )
+
+
+def _local_source_passages(
+    source_url: str,
+    full_text: str,
+    visible_text: str,
+    retrieval_method: str,
+    *,
+    source_start_char: int,
+    sections: Sequence[SourceSection],
+) -> list[EvidencePassage]:
+    """Build citable passages from section text while leaving presentation labels uncited."""
+    passages: list[EvidencePassage] = []
+    window_end = source_start_char + len(visible_text)
+    section_render_start = 0
+    for index, section in enumerate(sections):
+        section_label = f"[{source_presentation.section_label(section)}]\n"
+        section_text_start = section_render_start + len(section_label)
+        section_text_end = section_text_start + len(section.text)
+        visible_start = max(source_start_char, section_text_start)
+        visible_end = min(window_end, section_text_end)
+        if visible_start < visible_end:
+            section_start = visible_start - section_text_start
+            section_text = section.text[section_start : section_start + visible_end - visible_start]
+            passages.extend(
+                _local_section_passages(
+                    source_url,
+                    full_text,
+                    section_text,
+                    retrieval_method,
+                    source_start_char=visible_start,
+                    source_section_end_char=section_text_end,
+                    tabular=section.rows is not None,
+                )
+            )
+        section_render_start = section_text_end + (2 if index < len(sections) - 1 else 0)
+
+    if section_render_start != len(full_text):
+        raise RuntimeError("local source sections do not match their rendered text")
+    return passages
+
+
+def _source_boundary(text: str, position: int) -> bool:
+    return (
+        position == 0
+        or position == len(text)
+        or text[max(0, position - 2) : position] == "\n\n"
+        or text[max(0, position - 1) : position] == "\n"
+        or text[position : position + 1] == "\n"
+    )
 
 
 def _structured_source_passages(
@@ -170,11 +351,7 @@ def _structured_source_passages(
 
 def _html_source_excerpts(source_url: str, text: str, retrieval_method: str) -> list[SourceExcerpt]:
     """Build excerpts from extracted HTML body text, before URL leads and disclosures are rendered."""
-    return [
-        SourceExcerpt(source_url, paragraph, retrieval_method)
-        for paragraph in text.split("\n\n")
-        if paragraph.strip() and len(paragraph) <= GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS
-    ]
+    return [SourceExcerpt(source_url, paragraph, retrieval_method) for paragraph in bounded_passages(text)]
 
 
 def _generated_answer_passages(source_url: str, text: str) -> list[EvidencePassage]:
@@ -186,8 +363,7 @@ def _generated_answer_passages(source_url: str, text: str) -> list[EvidencePassa
             retrieval_method="document",
             content_origin="generated_answer",
         )
-        for paragraph in text.split("\n\n")
-        if paragraph.strip() and len(paragraph) <= GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS
+        for paragraph in bounded_passages(text)
     ]
 
 
@@ -222,6 +398,8 @@ def _render_fetch_outcome(
     image_leads: str = "",
     citable: bool = True,
     evidence_passages: list[SourceExcerpt] | None = None,
+    evidence_pagination: bool = False,
+    evidence_sections: Sequence[SourceSection] | None = None,
 ) -> ToolOutcome:
     prototype = ToolOutcome(content_markdown="", links=links, method=method)
     body_budget = tool_content_body_budget("fetch", prototype, _FETCH_WINDOW_CHARS)
@@ -231,29 +409,43 @@ def _render_fetch_outcome(
         start_char,
         max_chars=max(0, body_budget - len(lead_block)),
     )
-    source_start = max(0, start_char)
+    source_start = min(max(0, start_char), len(text))
     source_end = source_start + len(visible_source_text)
     clipped_start = source_start > 0 and text[max(0, source_start - 2) : source_start] != "\n\n"
     clipped_end = source_end < len(text) and text[source_end : source_end + 2] != "\n\n"
+    if evidence_pagination:
+        if evidence_sections is None:
+            raise RuntimeError("local source evidence pagination is missing its parsed sections")
+        passages = _local_source_passages(
+            url,
+            text,
+            visible_source_text,
+            method,
+            source_start_char=source_start,
+            sections=evidence_sections,
+        )
+    else:
+        passages = (
+            _source_text_passages(
+                url,
+                visible_source_text,
+                method,
+                clipped_start=clipped_start,
+                clipped_end=clipped_end,
+            )
+            if evidence_passages is None
+            else _structured_source_passages(url, visible_source_text, evidence_passages, method)
+        )
     return ToolOutcome(
         content_markdown=window + lead_block,
         links=links,
         method=method,
         truncated=truncated,
-        evidence_passages=(
-            (
-                _source_text_passages(
-                    url,
-                    visible_source_text,
-                    method,
-                    clipped_start=clipped_start,
-                    clipped_end=clipped_end,
-                )
-                if evidence_passages is None
-                else _structured_source_passages(url, visible_source_text, evidence_passages, method)
-            )
-            if citable and method != "local_navigation"
-            else []
+        evidence_passages=passages if citable and method != "local_navigation" else [],
+        evidence_pagination=(
+            EvidencePagination(source_start_char=source_start, source_total_chars=len(text))
+            if evidence_pagination and citable and method != "local_navigation"
+            else None
         ),
     )
 
@@ -707,16 +899,8 @@ def _local_source_fetch_outcome(
         plain.links,
         method=ladder_adapter.LOCAL_SOURCE_METHOD,
         start_char=start_char,
-        evidence_passages=[
-            SourceExcerpt(
-                plain.url,
-                paragraph,
-                ladder_adapter.LOCAL_SOURCE_METHOD,
-            )
-            for section in sections
-            for paragraph in section.text.split("\n\n")
-            if paragraph.strip() and len(paragraph) <= GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS
-        ],
+        evidence_pagination=True,
+        evidence_sections=sections,
     )
 
 

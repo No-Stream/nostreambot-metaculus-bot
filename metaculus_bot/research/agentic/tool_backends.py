@@ -34,6 +34,7 @@ from metaculus_bot.constants import (
 from metaculus_bot.research import providers as research_providers
 from metaculus_bot.research.agentic.types import EvidencePassage
 from metaculus_bot.research.gemini_client_config import gemini_retry_sleep_allowance_s
+from metaculus_bot.research.source_evidence import bounded_passages
 from metaculus_bot.research.url_context_reader import run_url_context_read
 
 # Client-side HTTP ceilings sized against the tools' loop budgets so the underlying socket is
@@ -134,8 +135,7 @@ def _asknews_evidence_passages(articles: list[Any]) -> list[EvidencePassage]:
                     retrieval_method="news",
                     content_origin="provider_summary",
                 )
-                for paragraph in summary.split("\n\n")
-                if paragraph.strip() and len(paragraph) <= GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS
+                for paragraph in bounded_passages(summary)
             )
     return passages
 
