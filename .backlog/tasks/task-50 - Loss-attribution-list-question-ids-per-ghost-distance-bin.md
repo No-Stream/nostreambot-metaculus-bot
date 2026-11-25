@@ -1,7 +1,7 @@
 ---
 id: TASK-50
 title: 'Loss attribution: list question ids per ghost distance bin'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-25 09:00'
 updated_date: '2026-11-25 16:58'
@@ -21,5 +21,5 @@ The loss-attribution ghost comparison (metaculus_bot/performance_analysis/loss_a
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Added per-question ghost distance-bin trace details in JSON and all-era markdown, plus outcome-based observed-versus-expected winner counts with resolution-day intervals. Verified with the loss-attribution, ghost-scoring, and ghost-analysis tests and the requested free gates. Still open: the trace review of the listed high-disagreement questions.
+Added per-question ghost distance-bin trace details in JSON and all-era markdown, plus outcome-based observed-versus-expected winner counts with resolution-day intervals. Verified with the loss-attribution, ghost-scoring, and ghost-analysis tests and the requested free gates. Trace review done 2026-11-25: three dossiers covering all 22 questions at distance >= 0.15, in scratch/residual_2026-11-25_floors/ghost_trace_review/. No exploitable pattern; recorded as backlog decision-38 "Publishing, blending or up-weighting the gap-fill ghost forecast". The review also found that the ghost was priced without the production clamp (fixed: post 44705 -340 to -271; binary mean -6.9 to -5.8) and that discrete 44916 is a pre-2026-08-31 CDF bug (commit d4ee57f), not a real disagreement.
 <!-- SECTION:FINAL_SUMMARY:END -->
