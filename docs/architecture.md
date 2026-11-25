@@ -341,7 +341,8 @@ with `is_date` set so the comment renders dates through the framework formatter.
 are read from the API's `scaling` block and never derived for a date question. The analysis
 side stays date-free by decision, each at an explicit seam: the backtest
 (`backtest/question_prep.py`), the ablation harness (`ablation/run_pdf.py`), the residual
-dataset (`performance_analysis/collector.py`) and the ghost scorer (`scripts/score_ghosts.py`);
+dataset (`performance_analysis/collector.py`), reusable ghost parsing and CDF helpers
+(`performance_analysis/ghosts.py`), and the report scorer (`scripts/score_ghosts.py`);
 see `docs/performance_analysis.md` "Date questions are excluded from the dataset". Detail:
 [numeric_pipeline.md](numeric_pipeline.md) and `docs/operations.md` "Date questions".
 

@@ -20,8 +20,9 @@ import pytest
 import metaculus_bot.numeric.pchip_cdf as pchip_mod
 from metaculus_bot.numeric.config import grid_step_constraints
 from metaculus_bot.numeric.pchip_cdf import generate_pchip_cdf
+from metaculus_bot.performance_analysis.ghosts import parse_ghost_summary
 from metaculus_bot.scoring_common import binary_log_score
-from scripts.score_ghosts import join_and_score, main, parse_ghost_summary, render_report
+from scripts.score_ghosts import join_and_score, main, render_report
 
 
 def _legacy_ghost(qid: int, qtype: str, summary: str, run_date: str = "2026-07-17T00:00:00Z") -> dict:
@@ -123,6 +124,36 @@ class TestParseGhostSummary:
     def test_unknown_or_empty(self):
         assert parse_ghost_summary("unknown", "") is None
         assert parse_ghost_summary("numeric", "") is None
+
+
+def test_score_ghosts_golden_report():
+    """Pin the complete report for a mixed fixture, including post-id joins."""
+    json_ghosts = [
+        _json_ghost(1001, {"qtype": "binary", "prob": 0.9}),
+        _json_ghost(1002, {"qtype": "multiple_choice", "option_probs": {"Blue": 0.2, "Red": 0.8}}),
+        _json_ghost(
+            1003,
+            {"qtype": "numeric", "declared_percentiles": {"0.1": 10, "0.5": 40, "0.9": 80}},
+        ),
+    ]
+    legacy_ghosts = [_legacy_ghost(1004, "binary", "posterior_prob=0.1")]
+    records = [
+        _binary_record(1001, True, 0.5),
+        {
+            "post_id": 1002,
+            "question_id": 9002,
+            "type": "multiple_choice",
+            "resolution_parsed": "Red",
+            "options": ["Blue", "Red"],
+            "our_forecast_values": [0.5, 0.5],
+        },
+        _numeric_record(1003, 40.0, _pchip_cdf({10: 10, 50: 50, 90: 90})),
+        _binary_record(1004, False, 0.5),
+    ]
+    pre_ghosts = [_pre_ghost(1001, {"qtype": "binary", "prob": 0.9})]
+
+    report = render_report(join_and_score(json_ghosts, legacy_ghosts, records, pre_ghosts=pre_ghosts))
+    assert report + "\n" == Path("tests/fixtures/score_ghosts_golden_report.txt").read_text()
 
 
 class TestJoinAndScore:

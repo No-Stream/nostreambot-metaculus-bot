@@ -1,0 +1,17 @@
+=== Ghost-forecast scoring (gap-fill v2 ghost vs published) ===
+Ghosts (latest per qid): 4
+  by source: json=3 legacy=1
+  by type: binary=2 multiple_choice=1 numeric=1
+Joined to resolved-question dataset: 4
+Scored ghosts: 4
+  binary: n=2 mean_delta=+84.7997 (ghost better)
+  multiple_choice: n=1 mean_delta=+67.8072 (ghost better)
+  numeric: n=1 mean_delta=+7.3566 (ghost better)
+  numeric coverage: 1 joined, 1 scored, 0 unscoreable
+Ghost vs pre-research dry run (pooled across types — do not quote the pooled delta):
+  byte-identical to the pre-research dry run (measures the driver's prior): n=1 mean_delta=+84.7997
+  no GHOST_PRE_JSON to compare (predates the marker, or legacy ghost): n=3 mean_delta=+53.3212
+Pre-research dry run vs concluding ghost (same driver, same run; delta = post minus pre, positive = v2's research moved the driver toward the truth):
+  paired: 1  byte-identical: 1  moved: 0; unpaired: no partner marker=2
+Ghost with gap-fill v1 vs plain ghost (same driver, same run; delta = with-v1 minus plain, positive = v1's section moved the driver toward the truth):
+  paired: 0 (GHOST_FORECAST_V1 ships 2026-09-09; waiting on resolutions)
