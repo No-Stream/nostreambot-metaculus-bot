@@ -1066,13 +1066,16 @@ secondary. For binary questions, log miscalibration times 100 is an in-sample up
 per question; it overstates the gain expected out of sample. The floor calibration comparison carries forward the 1.01% MC option check formerly run from
 `scratch/residual_2026-11-25_floors/floor_calibration.py`; that scratch script is retired.
 
-The report also tests recalibration out of sample across chronological config eras. For each test era it fits binary
-Platt scaling and isotonic regression, or multiple-choice power scaling, on eligible questions from all earlier eras
-and scores the later questions with `spot_peer_delta`. It skips a test era when fewer than 50 training questions are
-available for its question type, and counts missing eras and other exclusions. The per-era rows report training and
-test counts, fitted parameters where applicable, and mean spot-peer change with resolution-day cluster intervals; the
-pooled row averages the held-out question changes. Positive change means the fitted layer would have helped, but a
-layer still requires a decisive out-of-sample era test before shipping.
+The report also tests recalibration out of sample across chronological config eras. It splits eligible `pre_flip`
+questions at the median `bot_comment_created_at` time, computed across binary and multiple-choice questions together;
+the two halves share that boundary even though they remain under one config. The later half is scored using a fit on
+the earlier half, and each subsequent era is scored using eligible questions from all preceding halves and eras. For
+each test era it fits binary Platt scaling and isotonic regression, or multiple-choice power scaling, and scores the
+later questions with `spot_peer_delta`. It skips a test era when fewer than 50 training questions are available for its
+question type, and counts missing forecast timestamps and other exclusions. The JSON and Markdown report show the
+split boundary. Per-era rows report training and test counts, fitted parameters where applicable, and mean spot-peer
+change with resolution-day cluster intervals; the pooled row averages the held-out question changes. Positive change
+means the fitted layer would have helped, but a layer still requires a decisive out-of-sample era test before shipping.
 
 The MC discrimination table compares the published forecast, each complete member vector, and the ghost when an
 archive is supplied. It reports top accuracy, normalized rank and probability of the winning option, counterfactual
@@ -1090,8 +1093,11 @@ Every number in the report is in SPOT PEER points. Point accounting reads `spot_
 and binary or MC ghost changes go through `spot_peer_delta`. Numeric and discrete ghost changes are the difference of
 `numeric_log_score` between the ghost CDF (rebuilt on the published grid) and the published CDF, which equals
 `spot_peer_delta` on the resolving-bucket masses because `numeric_log_score` already carries the continuous halving;
-a test pins the equivalence. `scripts/score_ghosts.py` reports LOG-score deltas, so label units when quoting the two
-side by side. Alternatives that assign zero or negative
+a test pins the equivalence. Binary and MC ghosts are clamped with the historical bounds active at
+`bot_comment_created_at`; MC probabilities use the production clamp-and-renormalize function. The same prepared ghost
+values feed the loss-attribution report and `scripts/score_ghosts.py`. The numeric ghost CDF uses the production PCHIP
+builder and published grid constraints; it does not add a separate CDF clamp. `scripts/score_ghosts.py` reports
+LOG-score deltas, so label units when quoting the two side by side. Alternatives that assign zero or negative
 probability to the realized outcome are excluded from score changes and counted; they remain visible in the related
 accuracy and status counts. The report gives an interval only when a cell has at least 10 observations across at least
 5 UTC resolution-day clusters; each section reports its own exclusions, including excluded spot-peer totals where

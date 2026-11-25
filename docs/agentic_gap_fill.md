@@ -708,9 +708,11 @@ What each pair measures, all on the same cheap driver and never as a panel proxy
 
 `scripts/score_ghosts.py` (`make score_ghosts`) joins the harvested markers to the
 resolved-question dataset on `post_id` and log-scores each ghost the way Metaculus
-scores the published forecast. Marker parsing, selection, and numeric CDF construction live in
-`metaculus_bot.performance_analysis.ghosts` for reuse by analysis reports. Two prod mechanisms decide how a numeric ghost is
-built. Native-discrete questions (Metaculus `type == "discrete"`) publish a CDF on
+scores the published forecast. Binary and MC ghosts receive the historical production clamp active
+at `bot_comment_created_at`; MC uses the production clamp-and-renormalize function. Marker parsing,
+selection, and numeric CDF construction live in `metaculus_bot.performance_analysis.ghosts` for reuse
+by analysis reports. Two prod mechanisms decide how a numeric ghost is built. Native-discrete
+questions (Metaculus `type == "discrete"`) publish a CDF on
 a reduced grid (`cdf_size != 201`); prod builds every member directly on that grid
 (`numeric/pipeline._build_discrete_distribution`) and aggregates positionally, so
 the scorer builds the ghost with `num_points=len(published_cdf)` and step bounds

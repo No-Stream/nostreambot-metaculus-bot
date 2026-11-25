@@ -40,9 +40,8 @@ from metaculus_bot.performance_analysis.collector import (
     resolve_numeric_record_to_score_inputs,
 )
 from metaculus_bot.performance_analysis.ghosts import (
-    ghost_binary_prob,
+    clamp_ghost_to_published_bounds,
     ghost_cdf_on_published_grid,
-    ghost_mc_probs,
     ghost_numeric_percentiles,
     latest_ghost_per_qid,
     normalize_json_ghost,
@@ -60,9 +59,9 @@ def _score_binary(ghost: dict, record: dict) -> dict | None:
     resolution = record.get("resolution_parsed")
     if not isinstance(resolution, bool):
         return None
-    ghost_p = ghost_binary_prob(ghost)
+    ghost_p = clamp_ghost_to_published_bounds(ghost, record)
     published_p = record.get("our_prob_yes")
-    if ghost_p is None or published_p is None:
+    if not isinstance(ghost_p, float) or published_p is None:
         return None
     ghost_ls = binary_log_score(ghost_p, resolution)
     published_ls = binary_log_score(float(published_p), resolution)
@@ -82,7 +81,7 @@ def _score_mc(ghost: dict, record: dict) -> dict | None:
     resolution = record.get("resolution_parsed")
     options = record.get("options") or []
     published_values = record.get("our_forecast_values")
-    ghost_probs = ghost_mc_probs(ghost)
+    ghost_probs = clamp_ghost_to_published_bounds(ghost, record)
     if not isinstance(resolution, str) or resolution not in options:
         return None
     if not isinstance(ghost_probs, dict) or not all(opt in ghost_probs for opt in options):

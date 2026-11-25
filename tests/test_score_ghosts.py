@@ -129,7 +129,7 @@ class TestParseGhostSummary:
 def test_score_ghosts_golden_report():
     """Pin the complete report for a mixed fixture, including post-id joins."""
     json_ghosts = [
-        _json_ghost(1001, {"qtype": "binary", "prob": 0.9}),
+        _json_ghost(1001, {"qtype": "binary", "prob": 0.001}),
         _json_ghost(1002, {"qtype": "multiple_choice", "option_probs": {"Blue": 0.2, "Red": 0.8}}),
         _json_ghost(
             1003,
@@ -138,7 +138,7 @@ def test_score_ghosts_golden_report():
     ]
     legacy_ghosts = [_legacy_ghost(1004, "binary", "posterior_prob=0.1")]
     records = [
-        _binary_record(1001, True, 0.5),
+        {**_binary_record(1001, True, 0.5), "bot_comment_created_at": "2026-08-01T00:00:00Z"},
         {
             "post_id": 1002,
             "question_id": 9002,
@@ -150,7 +150,7 @@ def test_score_ghosts_golden_report():
         _numeric_record(1003, 40.0, _pchip_cdf({10: 10, 50: 50, 90: 90})),
         _binary_record(1004, False, 0.5),
     ]
-    pre_ghosts = [_pre_ghost(1001, {"qtype": "binary", "prob": 0.9})]
+    pre_ghosts = [_pre_ghost(1001, {"qtype": "binary", "prob": 0.001})]
 
     report = render_report(join_and_score(json_ghosts, legacy_ghosts, records, pre_ghosts=pre_ghosts))
     assert report + "\n" == Path("tests/fixtures/score_ghosts_golden_report.txt").read_text()

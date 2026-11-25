@@ -366,7 +366,12 @@ class TestRealDataset:
         payload = json.loads((tmp_path / "loss_attribution.json").read_text())
         assert payload["header"]["before"]["multiple_choice"] == 130
         recalibration = payload["recalibration"]
-        assert recalibration["era_order"][:3] == ["pre_flip", "post_flip", "triple_pre_market"]
+        assert recalibration["era_order"][:4] == [
+            "pre_flip (early half)",
+            "pre_flip (late half)",
+            "post_flip",
+            "triple_pre_market",
+        ]
         assert recalibration["exclusions"]["missing era"] > 0
         assert all(
             any(row["method"] == method and row["status"] == "evaluated" for row in recalibration["rows"])
@@ -385,7 +390,7 @@ class TestRealDataset:
 
 
 class TestGhostExclusions:
-    def test_zero_probability_ghost_is_counted(self) -> None:
+    def test_binary_ghost_at_zero_is_priced_at_the_historical_publish_floor(self) -> None:
         record = {
             "post_id": 3,
             "type": "binary",
@@ -396,9 +401,10 @@ class TestGhostExclusions:
         }
         ghost = {"qtype": "binary", "source": "json", "payload": {"prob": 0.0}}
         report = disagreement_report([record], {3: ghost}, seed=1, draws=20)
-        assert report.zero_probability == 1
-        assert report.unscoreable == 1
-        assert report.excluded_spot_peer == 1
+        assert report.zero_probability == 0
+        assert report.counts_by_type[0].statuses == {"scored": 1}
+        assert report.unscoreable == 0
+        assert report.excluded_spot_peer == 0
 
     def test_explicit_question_id_exclusion(self, tmp_path: Path) -> None:
         main(

@@ -442,7 +442,8 @@ def _recalibration(result: dict) -> list[str]:
         "layer would have helped; any layer still needs a decisive out-of-sample era test before shipping. "
         "Earlier-era outcomes are used retrospectively, even if they had not resolved when a later forecast was made.",
         "",
-        f"Chronological eras: {', '.join(result['era_order'])}. Excluded: {_counts(result['exclusions'])}.",
+        f"Chronological eras: {', '.join(result['era_order'])}. First-era split boundary by bot comment time: "
+        f"{result.get('first_era_split_boundary', 'n/a')}. Excluded: {_counts(result['exclusions'])}.",
         "",
         *markdown_table(
             [

@@ -12,9 +12,12 @@ import json
 import re
 from pathlib import Path
 
+from metaculus_bot.mc_processing import clamp_and_renormalize_probs
 from metaculus_bot.numeric.config import grid_step_constraints
+from metaculus_bot.performance_analysis.clip_threshold_sweep import in_force_bounds
 from metaculus_bot.performance_analysis.collector import resolve_numeric_record_to_score_inputs
 from metaculus_bot.performance_analysis.round_dataset import load_marker_records
+from metaculus_bot.time_utils import parse_iso_utc
 
 _FLOAT = r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?"
 _BINARY_RE = re.compile(rf"posterior_prob=(?P<p>{_FLOAT})")
@@ -132,6 +135,23 @@ def ghost_mc_probs(ghost: dict) -> dict[str, float] | None:
             return None
     parsed = parse_ghost_summary("multiple_choice", ghost.get("summary", ""))
     return parsed if isinstance(parsed, dict) else None
+
+
+def clamp_ghost_to_published_bounds(ghost: dict, record: dict) -> float | dict[str, float] | None:
+    """Return a binary or MC ghost after the production clamp in force at publish time."""
+    question_type = record["type"]
+    forecast_time = parse_iso_utc(record.get("bot_comment_created_at"))
+    lower, upper = in_force_bounds(question_type, forecast_time)
+    if question_type == "binary":
+        probability = ghost_binary_prob(ghost)
+        return min(upper, max(lower, probability)) if probability is not None else None
+    if question_type == "multiple_choice":
+        probabilities = ghost_mc_probs(ghost)
+        if probabilities is None:
+            return None
+        clamped = clamp_and_renormalize_probs(list(probabilities.values()), lo=lower, hi=upper)
+        return dict(zip(probabilities, clamped, strict=True))
+    return None
 
 
 def ghost_numeric_percentiles(ghost: dict) -> dict[float, float] | None:

@@ -3,7 +3,10 @@
 import json
 from itertools import pairwise
 
+import pytest
+
 from metaculus_bot.performance_analysis.ghosts import (
+    clamp_ghost_to_published_bounds,
     ghost_binary_prob,
     ghost_cdf_on_published_grid,
     ghost_mc_probs,
@@ -40,6 +43,28 @@ def test_ghost_values_parse_from_both_marker_shapes() -> None:
     assert ghost_mc_probs(json_ghost) == {"Blue": 0.3, "Red": 0.7}
     assert ghost_numeric_percentiles(json_ghost) == {0.1: 10.0, 0.9: 90.0}
     assert parse_ghost_summary("numeric", "median=42.5") == {"median": 42.5}
+
+
+def test_ghost_clamp_uses_historical_binary_regime() -> None:
+    ghost = {"source": "json", "qtype": "binary", "payload": {"prob": 0.01}}
+    old_record = {"type": "binary", "bot_comment_created_at": "2026-05-01T00:00:00Z"}
+    new_record = {"type": "binary", "bot_comment_created_at": "2026-05-20T00:00:00Z"}
+
+    assert clamp_ghost_to_published_bounds(ghost, old_record) == 0.01
+    assert clamp_ghost_to_published_bounds(ghost, new_record) == 0.02
+
+
+def test_ghost_mc_clamp_uses_historical_bounds_and_renormalizes() -> None:
+    ghost = {
+        "source": "json",
+        "qtype": "multiple_choice",
+        "payload": {"option_probs": {"A": 0.001, "B": 0.4995, "C": 0.4995}},
+    }
+    record = {"type": "multiple_choice", "bot_comment_created_at": "2026-08-01T00:00:00Z"}
+
+    result = clamp_ghost_to_published_bounds(ghost, record)
+
+    assert result == {"A": pytest.approx(0.01), "B": pytest.approx(0.495), "C": pytest.approx(0.495)}
 
 
 def test_selection_prefers_latest_json_to_latest_legacy() -> None:

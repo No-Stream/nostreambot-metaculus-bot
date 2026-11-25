@@ -5,11 +5,12 @@ from __future__ import annotations
 import math
 from bisect import bisect_right
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime
 from typing import Literal
 
 import numpy as np
-from scipy.optimize import isotonic_regression, minimize
+from scipy.optimize import isotonic_regression
 from scipy.special import expit, logsumexp
 
 from metaculus_bot.constants import BINARY_PROB_MAX, BINARY_PROB_MIN, MC_PROB_MIN
@@ -20,7 +21,11 @@ from metaculus_bot.scoring_common import spot_peer_delta
 from metaculus_bot.time_utils import parse_iso_utc
 
 MIN_TRAINING_QUESTIONS = 50
-RECALIBRATION_ERAS = (PRE_FLIP, POST_FLIP, *TRIPLE_SUBERAS)
+MAX_NEWTON_STEPS = 100
+NEWTON_TOLERANCE = 1e-10
+PRE_FLIP_EARLY = "pre_flip (early half)"
+PRE_FLIP_LATE = "pre_flip (late half)"
+RECALIBRATION_ERAS = (PRE_FLIP_EARLY, PRE_FLIP_LATE, POST_FLIP, *TRIPLE_SUBERAS)
 METHODS = (("binary", "platt"), ("binary", "isotonic"), ("multiple_choice", "power"))
 
 
@@ -58,24 +63,22 @@ def _validate_binary(probabilities: list[float], outcomes: list[bool]) -> None:
 
 
 def fit_binary_platt(probabilities: list[float], outcomes: list[bool]) -> PlattFit:
-    """Fit unpenalized logistic maximum likelihood with an intercept and logit slope."""
+    """Fit unpenalized logistic maximum likelihood with an intercept and logit slope by Newton's method."""
     _validate_binary(probabilities, outcomes)
     if len(set(outcomes)) < 2:
         raise ValueError("Platt maximum likelihood needs both outcomes")
-    logits = np.array([logit(probability) for probability in probabilities])
+    design = np.column_stack([np.ones(len(probabilities)), [logit(probability) for probability in probabilities]])
     observed = np.array(outcomes, dtype=float)
-
-    def objective(parameters: np.ndarray) -> tuple[float, np.ndarray]:
-        linear = parameters[0] + parameters[1] * logits
-        residual = expit(linear) - observed
-        return float(np.sum(np.logaddexp(0, linear) - observed * linear)), np.array(
-            [np.sum(residual), np.dot(residual, logits)]
-        )
-
-    result = minimize(objective, np.array([0.0, 1.0]), jac=True, method="BFGS", options={"gtol": 1e-7})
-    if not result.success:
-        raise ValueError(f"Platt maximum likelihood did not converge: {result.message}")
-    return PlattFit(float(result.x[0]), float(result.x[1]))
+    parameters = np.array([0.0, 1.0])
+    for _ in range(MAX_NEWTON_STEPS):
+        fitted = expit(design @ parameters)
+        gradient = design.T @ (fitted - observed)
+        hessian = design.T @ (design * (fitted * (1 - fitted))[:, None])
+        step = np.linalg.solve(hessian, gradient)
+        parameters = parameters - step
+        if float(np.max(np.abs(step))) < NEWTON_TOLERANCE:
+            return PlattFit(float(parameters[0]), float(parameters[1]))
+    raise ValueError("Platt maximum likelihood did not converge (separable training data?)")
 
 
 def fit_binary_isotonic(probabilities: list[float], outcomes: list[bool]) -> IsotonicFit:
@@ -106,7 +109,7 @@ def transform_mc_power(probabilities: list[float], alpha: float) -> list[float]:
 
 
 def fit_mc_power(probabilities: list[list[float]], winners: list[int]) -> float:
-    """Fit one unconstrained power by question-level winner log likelihood, before output floors."""
+    """Fit one unconstrained power by question-level winner log likelihood (convex in the power), before floors."""
     if not probabilities or len(probabilities) != len(winners):
         raise ValueError("Ballots and winners must have equal nonzero length")
     if any(
@@ -115,22 +118,21 @@ def fit_mc_power(probabilities: list[list[float]], winners: list[int]) -> float:
     ):
         raise ValueError("Invalid MC ballot or winner")
     logged_ballots = [np.log(ballot) for ballot in probabilities]
-
-    def objective(parameters: np.ndarray) -> tuple[float, np.ndarray]:
-        alpha = parameters[0]
-        loss = 0.0
-        derivative = 0.0
-        for ballot, winner in zip(logged_ballots, winners, strict=True):
-            scaled = alpha * ballot
-            normalizer = logsumexp(scaled)
-            loss += float(normalizer - scaled[winner])
-            derivative += float(np.dot(np.exp(scaled - normalizer), ballot) - ballot[winner])
-        return loss, np.array([derivative])
-
-    result = minimize(objective, np.array([1.0]), jac=True, method="BFGS")
-    if not result.success:
-        raise ValueError(f"MC power maximum likelihood did not converge: {result.message}")
-    return float(result.x[0])
+    alpha = 1.0
+    for _ in range(MAX_NEWTON_STEPS):
+        first_derivative = 0.0
+        second_derivative = 0.0
+        for logged, winner in zip(logged_ballots, winners, strict=True):
+            scaled = alpha * logged
+            weights = np.exp(scaled - logsumexp(scaled))
+            mean_log = float(np.dot(weights, logged))
+            first_derivative += mean_log - float(logged[winner])
+            second_derivative += float(np.dot(weights, (logged - mean_log) ** 2))
+        step = first_derivative / second_derivative
+        alpha -= step
+        if abs(step) < NEWTON_TOLERANCE:
+            return alpha
+    raise ValueError("MC power maximum likelihood did not converge")
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +166,7 @@ class PooledRecalibration:
 @dataclass(frozen=True, slots=True)
 class RecalibrationResult:
     era_order: tuple[str, ...]
+    first_era_split_boundary: str | None
     rows: tuple[RecalibrationRow, ...]
     pooled: tuple[PooledRecalibration, ...]
     exclusions: dict[str, int]
@@ -176,6 +179,7 @@ class _Observation:
     probabilities: tuple[float, ...]
     winner: int
     cluster: str
+    forecast_time: datetime | None
 
 
 def _record_era(record: dict) -> str | None:
@@ -194,48 +198,73 @@ def _record_era(record: dict) -> str | None:
     return config
 
 
-def _observations(records: list[dict]) -> tuple[list[_Observation], dict[str, int]]:
-    observations: list[_Observation] = []
+def _observation(record: dict, exclusions: Counter[str]) -> _Observation | None:
+    kind = record["type"]
+    if kind not in {"binary", "multiple_choice"}:
+        return None
+    era = _record_era(record)
+    if era is None:
+        exclusions["missing era"] += 1
+        return None
+    if kind == "binary":
+        probability = record.get("our_prob_yes")
+        outcome = record.get("resolution_parsed")
+        if probability is None or not math.isfinite(probability) or not 0 < probability < 1:
+            exclusions["invalid binary forecast"] += 1
+            return None
+        if not isinstance(outcome, bool):
+            exclusions["invalid binary outcome"] += 1
+            return None
+        probabilities = (float(probability), 1 - float(probability))
+        winner = 0 if outcome else 1
+    else:
+        options = record.get("options") or []
+        ballot = record.get("our_forecast_values") or []
+        if len(options) != len(ballot) or not _valid_mc(ballot):
+            exclusions["invalid MC forecast"] += 1
+            return None
+        if record.get("resolution_parsed") not in options:
+            exclusions["invalid MC outcome"] += 1
+            return None
+        probabilities = tuple(float(value) for value in ballot)
+        winner = options.index(record["resolution_parsed"])
+    resolved = parse_iso_utc((record.get("metadata") or {}).get("actual_resolve_time"))
+    if resolved is None:
+        exclusions["missing resolution timestamp"] += 1
+        return None
+    forecast_time = parse_iso_utc(record.get("bot_comment_created_at"))
+    if era == PRE_FLIP and forecast_time is None:
+        exclusions["missing forecast timestamp"] += 1
+        return None
+    return _Observation(era, kind, probabilities, winner, resolved.date().isoformat(), forecast_time)
+
+
+def _first_era_half(item: _Observation, boundary: datetime) -> str:
+    if item.forecast_time is None:
+        raise ValueError("A first-era observation lacks its forecast timestamp")
+    return PRE_FLIP_EARLY if item.forecast_time < boundary else PRE_FLIP_LATE
+
+
+def _observations(records: list[dict]) -> tuple[list[_Observation], dict[str, int], str | None]:
     exclusions: Counter[str] = Counter()
-    for record in records:
-        kind = record["type"]
-        if kind not in {"binary", "multiple_choice"}:
-            continue
-        era = _record_era(record)
-        if era is None:
-            exclusions["missing era"] += 1
-            continue
-        if kind == "binary":
-            probability = record.get("our_prob_yes")
-            outcome = record.get("resolution_parsed")
-            if probability is None or not math.isfinite(probability) or not 0 < probability < 1:
-                exclusions["invalid binary forecast"] += 1
-                continue
-            if not isinstance(outcome, bool):
-                exclusions["invalid binary outcome"] += 1
-                continue
-            probabilities = (float(probability), 1 - float(probability))
-            winner = 0 if outcome else 1
-        else:
-            options = record.get("options") or []
-            ballot = record.get("our_forecast_values") or []
-            if len(options) != len(ballot) or not _valid_mc(ballot):
-                exclusions["invalid MC forecast"] += 1
-                continue
-            if record.get("resolution_parsed") not in options:
-                exclusions["invalid MC outcome"] += 1
-                continue
-            probabilities = tuple(float(value) for value in ballot)
-            winner = options.index(record["resolution_parsed"])
-        resolved = parse_iso_utc((record.get("metadata") or {}).get("actual_resolve_time"))
-        if resolved is None:
-            exclusions["missing resolution timestamp"] += 1
-            continue
-        observations.append(_Observation(era, kind, probabilities, winner, resolved.date().isoformat()))
-    observations.sort(
-        key=lambda item: (RECALIBRATION_ERAS.index(item.era), item.cluster, item.probabilities, item.winner)
-    )
-    return observations, dict(exclusions)
+    observations = [observation for record in records if (observation := _observation(record, exclusions)) is not None]
+    first_era_observations = [item for item in observations if item.era == PRE_FLIP]
+    boundary: datetime | None = None
+    if first_era_observations:
+        ordered_times = sorted(item.forecast_time for item in first_era_observations if item.forecast_time is not None)
+        middle = len(ordered_times) // 2
+        boundary = (
+            ordered_times[middle]
+            if len(ordered_times) % 2
+            else ordered_times[middle - 1] + (ordered_times[middle] - ordered_times[middle - 1]) / 2
+        )
+        observations = [
+            replace(item, era=_first_era_half(item, boundary)) if item.era == PRE_FLIP else item
+            for item in observations
+        ]
+    era_indices = {era: index for index, era in enumerate(RECALIBRATION_ERAS)}
+    observations.sort(key=lambda item: (era_indices[item.era], item.cluster, item.probabilities, item.winner))
+    return observations, dict(exclusions), boundary.isoformat() if boundary is not None else None
 
 
 def _evaluate(
@@ -279,7 +308,7 @@ def forward_chaining_recalibration(
     resolved outcomes from preceding eras; it does not reconstruct historical availability of
     those resolutions at each submission time. The caller applies source and exclusion cohorts.
     """
-    observations, exclusions = _observations(records)
+    observations, exclusions, boundary = _observations(records)
     rows: list[RecalibrationRow] = []
     pooled: list[PooledRecalibration] = []
     for kind, method in METHODS:
@@ -336,4 +365,4 @@ def forward_chaining_recalibration(
                 sum(row.n_test for row in rows if row.method == method and row.status != "evaluated"),
             )
         )
-    return RecalibrationResult(RECALIBRATION_ERAS, tuple(rows), tuple(pooled), exclusions)
+    return RecalibrationResult(RECALIBRATION_ERAS, boundary, tuple(rows), tuple(pooled), exclusions)

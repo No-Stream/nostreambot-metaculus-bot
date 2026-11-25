@@ -57,7 +57,8 @@ def test_binary_corp_log_miscalibration_uses_spot_peer_scale() -> None:
 
 def test_recalibration_rendering_shows_train_parameters_and_pooled_results() -> None:
     result = {
-        "era_order": ["pre_flip", "post_flip"],
+        "era_order": ["pre_flip (early half)", "pre_flip (late half)", "post_flip"],
+        "first_era_split_boundary": "2026-01-01T00:00:49.500000+00:00",
         "exclusions": {"missing era": 2},
         "rows": [
             {
@@ -86,6 +87,7 @@ def test_recalibration_rendering_shows_train_parameters_and_pooled_results() -> 
     }
     text = "\n".join(_recalibration(result))
     assert "post_flip" in text
+    assert "2026-01-01T00:00:49.500000+00:00" in text
     assert "intercept" in text
     assert "slope" in text
     assert "pooled" in text.lower()

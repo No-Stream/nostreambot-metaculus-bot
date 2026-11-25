@@ -1,6 +1,7 @@
 """Offline forward-chaining recalibration tests."""
 
 import math
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 import pytest
@@ -20,6 +21,7 @@ from metaculus_bot.scoring_common import spot_peer_delta
 def binary_record(index: int, era: str, probability: float = 0.8, outcome: bool = True) -> dict:
     return {
         "question_id": index,
+        "bot_comment_created_at": (datetime(2026, 1, 1, tzinfo=UTC) + timedelta(seconds=index)).isoformat(),
         "type": "binary",
         "config_era": era if era in {"pre_flip", "post_flip"} else "triple_era",
         "triple_subera": era if era.startswith("triple_") else None,
@@ -71,8 +73,51 @@ class TestFits:
 
 
 class TestForwardChaining:
+    def test_first_era_late_half_trains_only_on_early_half(self) -> None:
+        records = [binary_record(index, "pre_flip", 0.2 if index % 2 else 0.8, index % 3 == 0) for index in range(100)]
+        records.append(binary_record(101, "post_flip", 0.8))
+        result = forward_chaining_recalibration(records, draws=50)
+        late_rows = [row for row in result.rows if row.era == "pre_flip (late half)"]
+        assert len(late_rows) == 2
+        assert all(row.n_train == 50 for row in late_rows)
+        assert all(row.n_test == 50 for row in late_rows)
+        assert all(row.train_eras == ("pre_flip (early half)",) for row in late_rows)
+
+        changed_late_outcomes = [
+            {**record, "resolution_parsed": not record["resolution_parsed"]}
+            if record["config_era"] == "pre_flip" and record["question_id"] >= 50
+            else record
+            for record in records
+        ]
+        changed = forward_chaining_recalibration(changed_late_outcomes, draws=50)
+        assert [row.parameters for row in late_rows] == [
+            row.parameters for row in changed.rows if row.era == "pre_flip (late half)"
+        ]
+        assert result.first_era_split_boundary == "2026-01-01T00:00:49.500000+00:00"
+
+    def test_first_era_split_boundary_is_deterministic(self) -> None:
+        records = [binary_record(index, "pre_flip") for index in range(6)]
+        forward = forward_chaining_recalibration(records, draws=50)
+        reversed_result = forward_chaining_recalibration(list(reversed(records)), draws=50)
+        assert forward.first_era_split_boundary == reversed_result.first_era_split_boundary
+        assert forward.era_order == reversed_result.era_order
+        assert forward.rows == reversed_result.rows
+
+    def test_missing_first_era_forecast_timestamp_is_counted(self) -> None:
+        record = binary_record(0, "pre_flip")
+        record["bot_comment_created_at"] = None
+        result = forward_chaining_recalibration([record], draws=50)
+        assert result.exclusions["missing forecast timestamp"] == 1
+        assert result.rows == ()
+
     def test_chronological_training_no_future_or_test_era_outcomes(self) -> None:
-        records = [*training_binary(), binary_record(100, "post_flip", 0.8)]
+        records = [
+            *(
+                binary_record(index, "pre_flip", 0.2 if index % 80 < 40 else 0.8, index % 80 % 4 == 0)
+                for index in range(160)
+            ),
+            binary_record(200, "post_flip", 0.8),
+        ]
         future = [binary_record(200 + index, "triple_fall_config", 0.8, False) for index in range(80)]
         before = forward_chaining_recalibration(records, draws=50)
         after = forward_chaining_recalibration(list(reversed(records + future)), draws=50)
@@ -82,8 +127,8 @@ class TestForwardChaining:
         added = [row for row in after.rows if row.era == "post_flip"]
         assert original == added
         for row in original:
-            assert row.train_eras == ("pre_flip",)
-            assert row.n_train == 80
+            assert row.train_eras == ("pre_flip (early half)", "pre_flip (late half)")
+            assert row.n_train == 160
             assert row.n_test == 1
             assert row.status == "evaluated"
             assert row.mean_delta == pytest.approx(spot_peer_delta(old_prob=0.8, new_prob=0.25, question_type="binary"))
@@ -93,12 +138,15 @@ class TestForwardChaining:
         for pooled in result.pooled:
             if pooled.question_type == "binary":
                 assert pooled.n_test == 0
-                assert pooled.skipped_eras == 2
+                assert pooled.skipped_eras == 3
                 assert pooled.skipped_questions == 50
         assert all(row.status == "insufficient training" for row in result.rows)
 
     def test_pooled_delta_and_interval_use_questions_across_test_eras(self) -> None:
-        records = training_binary()
+        records = [
+            binary_record(index, "pre_flip", 0.2 if index % 80 < 40 else 0.8, index % 80 % 4 == 0)
+            for index in range(160)
+        ]
         records += [binary_record(100 + index, "post_flip", outcome=index % 3 == 0) for index in range(20)]
         records += [binary_record(200 + index, "triple_pre_market", outcome=index % 2 == 0) for index in range(10)]
         result = forward_chaining_recalibration(records, draws=50)
@@ -106,11 +154,11 @@ class TestForwardChaining:
             if pooled.question_type != "binary":
                 continue
             evaluated = [row for row in result.rows if row.method == pooled.method and row.status == "evaluated"]
-            assert pooled.n_test == 30
+            assert pooled.n_test == 110
             assert pooled.sum_delta == pytest.approx(
                 sum(row.sum_delta for row in evaluated if row.sum_delta is not None)
             )
-            assert pooled.mean_delta == pytest.approx(pooled.sum_delta / 30)
+            assert pooled.mean_delta == pytest.approx(pooled.sum_delta / 110)
             assert pooled.interval is not None
         assert result == forward_chaining_recalibration(records, draws=50)
 

@@ -23,9 +23,8 @@ from metaculus_bot.performance_analysis.analysis import PitReading, jeffreys_ci,
 from metaculus_bot.performance_analysis.cohorts import EXCLUSION_COHORTS, parse_exclude_qids
 from metaculus_bot.performance_analysis.collector import load_dataset, resolve_numeric_record_to_score_inputs
 from metaculus_bot.performance_analysis.ghosts import (
-    ghost_binary_prob,
+    clamp_ghost_to_published_bounds,
     ghost_cdf_on_published_grid,
-    ghost_mc_probs,
     ghost_numeric_percentiles,
     load_concluding_ghosts,
 )
@@ -579,9 +578,9 @@ def ghost_comparison(record: dict, ghost: dict) -> GhostComparison:
     if question_type != ghost["qtype"]:
         return GhostComparison("not_comparable_type")
     if question_type == "binary":
-        alternative = ghost_binary_prob(ghost)
+        alternative = clamp_ghost_to_published_bounds(ghost, record)
         published = record["our_prob_yes"]
-        if alternative is None or published is None:
+        if not isinstance(alternative, float) or published is None:
             return GhostComparison("missing_or_incomplete_vector")
         if not isinstance(record["resolution_parsed"], bool):
             return GhostComparison("invalid_outcome")
@@ -589,11 +588,11 @@ def ghost_comparison(record: dict, ghost: dict) -> GhostComparison:
         old = published if record["resolution_parsed"] else 1 - published
         new = alternative if record["resolution_parsed"] else 1 - alternative
     elif question_type == "multiple_choice":
-        alternatives = ghost_mc_probs(ghost)
+        alternatives = clamp_ghost_to_published_bounds(ghost, record)
         options = record["options"]
         published_vector = record["our_forecast_values"]
         if (
-            not alternatives
+            not isinstance(alternatives, dict)
             or not options
             or not published_vector
             or len(options) != len(published_vector)
@@ -856,9 +855,9 @@ def _ghost_discrimination(records: list[dict], ghosts: dict[int, dict], *, seed:
         ghost = ghosts.get(record["post_id"])
         if ghost is None or ghost["qtype"] != "multiple_choice":
             continue
-        probabilities = ghost_mc_probs(ghost)
+        probabilities = clamp_ghost_to_published_bounds(ghost, record)
         options = record["options"]
-        if not probabilities or not options or any(option not in probabilities for option in options):
+        if not isinstance(probabilities, dict) or not options or any(option not in probabilities for option in options):
             incomplete += 1
             continue
         if record["resolution_parsed"] in options:
