@@ -55,6 +55,8 @@ FALL_GEMINI4_HYDROGEN_MERGED_AT = datetime(2026, 11, 13, 12, 43, 2, tzinfo=UTC)
 FALL_GEMINI4_CARBON_MERGED_AT = datetime(2026, 11, 13, 14, 36, 58, tzinfo=UTC)
 # 79c1d7a, PR #85: the Google forecaster back to gemini-4-argon (default effort) after Carbon missed the soft deadline.
 FALL_GEMINI4_ARGON_RETURN_MERGED_AT = datetime(2026, 11, 14, 8, 11, 0, tzinfo=UTC)
+# 87590c8, PR #87: four forecasters (Fable 5.2 added), stated open-bound tails, the 2% Metaculus tail floor.
+FALL_FOUR_MEMBER_MERGED_AT = datetime(2026, 11, 25, 6, 47, 15, tzinfo=UTC)
 
 # 9f1175c (grid-scaled max-step for discrete CDF resampling) rode b4e9df0: one instant, two gates.
 GRID_SCALED_MAX_STEP_MERGED_AT = B4E9DF0_MERGED_AT
@@ -78,6 +80,7 @@ BOUNDARIES_UTC: dict[str, str] = {
     "fall_gemini4_hydrogen_e5b3b52": FALL_GEMINI4_HYDROGEN_MERGED_AT.isoformat(),
     "fall_gemini4_carbon_fdc1483": FALL_GEMINI4_CARBON_MERGED_AT.isoformat(),
     "fall_gemini4_argon_return_79c1d7a": FALL_GEMINI4_ARGON_RETURN_MERGED_AT.isoformat(),
+    "fall_four_member_87590c8": FALL_FOUR_MEMBER_MERGED_AT.isoformat(),
     "linters_eded193_not_a_boundary": LINTERS_MERGED_AT.isoformat(),
 }
 
@@ -106,6 +109,7 @@ FINE_SUBERA_TABLE: SuberaTable = (
     ("fall_gemini4_hydrogen", FALL_GEMINI4_HYDROGEN_MERGED_AT),
     ("fall_gemini4_carbon", FALL_GEMINI4_CARBON_MERGED_AT),
     ("fall_gemini4_argon_return", FALL_GEMINI4_ARGON_RETURN_MERGED_AT),
+    ("fall_four_member", FALL_FOUR_MEMBER_MERGED_AT),
     # A new sub-era is one appended row: (<name>, <merge-to-main committer timestamp>).
 )
 

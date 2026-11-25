@@ -29,7 +29,7 @@ medium in production. Fable 5.2 took 143 s but OpenRouter billed $0.82 for the c
 at roughly $1.8-1.9 per question against the operator's ~$2 ceiling; Artificial Analysis scores it 62 at high and 56
 at medium. On Mantic, the direct Anthropic route inherits each slot's effort. Receipts are
 `scratch/trace_evals_2026-11-23/reasoning_effort_high_vs_xhigh.md` and `scratch/trace_evals_2026-11-23/fable52_effort.md`
-in the artifacts repo. This is a config-era boundary; record the era at merge using the merge committer timestamp.
+in the artifacts repo. This is a config-era boundary: merge `87590c8` at 2026-11-25T06:47:15Z, recorded as the `fall_four_member` sub-era in `performance_analysis/eras.py` and pooled into `triple_fall_config`.
 
 **2026-11-14 (Google slot back to Gemini 4 Argon at the provider-default effort):** `gemini-4-carbon` at
 `reasoning.effort` `high` hit `FORECASTER_SOFT_DEADLINE` (600s) on all three questions it saw after PR #83
