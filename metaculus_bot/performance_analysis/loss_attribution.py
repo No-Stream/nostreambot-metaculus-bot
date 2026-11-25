@@ -972,6 +972,9 @@ def main(argv: list[str] | None = None) -> None:
         "era_field": args.era_field,
         "seed": args.seed,
         "draws": args.draws,
+        "min_n_for_interval": MIN_N_FOR_INTERVAL,
+        "min_clusters_for_interval": MIN_CLUSTERS_FOR_INTERVAL,
+        "floor_threshold": FLOOR_THRESHOLD,
         "mc_all": sum(record["type"] == "multiple_choice" for record in included),
         "mc_complete_member_vectors_before": sum(
             record["type"] == "multiple_choice" and _has_complete_member_vector(record) for record in data

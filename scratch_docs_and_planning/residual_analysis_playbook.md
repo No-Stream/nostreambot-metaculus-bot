@@ -105,6 +105,12 @@ The standing set, each reconciling explicitly with the prior round's same-named 
   peer over `all` / `last_N` / `last_90d` / `current_clamp_regime` / `triple_era` and the disjoint `era_*`
   slices; a floor fitted on older records must carry into the window (a fit that moves nothing is
   vacuous, not a pass); a candidate looser than the in-force clamp is CENSORED, read `cen` / `cen_m` bounds
+- loss attribution (`performance_analysis.loss_attribution`; run on `<round>/perf_all_tagged.json`):
+  `uv run python -m metaculus_bot.performance_analysis.loss_attribution --cached <round>/perf_all_tagged.json
+  --exclude-qids known_bug,degraded_run,partial_degraded --telemetry-archive backtests/telemetry_archive
+  --out <round>/loss_attribution`. Read points-lost bins beside the outcome-blind confidence bins, then review
+  CORP calibration and discrimination diagnostics, ghost distance comparisons, and the per-section exclusion counts;
+  see `docs/performance_analysis.md` "Loss attribution" for interpretation, units, and decision history
 - era scoreboard and era gap (`performance_analysis.era_gap`; `--strict` plus one unfiltered, treated
   era = the live roster, comparison era = the one it replaced; sub-era arms via `--era-field
   triple_subera_fine`, the coarse `config_era` being the default): per-arm spot mean / median / frac neg with
