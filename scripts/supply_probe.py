@@ -44,7 +44,7 @@ from metaculus_bot.config import load_environment
 from metaculus_bot.constants import MANTIC_TOKEN_ENV, MANTIC_TOURNAMENT_ID, PLATFORM_METACULUS
 
 # Shared with the scoring pull so the two count questions one way (docs/supply_probe.md "API facts").
-from metaculus_bot.performance_analysis.collector import FETCH_DELAY_SECS, questions_on_post
+from metaculus_bot.performance_analysis.collector import MIN_REQUEST_INTERVAL_SECS, questions_on_post
 from metaculus_bot.time_utils import _as_utc, parse_iso_utc
 from scripts.supply_probe_platforms import (
     DEFAULT_SLUGS,
@@ -70,8 +70,8 @@ PAGE_SIZE = 100
 MAX_PAGES = 40  # 4,000 posts per status — an order of magnitude above any slug we probe
 REQUEST_SPACING_SECS = 1.0
 # Shared with the scoring pull so the two read-only Metaculus walkers keep one politeness.
-DETAIL_REQUEST_SPACING_SECS = FETCH_DELAY_SECS
-# At 0.5 s spacing this is an INFO line about every 13 s: enough to tell a slow sweep from a wedged one.
+DETAIL_REQUEST_SPACING_SECS = MIN_REQUEST_INTERVAL_SECS
+# At 2 s spacing this is an INFO line about every 50 s: enough to tell a slow sweep from a wedged one.
 DETAIL_PROGRESS_EVERY = 25
 REQUEST_TIMEOUT_SECS = 45
 MAX_RETRIES = 6

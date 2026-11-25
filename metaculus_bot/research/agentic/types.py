@@ -29,6 +29,8 @@ class EvidencePassage(BaseModel):
     retrieval_method: str
     content_origin: Literal["source_text", "structured_data", "provider_summary", "generated_answer"]
     clipped: bool = False
+    source_start_char: int | None = None
+    source_end_char: int | None = None
     model_config = {"frozen": True}
 
 
@@ -47,6 +49,11 @@ class FindingSupport(BaseModel):
     model_config = {"frozen": True}
 
 
+class EvidencePagination(BaseModel):
+    source_start_char: int
+    source_total_chars: int
+
+
 class ToolOutcome(BaseModel):
     content_markdown: str
     links: list[str] = Field(default_factory=list)
@@ -55,6 +62,7 @@ class ToolOutcome(BaseModel):
     truncated: bool = False
     image_views: list[ImageView] = Field(default_factory=list)
     evidence_passages: list[EvidencePassage] = Field(default_factory=list)
+    evidence_pagination: EvidencePagination | None = None
 
     model_config = {"arbitrary_types_allowed": True}
 

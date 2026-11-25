@@ -205,7 +205,15 @@ def test_build_numeric_distribution_success(monkeypatch):
     result = build_numeric_distribution(sanitized, question, zero_point=None, model_name="some/forecaster")
 
     assert result == "pchip"
-    generator.assert_called_once_with(sanitized, question, None, model_name="some/forecaster")
+    generator.assert_called_once_with(
+        sanitized,
+        question,
+        None,
+        model_name="some/forecaster",
+        p_below_lower_bound=None,
+        p_above_upper_bound=None,
+        tail_diagnostics=None,
+    )
     create_dist.assert_called_once_with(mock_cdf, sanitized, question, None)
     validate.assert_called_once_with("pchip", question)
 

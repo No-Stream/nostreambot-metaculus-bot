@@ -39,6 +39,7 @@ incidents behind the design.
 | `MARKET_RANKING_DEGRADED` | `research/prediction_market.py:_rank_pool` | Per-question ranker fail-open, and why. |
 | `MARKET_TIER_CAPPED` | `research/prediction_market.py:_log_tier_caps` | Per-question staleness tier cap. |
 | `NUMERIC_DEGENERATE_DECLARATION` | `numeric/pipeline.py:_apply_jitter_and_clamp` | Per-forecaster point-mass numeric declaration. |
+| `NUMERIC_STATED_TAIL` | `forecaster_runners.py` | Per-member, per-open-bound stated tail probability, its handling, conflicting percentile count, and constructed mass. |
 | `NUMERIC_AGGREGATE_GRID_MISMATCH` | `numeric/utils.py:aggregate_numeric` | Per-model CDF whose grid length disagreed with the question's. |
 | `CDF_MAXSTEP_CLIP` | `numeric/pchip_cdf.py:safe_cdf_bounds` | Per-CDF-build max-step clip. |
 | `PERCENTILE_ROUNDTRIP` | `numeric/roundtrip.py:format_percentile_roundtrip_marker`, emitted from `forecaster_runners.py` | Drift from original stated percentile anchors to each built member CDF. |
@@ -424,6 +425,30 @@ this line is the only place the cause is named.
 `sanitize_percentiles` callers pass it, so "unknown" now means a NEW caller forgot to; it is not
 in `_NONE_SENTINELS`, so it stays a readable string rather than coercing into an absent field.
 `qid_kind` is `question_id` (`numeric/pipeline.py` emits `question.id_of_question`).
+
+### NUMERIC_STATED_TAIL
+
+Per-member, per-open-bound record emitted from `forecaster_runners.py` after building the member
+CDF. `question` is `question.id_of_question`, `model` identifies the forecaster, and `bound` is
+`lower` or `upper`. `stated` is the model's probability as a compact number, `none` when absent,
+or `invalid-token` when its value cannot be parsed; the archive coerces numbers normally and
+`none` to `null`. `status` is one of `used`, `missing`, `invalid`, `clamped`, or `build_failed_ignored`: the member used
+the valid declaration, inferred a missing tail, rejected an invalid declaration and inferred the
+tail, limited the declared tail to satisfy the CDF constraints, or (last) the CDF build with the stated
+tails failed and the member was rebuilt without them rather than dropped, respectively.
+
+`dropped_percentiles` counts the percentile anchors removed because they contradict that side's
+valid stated tail. `resulting_mass` is the mass outside that bound in the constructed member CDF:
+the first CDF value for `lower`, or one minus the last CDF value for `upper`. This records the
+member distribution before aggregation and Mantic's aggregate tail floor; those published masses
+remain on `NUMERIC_AGGREGATE`. One line is emitted per open side, so a member with two open bounds
+has two records; closed sides have none. `qid_kind` is `question_id`.
+
+The exact field order is:
+
+```text
+NUMERIC_STATED_TAIL: question=<id> model=<model> bound=<lower|upper> stated=<number|none|invalid-token> status=<used|missing|invalid|clamped|build_failed_ignored> dropped_percentiles=<count> resulting_mass=<mass>
+```
 
 ### NUMERIC_AGGREGATE_GRID_MISMATCH
 
@@ -1609,3 +1634,9 @@ fields.
 Members without original percentile anchors, such as PMF members, emit no marker. Member
 telemetry precedes the unit guard, as `MEMBER_FORECAST` does; join survivors when restricting an
 audit to members used in the aggregate.
+# ANTHROPIC_FORECAST_ROUTE
+
+Mantic Anthropic forecaster calls record the model, `route` (`direct` or `fallback`),
+and `reason` (`success`, `credit`, `auth`, `rate_limit`, `server`, or `other`). The fallback
+uses the personal OpenRouter key and shares the forecaster deadline.
+

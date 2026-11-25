@@ -4,12 +4,14 @@ Keeping these objects in a single module avoids merge-conflicts and makes it
 possible to tweak/benchmark models without touching application code.
 """
 
+import logging
+import os
 from typing import Any
 
 from forecasting_tools import GeneralLlm
 
-from metaculus_bot.constants import GEMINI_OUTPUT_TOKEN_LIMIT, OPENROUTER_OUTPUT_TOKEN_LIMIT
-from metaculus_bot.fallback_openrouter import build_llm_with_openrouter_fallback
+from metaculus_bot.constants import GEMINI_OUTPUT_TOKEN_LIMIT, OPENROUTER_OUTPUT_TOKEN_LIMIT, PERSONAL_ANTHROPIC_KEY_ENV
+from metaculus_bot.fallback_openrouter import DirectAnthropicFallbackLlm, build_llm_with_openrouter_fallback
 
 __all__ = [
     "DISAGREEMENT_ANALYZER_LLM",
@@ -64,19 +66,19 @@ _FORECASTER_CONFIG = {**REASONING_MODEL_CONFIG, "allowed_tries": 1}
 def forecaster_role(model: str) -> str:
     """``forecaster:<vendor>`` for an ``openrouter/<vendor>/<model>`` roster slug.
 
-    The CREDIT_ROLE_SPEND spend line every roster slot books under. The roster is
-    latest-per-vendor, one slot each, so the VENDOR is the stable identity of a slot
-    across model rotations — a per-model role would start a new time series at every swap
-    and defeat the era-over-era cost comparison this exists for.
+    The Fable slot has its own role. Other slots retain their vendor roles so their
+    cost histories remain comparable across model rotations.
     """
     parts = model.split("/")
     if len(parts) < 3 or parts[0] != "openrouter":
         raise ValueError(f"forecaster_role expects an openrouter/<vendor>/<model> slug, got {model!r}")
+    if parts[1] == "anthropic" and "fable" in parts[2]:
+        return "forecaster:anthropic_fable"
     return f"forecaster:{parts[1]}"
 
 
 def _forecaster_slot(model: str, **kwargs: Any) -> GeneralLlm:
-    """One roster member, booked in the CREDIT_ROLE_SPEND ledger under ``forecaster:<vendor>``.
+    """One roster member, booked in the CREDIT_ROLE_SPEND ledger under ``forecaster:<vendor>``, or ``forecaster:anthropic_fable`` for Fable.
 
     The role is derived from the slug rather than written beside it so a roster swap cannot
     leave a slot mislabeled.
@@ -104,7 +106,7 @@ FORECASTER_LLMS: list[GeneralLlm] = [
     # scratch/ensemble_power_model_2026-07-20/) found the triple non-inferior on
     # binary/MC and only a fragile numeric lean toward the full roster (+3.24,
     # 95% CI [-2.5, +9.1], P(loss>1pt/Q)=0.80, driven by 2 questions) — accepted as
-    # a ship-and-watch bet; see FUTURE.md "Frozen-triple numeric watch". Dropping
+    # a ship-and-watch bet; see the retired design log (git history) "Frozen-triple numeric watch". Dropping
     # grok (x-ai, 404s on the donated key) also ends routine personal-key forecaster
     # spend: only the gemini-3.1-pro-preview personal-key PIN bills
     # OPENROUTER_API_KEY now; the other two slots route via the donated key.
@@ -114,16 +116,17 @@ FORECASTER_LLMS: list[GeneralLlm] = [
     # reasoning-effort audit (scratch/reasoning_effort_audit_2026-07-20/) found
     # default->high clearly worth it but high->xhigh UNMEASURED, so we stop paying
     # the unmeasured premium here (the three slots measure within 12% of each other,
-    # $0.24 to $0.27 a question, 2026-09-09). opus-4.8 keeps xhigh below as the remaining premium bet
-    # (FUTURE.md "Price the high->xhigh reasoning-effort premium"). (2026-07-15
+    # $0.24 to $0.27 a question, 2026-09-09). opus-4.8 kept xhigh as the remaining premium bet at the time
+    # (backlog task-22 "High versus xhigh reasoning effort"). (2026-07-15
     # had bumped this high -> xhigh.) GPT-6.1 Sol supports low, medium, high,
     # xhigh and max reasoning effort per the official model documentation.
     # 2026-09-22: sol -> gpt-6-sol (GPT-6 release) and high -> xhigh (operator), matching the
     # Anthropic slot; a single prod-prompt timing probe checked it against FORECASTER_SOFT_DEADLINE.
     # 2026-09-29: gpt-6-sol -> gpt-6.1-sol; effort and deadline settings unchanged.
+    # 2026-11-24: Sol effort xhigh -> high.
     _forecaster_slot(
         "openrouter/openai/gpt-6.1-sol",
-        reasoning={"effort": "xhigh"},
+        reasoning={"effort": "high"},
     ),
     # Anthropic slot. 2026-07-15: enabled:True (provider-default adaptive thinking)
     # -> explicit effort=xhigh. Anthropic also exposes "max" one tier above xhigh —
@@ -135,11 +138,19 @@ FORECASTER_LLMS: list[GeneralLlm] = [
     # output_config.effort knob and "verbosity wins if both are passed" (OpenRouter Claude 4.7
     # migration guide), so this slot had been running at effort HIGH, not the xhigh declared here,
     # since at least 2026-02. Never send verbosity alongside reasoning.effort on an Anthropic slot.
+    # 2026-11-24: Opus declared effort xhigh -> high.
     _forecaster_slot(
         "openrouter/anthropic/claude-opus-5.5",
-        reasoning={"effort": "xhigh"},
+        reasoning={"effort": "high"},
     ),
-    # Google slot. No explicit reasoning-effort kwarg; use provider defaults (medium).
+    # 2026-11-24: medium, not high. The timing probe on Q46727 at high took 143 s but cost $0.82 per call,
+    # which would put the bot near the operator's ~$2/question ceiling; see docs/roster_history.md.
+    _forecaster_slot(
+        "openrouter/anthropic/claude-fable-5.2",
+        reasoning={"effort": "medium"},
+    ),
+    # Google slot at medium, its long-standing provider default, set explicitly. 2026-11-24: high took 411 s
+    # of the 600 s FORECASTER_SOFT_DEADLINE and $0.38 on Q46727 (timing probe), against 69-96 s at medium.
     # 2026-11-14: back to gemini-4-argon after gemini-4-carbon at effort=high (PR #83, 2026-11-13) hit
     # FORECASTER_SOFT_DEADLINE on all 3 questions it saw (Q46727, Q46728, Mantic 879), while Argon had
     # finished 5 of 5 the day before in 69-96s. See docs/roster_history.md 2026-11-14.
@@ -147,7 +158,9 @@ FORECASTER_LLMS: list[GeneralLlm] = [
     # integration returned quota 0 for Argon in the 2026-10-13 live probe.
     # Some Argon routes advertise a much larger limit, but 65,536 is the
     # verified ceiling shared by all routes; preserve provider fallback options.
-    _forecaster_slot("openrouter/google/gemini-4-argon", max_tokens=GEMINI_OUTPUT_TOKEN_LIMIT),
+    _forecaster_slot(
+        "openrouter/google/gemini-4-argon", reasoning={"effort": "medium"}, max_tokens=GEMINI_OUTPUT_TOKEN_LIMIT
+    ),
 ]
 
 
@@ -161,6 +174,26 @@ def _forecaster_display_name(llm: GeneralLlm) -> str:
 
 
 FORECASTER_MODEL_NAMES: list[str] = [_forecaster_display_name(llm) for llm in FORECASTER_LLMS]
+
+_MANTIC_ANTHROPIC_MODELS = {
+    "openrouter/anthropic/claude-opus-5.5": "anthropic/claude-opus-5-5",
+    "openrouter/anthropic/claude-fable-5.2": "anthropic/claude-fable-5-2",
+}
+
+
+def mantic_forecasters() -> list[GeneralLlm]:
+    """Use the personal Anthropic key for Mantic when it is configured."""
+    api_key = os.getenv(PERSONAL_ANTHROPIC_KEY_ENV)
+    if not api_key:
+        logging.getLogger(__name__).info("Personal Anthropic key unset; Mantic forecasters use OpenRouter")
+        return FORECASTER_LLMS
+    return [
+        DirectAnthropicFallbackLlm(llm, _MANTIC_ANTHROPIC_MODELS[llm.model], api_key, forecaster_role(llm.model))
+        if llm.model in _MANTIC_ANTHROPIC_MODELS
+        else llm
+        for llm in FORECASTER_LLMS
+    ]
+
 
 # Summarizer: compresses raw AskNews article markdown into an analyst briefing
 # (AskNews-only; all other providers already emit LLM prose). sol → terra
@@ -222,7 +255,7 @@ RESEARCHER_LLM = SUMMARIZER_LLM
 STACKER_LLM: GeneralLlm = build_llm_with_openrouter_fallback(
     # 2026-07-20: fable-5 → opus-4.8 (fable-5 pulled from BOTH roles after
     # content=None failures in the 2026-07-19 test_bot run — see the forecaster-slot
-    # comment above + FUTURE.md). Stacking is prod-disabled, so this is
+    # comment above + backlog task-34 "claude-fable-5 for the Anthropic forecaster slots"). Stacking is prod-disabled, so this is
     # backtest/ablation-only exposure today. 2026-09-22: opus-4.8 -> opus-5.5
     # (Anthropic release); verbosity removed, since it overrode reasoning.effort (see the
     # forecaster slot above). Anthropic uses

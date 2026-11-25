@@ -362,3 +362,32 @@ class TestIsReplayable:
 
     def test_an_unrecognized_type_is_not(self):
         assert is_replayable({"type": "date", "resolution_parsed": 5.0}) is False
+
+
+def test_member_replay_uses_fenced_stated_tail() -> None:
+    inputs = member_scoring_inputs(_numeric_record("above_upper_bound", open_upper=True))
+    assert inputs is not None
+    body = '```json\n{"question_type": "numeric", "prob_above_upper_bound": 0.10, "declared_percentiles": {"0.1": 30, "0.5": 50, "0.9": 70}}\n```'
+    cdf = member_cdf(_curve(50.0, 20.0), inputs, reasoning=body)
+    assert 1.0 - cdf[-1] == pytest.approx(0.10, abs=1e-8)
+
+
+def test_solo_and_subset_replay_attribute_stated_tail_to_the_member() -> None:
+    record = _numeric_record("above_upper_bound", open_upper=True)
+    body = (
+        '```json\n{"question_type": "numeric", "prob_above_upper_bound": 0.10, '
+        '"declared_percentiles": {"0.1": 30, "0.5": 50, "0.9": 70}}\n```'
+    )
+    record["comment_text"] = f"## R1: Forecaster 1 Reasoning\nModel: openrouter/test/model\n\n{body}"
+    curve = _curve(50.0, 20.0)
+    inputs = member_scoring_inputs(record)
+    assert inputs is not None
+    expected = score_member_cdf(member_cdf(curve, inputs, reasoning=body), inputs)
+    assert replay_solo_score(record, curve, model="model") == pytest.approx(expected)
+    legacy_score = replay_solo_score(record, curve)
+    assert legacy_score is not None
+    assert legacy_score < expected
+    subset_score = replay_subset_score(record, {"model": curve}, ["model"], method="median")
+    cdf = member_cdf(curve, inputs, reasoning=body)
+    expected_subset = score_member_cdf(postprocess_replay_cdf(np.asarray(cdf), inputs), inputs)
+    assert subset_score == pytest.approx(expected_subset)

@@ -37,6 +37,7 @@ from metaculus_bot.performance_analysis.collector import load_dataset
 from metaculus_bot.performance_analysis.member_replay import (
     MemberScoringInputs,
     member_cdf,
+    member_reasoning,
     member_scoring_inputs,
     score_member_cdf,
 )
@@ -357,6 +358,7 @@ def _score_member_curve(
     inputs: MemberScoringInputs,
     *,
     post_id: object,
+    reasoning: str = "",
 ) -> dict | None:
     """Rebuild one member's CDF on the record's own grid and log-score it.
 
@@ -370,7 +372,7 @@ def _score_member_curve(
             f"{conflicts} label(s) declared twice with different values; the last value is scored"
         )
     try:
-        cdf = member_cdf(percentile_pairs, inputs)
+        cdf = member_cdf(percentile_pairs, inputs, reasoning=reasoning)
     except (ValueError, RuntimeError) as exc:
         logger.warning(f"Per-model PCHIP failure post={post_id} model={model}: {exc}")
         return None
@@ -403,7 +405,9 @@ def _rank_numeric(record: dict) -> list[dict]:
     ranked: list[dict] = []
     skipped_count = 0
     for model, percentile_pairs in per_model.items():
-        entry = _score_member_curve(model, percentile_pairs, inputs, post_id=post_id)
+        entry = _score_member_curve(
+            model, percentile_pairs, inputs, post_id=post_id, reasoning=member_reasoning(record, model)
+        )
         if entry is None:
             skipped_count += 1
         else:

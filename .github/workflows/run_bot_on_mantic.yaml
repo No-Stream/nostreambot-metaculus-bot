@@ -10,8 +10,8 @@
 # donated-routing flags off; cli refuses to start a Mantic run while
 # DONATED_OPENROUTER_KEY_ENABLED still reads true. There is no Metaculus token here either:
 # a Mantic run must not depend on Metaculus at all.
-# Consequence: with a single OpenRouter key there is no key-swap fallback, so a personal-key
-# 401/402/429 is a hard failure of the question by design.
+# Anthropic forecasters use the optional personal direct key, with the personal OpenRouter
+# key as a fallback for fast direct-provider failures.
 #
 # Merging this file to main auto-enables the schedule: GitHub runs a new scheduled workflow
 # as soon as its file is on the default branch, unless someone disables it in the Actions
@@ -138,6 +138,7 @@ jobs:
           # and the master switch below makes cli fail shut if a future edit re-enables
           # donated routing without also re-adding the secret.
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          PERSONAL_ANT_KEY: ${{ secrets.PERSONAL_ANT_KEY }}
           DONATED_OPENROUTER_KEY_ENABLED: 'false'
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ASKNEWS_CLIENT_ID: ${{ secrets.ASKNEWS_CLIENT_ID }}

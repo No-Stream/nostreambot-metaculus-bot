@@ -31,7 +31,12 @@ from metaculus_bot.numeric.config import (
     grid_step_constraints,
 )
 from metaculus_bot.numeric.diagnostics import log_pchip_fallback, validate_cdf_construction
-from metaculus_bot.numeric.pchip_cdf import build_cdf_value_grid, generate_pchip_cdf, percentiles_to_pchip_format
+from metaculus_bot.numeric.pchip_cdf import (
+    StatedTailDiagnostics,
+    build_cdf_value_grid,
+    generate_pchip_cdf,
+    percentiles_to_pchip_format,
+)
 from metaculus_bot.numeric.pchip_processing import (
     create_fallback_numeric_distribution,
     create_pchip_numeric_distribution,
@@ -77,39 +82,86 @@ def build_numeric_distribution(
     zero_point: float | None,
     *,
     model_name: str = "",
+    p_below_lower_bound: float | None = None,
+    p_above_upper_bound: float | None = None,
+    tail_diagnostics: StatedTailDiagnostics | None = None,
 ) -> NumericDistribution:
-    """Create a numeric distribution, falling back to a heuristic on failure.
+    """Create a numeric distribution, with a legacy fallback when no tail is stated.
 
     ``model_name`` only labels the ``CDF_MAXSTEP_CLIP`` marker (whose declaration the
     platform's per-bin cap had to clip), the same way ``sanitize_percentiles`` labels
     ``NUMERIC_DEGENERATE_DECLARATION``.
     """
 
-    if question.cdf_size != PCHIP_CDF_POINTS:
-        prediction = _build_discrete_distribution(
-            percentile_list, question, zero_point, question.cdf_size, model_name=model_name
-        )
-        validate_cdf_construction(prediction, question)
-        return prediction
-
     try:
-        pchip_cdf, _smoothing_applied, _aggressive = generate_pchip_cdf_with_smoothing(
+        prediction = _build_numeric_distribution_once(
             percentile_list,
             question,
             zero_point,
             model_name=model_name,
+            p_below_lower_bound=p_below_lower_bound,
+            p_above_upper_bound=p_above_upper_bound,
+            tail_diagnostics=tail_diagnostics,
         )
-        prediction = create_pchip_numeric_distribution(pchip_cdf, percentile_list, question, zero_point)
-    # Documented soft-fail boundary: ANY PCHIP build failure delegates the CDF to
-    # forecasting-tools' builder, which re-validates. Narrowing this would turn a
-    # recoverable build failure into a dropped forecast.
-    except Exception as exc:  # noqa: BLE001  # HARNESS-SCAN-EXEMPT-broad-except
-        log_pchip_fallback(question, exc)
-        prediction = create_fallback_numeric_distribution(percentile_list, question, zero_point, model_name=model_name)
-
+    # A failed stated-tail build is retried on the legacy path on every grid.
+    except Exception as exc:  # HARNESS-SCAN-EXEMPT-broad-except
+        if p_below_lower_bound is None and p_above_upper_bound is None:
+            if question.cdf_size != PCHIP_CDF_POINTS:
+                raise
+            log_pchip_fallback(question, exc)
+            prediction = create_fallback_numeric_distribution(
+                percentile_list, question, zero_point, model_name=model_name
+            )
+        else:
+            logger.warning(
+                "Stated-tail CDF build failed for Q %s (%s); rebuilding without stated tails",
+                question.id_of_question,
+                exc,
+            )
+            if tail_diagnostics is not None:
+                tail_diagnostics.lower_dropped_percentiles = ()
+                tail_diagnostics.upper_dropped_percentiles = ()
+                tail_diagnostics.lower_applied_probability = None
+                tail_diagnostics.upper_applied_probability = None
+                tail_diagnostics.lower_clamped = False
+                tail_diagnostics.upper_clamped = False
+                tail_diagnostics.stated_tails_discarded = True
+            return build_numeric_distribution(percentile_list, question, zero_point, model_name=model_name)
     validate_cdf_construction(prediction, question)
-
     return prediction
+
+
+def _build_numeric_distribution_once(
+    percentile_list: list[Percentile],
+    question: NumericQuestion,
+    zero_point: float | None,
+    *,
+    model_name: str,
+    p_below_lower_bound: float | None,
+    p_above_upper_bound: float | None,
+    tail_diagnostics: StatedTailDiagnostics | None,
+) -> NumericDistribution:
+    if question.cdf_size != PCHIP_CDF_POINTS:
+        return _build_discrete_distribution(
+            percentile_list,
+            question,
+            zero_point,
+            question.cdf_size,
+            model_name=model_name,
+            p_below_lower_bound=p_below_lower_bound,
+            p_above_upper_bound=p_above_upper_bound,
+            tail_diagnostics=tail_diagnostics,
+        )
+    pchip_cdf, _smoothing_applied, _aggressive = generate_pchip_cdf_with_smoothing(
+        percentile_list,
+        question,
+        zero_point,
+        model_name=model_name,
+        p_below_lower_bound=p_below_lower_bound,
+        p_above_upper_bound=p_above_upper_bound,
+        tail_diagnostics=tail_diagnostics,
+    )
+    return create_pchip_numeric_distribution(pchip_cdf, percentile_list, question, zero_point)
 
 
 def _build_discrete_distribution(
@@ -119,6 +171,9 @@ def _build_discrete_distribution(
     target_cdf_size: int,
     *,
     model_name: str = "",
+    p_below_lower_bound: float | None = None,
+    p_above_upper_bound: float | None = None,
+    tail_diagnostics: StatedTailDiagnostics | None = None,
 ) -> NumericDistribution:
     """Build a PCHIP distribution directly on the question's own non-201 grid.
 
@@ -144,6 +199,9 @@ def _build_discrete_distribution(
         question_id=question.id_of_question,
         question_url=question.page_url,
         model_name=model_name,
+        p_below_lower_bound=p_below_lower_bound,
+        p_above_upper_bound=p_above_upper_bound,
+        tail_diagnostics=tail_diagnostics,
     )
     value_grid = build_cdf_value_grid(question.lower_bound, question.upper_bound, zero_point, target_cdf_size)
     declared_percentiles = [

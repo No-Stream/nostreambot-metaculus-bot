@@ -57,7 +57,7 @@ def render_prompt(question: MetaculusQuestion, research: str) -> str:
     if isinstance(question, MultipleChoiceQuestion):
         return multiple_choice_prompt(question, research)
     if isinstance(question, NumericQuestion):
-        upper_message, lower_message = bound_messages(question)
+        upper_message, lower_message = bound_messages(question, stated_tail_fields=True)
         return numeric_prompt(question, research, lower_message, upper_message)
     raise TypeError(f"no forecaster prompt for {type(question).__name__}")
 

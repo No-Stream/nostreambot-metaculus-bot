@@ -637,6 +637,29 @@ def _log_degraded_cohort(degraded: DegradedCohort) -> None:
     logger.info(f"  -> id-map resolved {len(degraded.resolved_pairs)} (question_id, post_id) pair(s)")
 
 
+def tag_fresh_records(
+    records: list[dict],
+    *,
+    prior_records: list[dict],
+    prior_label: str,
+    weights: dict[int, float],
+    weighted_slug: str,
+    telemetry_dir: Path,
+) -> None:
+    """Era, weight, novelty and cohort tags for records pulled outside a round.
+
+    The middle of :func:`build_round_dataset` with nothing added and in the same order, so a
+    record pulled between rounds (the trace-review index's overlay) carries the same tags the
+    next round will give it. Not applied: score healing (a fresh pull is scored by the current
+    code), carried rescore provenance and ``tag_platform_rescores``, which needs a round's
+    ``platform_rescored.json``.
+    """
+    _tag_eras_and_weights(records, weights, weighted_slug)
+    degraded = degraded_cohort(QuestionIdMap.from_perf_records(records), telemetry_dir)
+    prior_all, prior_scored, _ = prior_snapshot(prior_records, prior_label)
+    _tag_cohorts_and_novelty(records, prior_all, prior_scored, degraded)
+
+
 def build_round_dataset(spec: RoundSpec) -> RoundDataset:
     """Load, dedup, heal, tag and cohort-flag every record this round covers."""
     with open(spec.prior_tagged_path) as f:

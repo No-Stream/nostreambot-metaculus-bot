@@ -192,7 +192,7 @@ async def fetch_resolution_sources(
     already succeeded when it fires, so a question that loses the queue can lose every
     page it had already fetched rather than just the contended one (reproduced; the
     archived tail says 3 of 23 all-fail fetches ran the full per-request timeout). The
-    acquire wait itself is deliberately unbounded — see FUTURE.md item 5, where both
+    acquire wait itself is deliberately unbounded — see backlog task-14 "The 45 s resolution-source wall discards pages that already succeeded", where both
     remedies (partial harvest, or a budget-bounded wait) are the operator's call.
 
     Teardown race guard (F5): the outer factory wraps this call in

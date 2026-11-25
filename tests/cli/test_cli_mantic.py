@@ -390,3 +390,11 @@ class TestManticClientWiring:
         ):
             cli_main()
         preflight.assert_not_called()
+
+
+def test_metaculus_mode_never_builds_direct_anthropic_forecasters(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The personal Anthropic key is Mantic-only; a Metaculus run keeps the OpenRouter roster."""
+    monkeypatch.setenv("PERSONAL_ANT_KEY", "test-key")
+    with _cli_main_test_mode(alertable_count=0), patch("metaculus_bot.cli.mantic_forecasters") as direct:
+        cli_main()
+    direct.assert_not_called()

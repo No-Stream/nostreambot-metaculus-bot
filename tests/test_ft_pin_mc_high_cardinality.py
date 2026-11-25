@@ -1,7 +1,7 @@
 """Pin test for the forecasting-tools 0.2.54 -> 0.2.92 upgrade: high-cardinality MC.
 
 Companion to ``tests/test_ft_upgrade_seams.py`` and ``tests/test_ft_numeric_seams.py``
-(FUTURE.md Workstream B). Revised 2026-07-23 for the installed 0.2.92; it defines
+(Workstream B of the retired design log (git history)). Revised 2026-07-23 for the installed 0.2.92; it defines
 "done" for the multiple-choice clamp seam at the upgrade.
 
 The seam: at 0.2.92 upstream's ``PredictedOptionList`` constructor drops its

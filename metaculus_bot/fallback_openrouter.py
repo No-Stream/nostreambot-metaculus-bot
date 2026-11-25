@@ -2,8 +2,10 @@ import asyncio
 import logging
 import os
 import sys
+import time
 from typing import Any
 
+import httpx
 import litellm.exceptions
 from forecasting_tools import GeneralLlm
 
@@ -16,6 +18,7 @@ from metaculus_bot.constants import (
     gemini_use_donated_openrouter_key,
 )
 from metaculus_bot.credit_telemetry import (
+    DIRECT_KEY_ALIAS,
     DONATED_KEY_ALIAS,
     DONATED_KEY_PROBE_TIMEOUT_S,
     PERSONAL_KEY_ALIAS,
@@ -24,7 +27,7 @@ from metaculus_bot.credit_telemetry import (
     llm_call_metadata,
     plain_llm_key_alias,
 )
-from metaculus_bot.llm_retry import llm_status_code
+from metaculus_bot.llm_retry import TRANSIENT_RETRY_MAX_ELAPSED_S, llm_status_code
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -464,6 +467,57 @@ class FallbackOpenRouterLlm(GeneralLlm):
         if self._secondary_llm is None:
             raise RuntimeError("No secondary key configured for fallback")
         return await self._secondary_llm.invoke(prompt, system_prompt)
+
+
+def direct_anthropic_failure_reason(exc: Exception) -> str | None:
+    """Classify failures for which another provider can serve the same call."""
+    status = llm_status_code(exc)
+    message = _without_prompt_echo(str(exc).lower())
+    if status == 400 and any(
+        cue in message for cue in ("credit balance is too low", "you have reached your specified")
+    ):
+        return "credit"
+    if _is_credit_failure(status, message):
+        return "credit"
+    if status in (401, 403):
+        return "auth"
+    if status == 429:
+        return "rate_limit"
+    if status is not None and 500 <= status <= 599:
+        return "server"
+    return None
+
+
+class DirectAnthropicFallbackLlm(GeneralLlm):
+    """Try Anthropic directly, falling back to the same OpenRouter member on fast failures."""
+
+    def __init__(self, openrouter_llm: GeneralLlm, direct_model: str, api_key: str, role: str) -> None:
+        super().__init__(model=openrouter_llm.model)
+        self._openrouter_llm = openrouter_llm
+        self._direct_llm = GeneralLlm(
+            model=direct_model,
+            api_key=api_key,
+            reasoning_effort=openrouter_llm.litellm_kwargs["reasoning"]["effort"],
+            allowed_tries=1,
+            timeout=openrouter_llm.litellm_kwargs["timeout"],
+            max_tokens=openrouter_llm.litellm_kwargs["max_tokens"],
+            metadata=llm_call_metadata(role, DIRECT_KEY_ALIAS),
+        )
+
+    async def invoke(self, prompt: Any, system_prompt: str | None = None) -> str:
+        started = time.monotonic()
+        try:
+            result = await self._direct_llm.invoke(prompt, system_prompt)
+        except (TimeoutError, httpx.TimeoutException, litellm.exceptions.Timeout):
+            raise
+        except Exception as exc:
+            reason = direct_anthropic_failure_reason(exc) or "other"
+            if time.monotonic() - started >= TRANSIENT_RETRY_MAX_ELAPSED_S:
+                raise
+            logger.warning("ANTHROPIC_FORECAST_ROUTE: model=%s route=fallback reason=%s", self.model, reason)
+            return await self._openrouter_llm.invoke(prompt, system_prompt)
+        logger.info("ANTHROPIC_FORECAST_ROUTE: model=%s route=direct reason=success", self.model)
+        return result
 
 
 def build_llm_with_openrouter_fallback(model: str, *, role: str | None = None, **kwargs: Any) -> GeneralLlm:

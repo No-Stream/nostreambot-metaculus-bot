@@ -473,8 +473,9 @@ The default strategy is `CONDITIONAL_STACKING` (set in `cli.py`'s `main`). Conce
   fallback, single survivor, simple) returns through, so the publish gate, the comment and the
   marker all read the floored CDF, and the published tails and the combine method are logged
   once there (`member_forecast.py`). It raises each OPEN tail to at least
-  `MANTIC_OUT_OF_RANGE_TAIL_FLOOR` (`constants.py`, 0.05) as far as the other tail leaves room,
-  never reduces a tail, and leaves closed bounds and every Metaculus aggregate untouched. Mantic
+  `MANTIC_OUT_OF_RANGE_TAIL_FLOOR` (`constants.py`, 0.05) on Mantic and
+  `METACULUS_OUT_OF_RANGE_TAIL_FLOOR` (0.02) on Metaculus, as far as the other tail leaves room;
+  it never reduces a tail and leaves closed bounds untouched. Mantic
   scores an out-of-range resolution against a fixed 0.05 reference, so the structural 1% tail the
   percentile path publishes would score −80.5 there. The marker carries both the raw and the
   floored tails (`oor_*_raw`, `tail_floor`). Rule, cap arithmetic and receipts:
@@ -1226,7 +1227,7 @@ derived-feed-then-browser escalations on a host; why it is held across the pair 
 rungs sit in this order" above. It is per question rather than loop-wide on purpose: the
 cross-question shape still serializes on the loop-wide host gate exactly as before, and a loop-wide
 gate here would be one more unbounded process-global acquire in front of a wall that discards
-finished work (`FUTURE.md` item 5, the operator's call).
+finished work (backlog task-14 "The 45 s resolution-source wall discards pages that already succeeded", the operator's call).
 
 Two module-level tables in `context.py` are derived from each other rather than spelled twice.
 `_RUNG_WALL_SKIP_PHRASE` maps each route to the human phrase its wall-budget skip logs, so the one
@@ -1315,6 +1316,7 @@ welcome.
 | Model roster (source of truth) | `metaculus_bot/llm_configs.py` |
 | Prompts | `metaculus_bot/prompts.py` |
 | Constants / thresholds / env flags | `metaculus_bot/constants.py` |
+| Offline trace review (index builder and Streamlit app; never imported by the live pipeline) | `metaculus_bot/trace_review/` (`build.py`, `sources.py`, `views.py`); see [trace_review.md](trace_review.md) |
 
 ## Related docs
 
@@ -1325,6 +1327,7 @@ welcome.
 - [agentic_gap_fill.md](agentic_gap_fill.md): the v2 agentic research loop.
 - [roster_history.md](roster_history.md): the ensemble roster, its history, dormant paths.
 - [performance_analysis.md](performance_analysis.md): residual-analysis conventions.
+- [trace_review.md](trace_review.md): the offline index and app for reading resolved forecasts.
 - [operations.md](operations.md): running the bot, workflows, cost discipline, credits.
 
 ## A note on cost

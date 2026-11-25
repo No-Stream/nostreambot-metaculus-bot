@@ -160,12 +160,14 @@ class TestBuildPerformanceDatasetResearchTags:
             )
         )
         monkeypatch.setattr(
-            collector, "fetch_resolved_questions", lambda tournament, token: [_binary_post(1, 11, score_data={})]
+            collector,
+            "fetch_resolved_questions",
+            lambda tournament, token, **_fetch_options: [_binary_post(1, 11, score_data={})],
         )
         monkeypatch.setattr(
             collector,
             "fetch_bot_comments",
-            lambda author_id, token: [{"id": 9, "text": "*Forecaster 1*: 70%\n", "on_post": 1}],
+            lambda author_id, token, **_fetch_options: [{"id": 9, "text": "*Forecaster 1*: 70%\n", "on_post": 1}],
         )
 
         records = build_performance_dataset(tournament="t", token="fake", research_archive_dir=tmp_path)
@@ -180,9 +182,11 @@ class TestBuildPerformanceDatasetResearchTags:
         """Absence of evidence is not an untreated record: a missing archive file, or a whole
         missing archive, must never look like a measured False in the cuts."""
         monkeypatch.setattr(
-            collector, "fetch_resolved_questions", lambda tournament, token: [_binary_post(2, 22, score_data={})]
+            collector,
+            "fetch_resolved_questions",
+            lambda tournament, token, **_fetch_options: [_binary_post(2, 22, score_data={})],
         )
-        monkeypatch.setattr(collector, "fetch_bot_comments", lambda author_id, token: [])
+        monkeypatch.setattr(collector, "fetch_bot_comments", lambda author_id, token, **_fetch_options: [])
 
         records = build_performance_dataset(tournament="t", token="fake", research_archive_dir=tmp_path)
 
@@ -201,8 +205,8 @@ class TestBuildPerformanceDatasetPriorDiff:
     """
 
     def _fetchers(self, monkeypatch, post: dict) -> None:
-        monkeypatch.setattr(collector, "fetch_resolved_questions", lambda tournament, token: [post])
-        monkeypatch.setattr(collector, "fetch_bot_comments", lambda author_id, token: [])
+        monkeypatch.setattr(collector, "fetch_resolved_questions", lambda tournament, token, **_fetch_options: [post])
+        monkeypatch.setattr(collector, "fetch_bot_comments", lambda author_id, token, **_fetch_options: [])
 
     def test_a_moved_resolution_is_tagged_on_the_built_records(self, tmp_path: Path, monkeypatch):
         self._fetchers(monkeypatch, _binary_post(3, 33, score_data={}))

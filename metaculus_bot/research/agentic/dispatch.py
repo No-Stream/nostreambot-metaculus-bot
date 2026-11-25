@@ -18,6 +18,7 @@ the loop's own telemetry markers.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Any
@@ -130,6 +131,10 @@ def _normalized_call_key(tool_call: _ToolCall) -> tuple[str, str]:
 _DUPLICATE_CALL_WARNING = (
     "\n[note: this exact tool call was already made earlier in this run — "
     "its result will not have changed. Vary the query/URL or move on.]"
+)
+
+_SOURCE_CONTINUATION_RE = re.compile(
+    r"\n\[truncated at (?P<offset>\d+) of (?P<total>\d+) chars — call again with start_char=(?P=offset)\]"
 )
 
 
@@ -324,7 +329,11 @@ def _append_tool_messages(
 def _delivered_content_for_call(
     result: _ToolExecutionResult, state: _LoopState, config: LoopConfig, *, duplicate: bool
 ) -> str:
-    if result.outcome is not None and result.outcome.status == "ok" and result.outcome.evidence_passages:
+    if (
+        result.outcome is not None
+        and result.outcome.status == "ok"
+        and (result.outcome.evidence_passages or result.outcome.evidence_pagination is not None)
+    ):
         result.content = _materialize_delivered_evidence(result, state, config)
     if duplicate and len(result.content) + len(_DUPLICATE_CALL_WARNING) <= config.max_result_chars:
         return result.content + _DUPLICATE_CALL_WARNING
@@ -333,6 +342,9 @@ def _delivered_content_for_call(
 
 def _materialize_delivered_evidence(result: _ToolExecutionResult, state: _LoopState, config: LoopConfig) -> str:
     outcome: ToolOutcome = result.outcome
+    if outcome.evidence_pagination is not None:
+        return _materialize_paginated_source_evidence(result, state, config)
+
     body_budget = tool_content_body_budget(result.tool_name, outcome, config.max_result_chars)
     blocks: list[str] = []
     delivered: list[DeliveredEvidence] = []
@@ -381,3 +393,139 @@ def _materialize_delivered_evidence(result: _ToolExecutionResult, state: _LoopSt
     state.next_evidence_number += len(delivered)
     state.delivered_evidence.update({item.ref: item for item in delivered})
     return formatted
+
+
+def _materialize_paginated_source_evidence(result: _ToolExecutionResult, state: _LoopState, config: LoopConfig) -> str:
+    outcome: ToolOutcome = result.outcome
+    pagination = outcome.evidence_pagination
+    if pagination is None:
+        raise RuntimeError("source evidence pagination metadata is missing")
+    source_window = _validated_source_window(outcome, pagination.source_start_char, pagination.source_total_chars)
+    body_budget = tool_content_body_budget(result.tool_name, outcome, config.max_result_chars)
+    low = 0
+    high = len(source_window)
+    while low < high:
+        middle = (low + high + 1) // 2
+        rendered, _ = _render_paginated_source_prefix(
+            source_window,
+            outcome,
+            tool_call_id=result.tool_call_id,
+            source_start_char=pagination.source_start_char,
+            source_total_chars=pagination.source_total_chars,
+            source_chars=middle,
+            first_evidence_number=state.next_evidence_number,
+        )
+        if len(rendered) <= body_budget:
+            low = middle
+        else:
+            high = middle - 1
+    if low == 0 and source_window:
+        raise RuntimeError("tool-result budget cannot fit any source text with its evidence metadata")
+
+    rendered_body, delivered = _render_paginated_source_prefix(
+        source_window,
+        outcome,
+        tool_call_id=result.tool_call_id,
+        source_start_char=pagination.source_start_char,
+        source_total_chars=pagination.source_total_chars,
+        source_chars=low,
+        first_evidence_number=state.next_evidence_number,
+    )
+    updated_outcome = outcome.model_copy(
+        update={
+            "content_markdown": rendered_body,
+            "truncated": pagination.source_start_char + low < pagination.source_total_chars,
+            "evidence_passages": [],
+            "evidence_pagination": None,
+        }
+    )
+    formatted = _format_tool_content(result.tool_name, updated_outcome, config.max_result_chars)
+    if len(formatted) > config.max_result_chars:
+        raise RuntimeError("paginated source evidence exceeded the tool-result budget")
+    if any(f"evidence_ref: {item.ref};" not in formatted for item in delivered):
+        raise RuntimeError("citable source evidence was not delivered inside the tool-result budget")
+    state.next_evidence_number += len(delivered)
+    state.delivered_evidence.update({item.ref: item for item in delivered})
+    result.outcome = updated_outcome
+    return formatted
+
+
+def _validated_source_window(outcome: ToolOutcome, source_start_char: int, source_total_chars: int) -> str:
+    body = outcome.content_markdown
+    continuation = _SOURCE_CONTINUATION_RE.search(body)
+    if continuation is None:
+        if source_start_char + len(body) != source_total_chars:
+            raise RuntimeError("complete source window has an inconsistent total length")
+        return body
+    if continuation.end() != len(body):
+        raise RuntimeError("source continuation marker must end the delivered window")
+    if int(continuation.group("total")) != source_total_chars:
+        raise RuntimeError("source continuation marker has an inconsistent total length")
+    source_window = body[: continuation.start()]
+    if int(continuation.group("offset")) != source_start_char + len(source_window):
+        raise RuntimeError("source continuation marker has an inconsistent offset")
+    return source_window
+
+
+def _render_paginated_source_prefix(
+    source_window: str,
+    outcome: ToolOutcome,
+    *,
+    tool_call_id: str,
+    source_start_char: int,
+    source_total_chars: int,
+    source_chars: int,
+    first_evidence_number: int,
+) -> tuple[str, list[DeliveredEvidence]]:
+    source_end = source_start_char + source_chars
+    rendered_parts: list[str] = []
+    delivered: list[DeliveredEvidence] = []
+    local_cursor = 0
+    for passage in outcome.evidence_passages:
+        passage_start, passage_end = _validated_passage_offsets(passage)
+        if passage_start < source_start_char:
+            raise RuntimeError("paginated source evidence precedes its source window")
+        if passage_start >= source_end or passage_end > source_end:
+            break
+
+        relative_start = passage_start - source_start_char
+        relative_end = passage_end - source_start_char
+        if relative_start < local_cursor:
+            raise RuntimeError("paginated source evidence is out of order or overlaps")
+        rendered_parts.append(source_window[local_cursor:relative_start])
+        visible_text = source_window[relative_start:relative_end]
+        if visible_text != passage.text:
+            raise RuntimeError("paginated source evidence does not match its recorded source position")
+        if _normalize_url(passage.source_url) is None or not visible_text.strip():
+            raise RuntimeError("paginated source evidence is not citable")
+
+        ref = f"ev_{first_evidence_number + len(delivered)}"
+        rendered_parts.append(_render_evidence_block(ref, passage, visible_text))
+        delivered.append(DeliveredEvidence(**passage.model_dump(), ref=ref, tool_call_id=tool_call_id))
+        local_cursor = relative_end
+
+    rendered_parts.append(source_window[local_cursor:source_chars])
+    if source_end < source_total_chars:
+        rendered_parts.append(_source_continuation_marker(source_end, source_total_chars))
+    return "".join(rendered_parts), delivered
+
+
+def _validated_passage_offsets(passage: Any) -> tuple[int, int]:
+    passage_start = passage.source_start_char
+    passage_end = passage.source_end_char
+    if passage_start is None or passage_end is None:
+        raise RuntimeError("paginated source evidence is missing source offsets")
+    if passage_end - passage_start != len(passage.text) or len(passage.text) > GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS:
+        raise RuntimeError("paginated source evidence has invalid passage bounds")
+    return passage_start, passage_end
+
+
+def _render_evidence_block(ref: str, passage: Any, visible_text: str) -> str:
+    return (
+        f"[evidence_ref: {ref}; source: {passage.source_url}; method: {passage.retrieval_method}; "
+        f"origin: {passage.content_origin}; clipped: {str(passage.clipped).lower()}]\n{visible_text}"
+    )
+
+
+def _source_continuation_marker(source_end: int, source_total_chars: int) -> str:
+    return f"\n[truncated at {source_end} of {source_total_chars} chars — call again with start_char={source_end}]"

@@ -1653,6 +1653,31 @@ def _mc_block(option_probs: dict[str, float]) -> str:
 class TestBlockFirstNumericPercentiles:
     """parse_per_model_numeric_percentiles: JSON block first, prose regex fallback."""
 
+    def test_other_type_block_is_skipped_without_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        # The collector probes every comment for numeric percentiles before it knows the type, so a
+        # binary or MC block is "not numeric", never a parse failure worth a WARNING per member.
+        comment = (
+            "## R1: Forecaster 1 Reasoning\n"
+            "Model: openrouter/openai/gpt-5.5\n\n"
+            f"Probability: 40%\n\n{_binary_block(0.4)}\n\n"
+            "## R1: Forecaster 2 Reasoning\n"
+            "Model: openrouter/anthropic/claude-opus-5.5\n\n"
+            f"{_mc_block({'A': 0.7, 'B': 0.3})}\n"
+        )
+        with caplog.at_level(logging.WARNING):
+            result = parse_per_model_numeric_percentiles(comment)
+        assert result == {}
+        assert [record.getMessage() for record in caplog.records if record.levelno >= logging.WARNING] == []
+
+    def test_trailing_other_type_block_does_not_hide_a_valid_numeric_block(self) -> None:
+        numeric = _numeric_block({"0.1": 1.0, "0.5": 2.0, "0.9": 3.0})
+        comment = (
+            "## R1: Forecaster 1 Reasoning\n"
+            "Model: openrouter/openai/gpt-5.5\n\n"
+            f"{numeric}\n\nRecap:\n{_binary_block(0.4)}\n"
+        )
+        assert parse_per_model_numeric_percentiles(comment) == {"gpt-5.5": [(10.0, 1.0), (50.0, 2.0), (90.0, 3.0)]}
+
     def test_post_change_comment_parses_via_block(self):
         # No prose "Percentile X: V" lines at all — values live only in the block.
         block = _numeric_block({"0.025": 100.0, "0.1": 120.0, "0.5": 150.0, "0.9": 180.0})

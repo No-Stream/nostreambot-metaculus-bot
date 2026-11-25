@@ -16,6 +16,7 @@ need; the repo-root pointers at the bottom cover quick-start and design history.
 | [prompts.md](prompts.md) | Every rule the forecasting prompts carry, the named constant that holds it, the measured failure it corrects, and the size accounting from the 2026-09 de-bloat. Read it before adding, removing or rewording a prompt rule. |
 | [roster_history.md](roster_history.md) | The ensemble roster's design rule (latest per vendor, resolved only from a live model-list read), the dated history of every roster change and the merge that made it live, the support-model roles, and the two subsystems that are wired but dormant in prod. |
 | [performance_analysis.md](performance_analysis.md) | Residual-analysis conventions and receipts: era bucketing with the merge-to-main rule, the exclusion cohorts, the research archive's three record classes, the PIT and spot-peer conventions, `spot_peer_delta`, the starved outer tail, per-model recovery, and the clip-threshold sweep. |
+| [trace_review.md](trace_review.md) | The offline trace review tool: `make trace_index` builds a parquet index of every resolved forecast (round file, fresh read-only pull, telemetry, research archive) and `make review` opens a Streamlit app to filter, sort and read them, one member and one rationale at a time. |
 | [forecast_alerts.md](forecast_alerts.md) | GitHub failure summaries, publication evidence, the synthetic notification workflow, and native-email verification limits. |
 | [operations.md](operations.md) | Running the bot: environment setup with `uv`, the shared vs. personal API keys, Google AI Studio billing, the production workflows and their env flags, credit telemetry, backtesting, and the cost gate (any live or paid run needs operator approval). |
 | [constants.md](constants.md) | One entry per value in `constants.py`, in file order: the measurement, incident or decision behind it. The code keeps one line of why and a pointer here. |
@@ -28,9 +29,9 @@ need; the repo-root pointers at the bottom cover quick-start and design history.
 - [AGENTS.md](../AGENTS.md): the terse starting point for coding agents, also symlinked as
   `CLAUDE.md`. It carries the cost gate, the repo's overrides, the layout, the pipeline
   outline, and the standing rules, and points here for depth rather than repeating it.
-- [FUTURE.md](../FUTURE.md): the branch design log. Records intent and history,
-  including shipped, planned, and rejected ideas. Read it for the "why," not for
-  the current state of the code.
+- `.backlog/` (Backlog.md, local and gitignored): the design log. Tasks hold open levers, parked and study-only
+  ideas; decisions hold rejected ideas with their receipts; `backlog doc list` shows "How to use this backlog".
+  Read it for the "why," not for the current state of the code.
 
 For the authoritative model roster, see `metaculus_bot/llm_configs.py`. It is the
 single source of truth for the ensemble and rotates often, so the guides describe

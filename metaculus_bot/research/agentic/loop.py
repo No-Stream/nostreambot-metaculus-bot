@@ -583,7 +583,7 @@ async def _run_ghost_phase(
 ) -> GhostForecast | None:
     """Log the driver's post-research dry-run forecast (telemetry only, never published).
 
-    Interpretation guardrail (FUTURE.md "Score the archived gap-fill v2 ghost
+    Interpretation guardrail (the retired design log (git history), "Score the archived gap-fill v2 ghost
     forecasts"): the ghost is a SAME-MODEL (terra-low driver) counterfactual, NOT a
     panel proxy. It measures whether the v2 findings alone, forecast by one cheap
     model, land near truth — scored OFFLINE against resolution by

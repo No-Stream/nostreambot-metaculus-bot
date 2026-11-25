@@ -17,7 +17,12 @@ from metaculus_bot.numeric.config import (
     grid_step_constraints,
 )
 from metaculus_bot.numeric.date_axis import EpochDateQuestion
-from metaculus_bot.numeric.pchip_cdf import build_cdf_value_grid, safe_cdf_bounds
+from metaculus_bot.numeric.pchip_cdf import (
+    StatedTailDiagnostics,
+    build_cdf_value_grid,
+    enforce_min_steps,
+    safe_cdf_bounds,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +84,9 @@ def generate_pchip_cdf_with_smoothing(
     zero_point: float | None,
     *,
     model_name: str = "",
+    p_below_lower_bound: float | None = None,
+    p_above_upper_bound: float | None = None,
+    tail_diagnostics: StatedTailDiagnostics | None = None,
 ) -> tuple[list[float], bool, bool]:
     """Generate PCHIP CDF with optional ramp smoothing.
 
@@ -106,6 +114,9 @@ def generate_pchip_cdf_with_smoothing(
             question_id=question.id_of_question,
             question_url=question.page_url,
             model_name=model_name,
+            p_below_lower_bound=p_below_lower_bound,
+            p_above_upper_bound=p_above_upper_bound,
+            tail_diagnostics=tail_diagnostics,
         )
 
         if aggressive_enforcement_used:
@@ -117,7 +128,12 @@ def generate_pchip_cdf_with_smoothing(
         _pchip_stats["failed_entirely"] += 1
         raise
 
-    smoothing_applied = _apply_ramp_smoothing(pchip_cdf, question, model_name=model_name)
+    fixed_endpoints = (
+        (pchip_cdf[0], pchip_cdf[-1]) if p_below_lower_bound is not None or p_above_upper_bound is not None else None
+    )
+    smoothing_applied = _apply_ramp_smoothing(
+        pchip_cdf, question, model_name=model_name, fixed_endpoints=fixed_endpoints
+    )
 
     _validate_pchip_cdf(pchip_cdf, question)
     _log_pchip_success(pchip_cdf, question, smoothing_applied)
@@ -125,7 +141,13 @@ def generate_pchip_cdf_with_smoothing(
     return pchip_cdf, smoothing_applied, aggressive_enforcement_used
 
 
-def _apply_ramp_smoothing(pchip_cdf: list[float], question: NumericQuestion, *, model_name: str = "") -> bool:
+def _apply_ramp_smoothing(
+    pchip_cdf: list[float],
+    question: NumericQuestion,
+    *,
+    model_name: str = "",
+    fixed_endpoints: tuple[float, float] | None = None,
+) -> bool:
     """Apply ramp smoothing to enforce minimum step size."""
     diffs_before = np.diff(pchip_cdf)
     min_delta_before = float(np.min(diffs_before)) if len(diffs_before) else 1.0
@@ -143,6 +165,16 @@ def _apply_ramp_smoothing(pchip_cdf: list[float], question: NumericQuestion, *, 
             smoothed[-1] = 1.0
         else:
             smoothed[-1] = min(smoothed[-1], 1.0 - OPEN_TAIL_MIN_MASS)
+
+        if fixed_endpoints is not None:
+            lower_probability, upper_probability = fixed_endpoints
+            smoothed[0], smoothed[-1] = fixed_endpoints
+            smoothed = enforce_min_steps(
+                smoothed,
+                NUM_MIN_PROB_STEP,
+                lower_cap=lower_probability,
+                upper_cap=upper_probability,
+            )
 
         # Enforce max-step constraint post-smoothing
         smoothed = safe_cdf_bounds(

@@ -16,7 +16,7 @@ Covered here:
   absent from the current API spec entirely).
 - Kalshi contract counts are converted to USD before meeting the USD thresholds, with
   the two quantities using the multipliers their own units imply.
-- The rejected FUTURE.md "fall back to volume_24h" fix stays rejected: on the real
+- The rejected backlog decision-29 "Kalshi fall back to volume_24h one-liner" fix stays rejected: on the real
   long-horizon markets this bot forecasts, 24h volume is ~0, so that fallback labels a
   deep market "thin".
 - `liquidity_dollars` is deprecated upstream and always "0.0000", so nothing may score
@@ -122,7 +122,7 @@ class TestKalshiLiquidityFieldNames:
         assert _liquidity_label(match) == "deep"
 
     def test_rejected_volume_24h_fallback_would_mislabel_this_market(self, kalshi_live_events):
-        """Pins the REJECTION of the FUTURE.md one-line fix, not just the bug.
+        """Pins the REJECTION of the backlog decision-29 one-line fix, not just the bug.
 
         `POWER-28-DH-DS-DP` has 105,980 contracts of lifetime volume and 59,025 of open
         interest at $0.50, but `volume_24h_fp` is exactly 0.00 — the normal state for the

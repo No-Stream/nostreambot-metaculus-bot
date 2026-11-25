@@ -27,7 +27,8 @@ exclude correct behaviour. Replaying all 59 archived snapshots, the rule fired o
 45 healthy manifold runs and 26 polymarket ones, and the narrowest form that
 still fires at all fired on 20. The surviving intent — a venue contributing zero
 across many CONSECUTIVE runs — is inherently cross-run and unjudgeable inside one
-question; it is recorded in FUTURE.md as a check over the telemetry archive.
+question; it is recorded in backlog decision-26 "venue_no_contribution provider-health rule" as a
+check over the telemetry archive.
 
 Each rule is a 100%-of-denominator conjunction with no tunable float. A longer
 run makes every signal strictly HARDER to trip, which is the correct direction

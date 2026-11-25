@@ -65,6 +65,16 @@ its own traceback rather than arriving as a slow success, and an exhausted 429 r
 naming the rate limit instead of reporting the whole rate-limited run as one unlucky request.
 A sustained outage still fails the pull; re-running it is free.
 
+**Every request is paced, not only the page loops.** `api_get` waits until
+`MIN_REQUEST_INTERVAL_SECS` (2 s) has passed since the process's previous Metaculus request.
+The page loops used to sleep 0.5 s between pages while archived-comment expansion
+(`expand_truncated_comment`) ran back to back with no wait. On 2026-11-19 every expansion drew
+two Cloudflare 429s (`Retry-After: 2`, yet still limited after the 5 s backoff) before the 10 s
+retry succeeded, so a `make sync_all` spent about 15 s per archived comment. A comment listing
+paced at 2 s drew no 429s over 17 pages. The comment backfill now goes through the same
+`api_get` and expands a stub only when its post is about to be written, so a re-run fetches
+nothing it already holds.
+
 **Pass `--prior <previous round's dataset>` on every round pull.** Metaculus
 re-resolves questions IN PLACE without moving any timestamp we store. It edited q44798
 (Halo: Campaign Evolved Metascore) from 80 to 82 with `resolution_set_time` left at a
@@ -91,7 +101,8 @@ a printed summary. Three details:
 "Residual analysis" implies `make sync_all` first, always (read-only and free). It
 pulls **everything** sync-shaped in one command, and that matters because GHA artifacts
 expire at 90 days, so a single-source pull silently and permanently drops whatever it
-did not fetch. Three archives:
+did not fetch. Three archives, and after them the trace-review index (`docs/trace_review.md`), rebuilt
+from the newest round plus a fresh paced pull:
 
 - **The research archive** (`backtests/research_archive/latest/<qid>.json`):
   per-question post-summarizer research. Precedence rules below.
@@ -178,11 +189,31 @@ groups on the bare `qid`, so a Mantic id and a Metaculus id that meet merge into
 group. The margin today is about 13,700 Mantic posts: open Mantic posts sit in
 the 650s, and the next Metaculus id already in the archive above them is 14333, from the
 evergreen `test_questions` set (`docs/operations.md` "How the mode works" has the
-arithmetic; the revisit is logged in `FUTURE.md`). None of this reaches the residual
-dataset. `collector.py` reads `BASE_URL = "https://www.metaculus.com/api"` with the
-Metaculus bot user id, so a Mantic question cannot become a record, and the Mantic-side
-accounting (forecast, forfeit, miss rate per release hour) lives in
-`make supply_probe_mantic` (`docs/supply_probe.md` "The Mantic mode").
+arithmetic; the revisit is logged in backlog task-26 "Mantic, awaiting live data"). None of this reaches the residual
+round dataset, whose cohorts and keys are Metaculus question ids with no platform. The
+collector can pull a Mantic tournament (see "Mantic records" below), and the trace-review
+index is the one consumer that does; the Mantic-side accounting (forecast, forfeit, miss
+rate per release hour) lives in `make supply_probe_mantic` (`docs/supply_probe.md` "The
+Mantic mode"). The archive join (`research_tags.load_verified_archive_record`) rejects a
+`latest/` record whose `platform` differs from the performance record's, reading an
+absent field as Metaculus on both sides.
+
+### Mantic records
+
+`collector.CollectorPlatform` names a platform's API root, bot account and token variable, and
+`build_performance_dataset(..., platform=MANTIC_PLATFORM)` (CLI: `--platform mantic`) runs the
+same fetchers against `MANTIC_API_BASE_URL` with bot user 81 and `MANTIC_TOKEN`. Three facts
+from free probes on 2026-11-19 shape it. The author comment filter works on Mantic as on
+Metaculus and is public, and Mantic sets `next` on every page, so a listing ends on its empty
+page. Without a token Mantic serves no `my_forecasts` block, so every question reads as one the
+bot never forecast and the pull yields nothing; the public `aggregations` snapshot does carry
+the bot's CDF but no per-user score, and is known to miss a competitor on most questions, so it
+is deliberately not read. Series 2 ranks on spot baseline, not spot peer. Which keys
+`my_forecasts.score_data` carries on a resolved Mantic question has not been observed yet;
+record the first authenticated page as a test fixture when a token is available. A question
+with `multi_resolution: true` (Mantic only, about a fifth of sightings, none resolved yet) is
+skipped with a WARNING, like a date question, until one has resolved and its scoring has
+been read.
 
 Reading rules that follow from this:
 
@@ -429,7 +460,7 @@ bot published its comment) and return the fields a round's tagging pass writes:
 |---|---|---|---|
 | `config_era` | `era_of` | `pre_flip`, `post_flip`, `triple_era`, `no_ts` | `era_gap` (its default `ERA_FIELD`), the clip sweep's era windows |
 | `triple_subera` | `triple_subera_of` | `triple_pre_market`, `triple_ranked_market`, `triple_time_budget`, `triple_fall_config` | the coarse pooling, where every fall merge is one bucket |
-| `triple_subera_fine` | `triple_subera_fine_of` | `pre_ft_unfreeze`, `ft_0292`, `july25`, `post_dry_key_fix`, `ranked_markets`, `time_budget`, `fall_config`, `fall_gpt6_opus55`, `fall_gpt61_sol`, `fall_gemini4_argon`, `fall_terra_research`, `fall_gemini4_hydrogen`, `fall_gemini4_carbon` | per-merge labels; the fall season's pooled read selects on the coarse field instead (below) |
+| `triple_subera_fine` | `triple_subera_fine_of` | `pre_ft_unfreeze`, `ft_0292`, `july25`, `post_dry_key_fix`, `ranked_markets`, `time_budget`, `fall_config`, `fall_gpt6_opus55`, `fall_gpt61_sol`, `fall_gemini4_argon`, `fall_terra_research`, `fall_gemini4_hydrogen`, `fall_gemini4_carbon`, `fall_gemini4_argon_return` | per-merge labels; the fall season's pooled read selects on the coarse field instead (below) |
 | `ft_unfreeze_side` | `ft_unfreeze_side_of` | `pre_ft_0292`, `ft_0292` | the MC-clamp cuts |
 | `post_linters_merge` | `post_linters_merge_of` | `True` / `False` | provenance only |
 
@@ -1089,6 +1120,9 @@ The research archive backfill uses the same recovery before extracting research 
   collector, and `_process_single_question` skips it with a WARNING ahead of `parse_resolution`,
   which would otherwise file it under "Unknown question type" and make the exclusion look like a
   parser bug. See "Date questions are excluded from the dataset" below.
+- `platform` (`"metaculus"` or `"mantic"`) is stamped by `records_from_posts` on every record
+  pulled since 2026-11-19. Older records do not carry it and are all Metaculus, so read it
+  through `id_mapping.record_platform`, never `record["platform"]`.
 
 ## Recovering per-model forecasts
 
@@ -1398,13 +1432,12 @@ the in-range band above the declared p99 sits at the platform minimum step. A pu
 Mantic aggregate is shaped differently by construction, because `floor_published_tails`
 (`numeric/out_of_range_floor.py`) raises each open tail to at least 5%, as far as the other
 tail leaves room, and rescales the interior, so its `tail mass` would read 0.05 rather than 0.01 and its band multiples would
-not match these figures. Today that is moot: no Mantic record enters the dataset (the
-collector is Metaculus-only, see the archive section above). It is the first thing to
-re-derive if one ever does.
+not match these figures. Today that is moot: no Mantic record enters the round dataset (see
+"Mantic records" above). It is the first thing to re-derive if one ever does.
 
 There is deliberately NO publish-time `STARVED_OUTER_TAIL` WARN. The reason, and what a
 no-plumbing alternative would have to measure instead, are in the code comment above
-`STARVED_OUTER_TAIL_FLOOR_MULTIPLE` and tracked in `FUTURE.md`.
+`STARVED_OUTER_TAIL_FLOOR_MULTIPLE` and tracked in backlog task-29 "Watch items, no action while they hold".
 
 ## Question-supply counts need post status `closed`
 
@@ -1439,8 +1472,7 @@ decision`), ahead of `parse_resolution`, which would otherwise have filed it und
 question type" and made the exclusion look like a parser bug. The backtest
 (`backtest/question_prep.py`) and the ablation harness (`ablation/run_pdf.py`) carry the same
 exclusion at their own seams, and `scripts/score_ghosts.py` counts date ghosts by type and says
-in its report that none can be scored. The decision is recorded in `FUTURE.md` "Mantic
-Crucible" and holds until a date question has resolved under the live date path. A round pull
+in its report that none can be scored. The decision is recorded in backlog task-26 "Mantic, awaiting live data" and holds until a date question has resolved under the live date path. A round pull
 over a tournament with date questions logs one such WARNING per resolved date question; their
 count is the number of resolved questions the round is not reading.
 
@@ -1543,6 +1575,11 @@ the provenance strings a record carries, so they are the round names and not pat
    in the archive cannot silently un-tag a known-degraded question.
 7. Flags novelty and the exclusion cohorts, then tags Metaculus-side score movement and
    cross-checks the local ternary against the pull-side diff's distribution.
+
+`tag_fresh_records` is steps 5 to 7 without the platform-rescore half, for records pulled outside a
+round (the trace-review index's overlay of questions resolved since the newest round). It calls the
+same private functions in the same order, so such a record carries the era, weight, novelty and
+cohort tags the next round will give it; `build_round_dataset` itself does not call it.
 
 ### Two invariants
 

@@ -2,7 +2,8 @@
 
 This is the reference for how the bot turns a numeric question into a probability
 distribution. It covers the full path: each forecaster declares the standard percentile
-set in plain text, the bot extracts and cleans them, builds a 201-point CDF that
+set and probabilities beyond open bounds, the bot extracts and cleans them, builds a
+201-point CDF that
 satisfies Metaculus' server-side constraints, aggregates across the ensemble in CDF
 space, and decides whether the ensemble disagrees enough to trigger conditional
 stacking. On a coarse Mantic grid whose bins are the outcome space, forecasters instead
@@ -45,7 +46,13 @@ helper text from `bound_messages` in `numeric/utils.py`) tells forecasters exact
 and warns them not to pile percentiles against an open edge.
 
 The forecaster writes its percentiles inside a fenced ```json STRUCTURED FORECAST
-block, which the prompt requires to be the last thing in the response.
+block, which the prompt requires to be the last thing in the response. For each open
+side it also writes an explicit decimal probability: `prob_below_lower_bound` for the
+lower side and `prob_above_upper_bound` for the upper side. Numeric, discrete and date
+percentile prompts use these fields. Closed sides have no such field.
+The percentiles remain unconditional quantiles of the full distribution, including
+out-of-range outcomes. This makes the member's tail belief explicit instead of letting
+the outermost percentile's level determine it when every declared value is in range.
 
 ## Step 2: value extraction ladder
 
@@ -88,6 +95,16 @@ The same call also decides discrete vs. continuous. `run_numeric_forecast`
 (`forecaster_runners.py`) reads `NumericStructured.outcome_type` from the block first,
 and only falls back to a parser LLM call (`OutcomeTypeResult`) when the block does not
 declare it. That vote is carried forward to the discrete-snap decision in Step 7.
+
+The two optional open-side probabilities come from the same accepted block or repaired
+candidate as the percentiles. Each must be a finite number in `[0, 1)`; a present null,
+boolean or nonnumeric value is invalid. An absent field keeps the existing
+percentile-derived tail on that side. An invalid field is ignored on its own side and
+the member survives without a new parser call; if both stated probabilities are valid
+but sum to at least one, both are ignored. LLM salvage recovers percentiles only, so
+both tail fields are missing on that rung; it never reuses tails from a rejected
+candidate. Their validation and use are recorded by `NUMERIC_STATED_TAIL`, separately
+from the existing extraction and member markers.
 
 ## Step 3: sanitize_percentiles
 
@@ -245,7 +262,7 @@ cannot resolve, and a percentile declaration put about a quarter of the mass on 
 ln(0.75) = -14.4` baseline points for no information. On a count grid of 13 bins or fewer,
 13 strictly increasing percentile values cannot even exist, so the model repeats integers and
 the pipeline reads a degenerate declaration. Motivation, corpus counts and the rejected
-alternative (an `excluded_bins` list on the percentile block): `FUTURE.md`, "Mantic Crucible".
+alternative (an `excluded_bins` list on the percentile block): backlog decision-7 "excluded_bins list on the percentile block (Mantic Crucible)".
 
 **The gate** is `elicit_per_bin` (`numeric/config.py`): the question's platform is in
 `PMF_ELICITATION_PLATFORMS`, the grid is an outcome space (`grid_is_outcome_space`: a
@@ -354,6 +371,45 @@ The construction:
   (`numeric/pchip_cdf.py`).
 - Enforce the min-step and max-step constraints, then re-pin the bounds.
 
+### Explicit probabilities at open bounds
+
+When a member states a valid open-side probability, the PCHIP construction adds a bound
+anchor: `(lower_bound, prob_below_lower_bound)` or
+`(upper_bound, 1 - prob_above_upper_bound)`. PCHIP interpolates between this anchor and
+the nearest retained percentile instead of holding the outermost percentile's level
+flat all the way to the displayed edge. This applies on linear and log-scaled axes and
+on the question's own grid. A side without a valid statement follows the existing
+percentile path.
+
+The stated value takes precedence over contradictory percentile anchors. For a lower
+bound, the builder drops an in-range percentile whose level is below the stated lower
+tail, or a percentile at or below the lower bound whose level exceeds that tail. For
+an upper bound, it drops an in-range percentile whose level exceeds
+`1 - prob_above_upper_bound`, or one at or above the upper bound whose level is below
+that cumulative probability. Equal-level ambiguities and duplicate points at the bound
+are reconciled during construction to keep a monotone set of distinct anchors. This
+is a CDF-construction repair: the raw percentile declaration remains available in
+`MEMBER_FORECAST`.
+
+The server's probability and step constraints still apply. The requested tail is
+clamped between the open-tail minimum and the mass left after reserving every interior
+bin's minimum and any open opposite tail's minimum. If two stated tails together leave
+too little interior mass, their mass above the open-tail minima is reduced in proportion.
+If the other side is unstated, the builder adjusts that side's implied endpoint first
+when needed to fit the stated value. The applied endpoint therefore remains legal even
+when the request cannot coexist with the grid constraints.
+`NUMERIC_STATED_TAIL: question=... model=... bound=... stated=... status=...
+dropped_percentiles=... resulting_mass=...` records the side, member, stated probability,
+number of discarded percentile anchors, and resulting tail mass. Its `status` is `used`,
+`missing`, `invalid` or `clamped`, so absent and invalid statements remain distinguishable
+from statements the builder used. The full field contract is in
+[telemetry_markers.md](telemetry_markers.md).
+
+These fields affect the per-member percentile CDF only. Ensemble aggregation still
+combines CDF heights pointwise with its existing strategy (Step 9), and the Mantic
+publish-time floor still runs afterwards (Step 11). Mantic per-bin elicitation keeps its
+existing `below_range` / `above_range` PMF entries and does not use the new fields.
+
 ### Server-side constraints
 
 Metaculus validates `continuous_cdf` submissions (Mantic runs a fork of the same backend
@@ -456,7 +512,7 @@ builder on every bound shape, and the offline pooling paths. The fallback builde
 closed/closed branch used to return upstream's CDF raw, with no step or endpoint enforcement
 and no `CDF_MAXSTEP_CLIP` marker possible; a tight declaration on the modal Mantic date shape
 produced a 0.297 bin against the 0.2 cap and an HTTP 400 on the lone-survivor path, and the
-branch was removed on 2026-09-08 (the history is in FUTURE.md under "Sentinel-value sweep
+branch was removed on 2026-09-08 (the history is in the retired design log (git history) under "Sentinel-value sweep
 leftovers", sixth item).
 
 ### Open vs. closed bounds: a one-sided constraint, not a box
@@ -471,11 +527,12 @@ out-of-bound mass:
 - **Open upper bound** → `cdf[-1]` is ceilinged at a *maximum* of `0.999`. Again a
   required headroom, not a floor on how much mass sits below the ceiling.
 
-There is no cap on out-of-bound mass. A distribution can legitimately place, say, 78%
-of its mass below an open lower bound. That mass is expressed by placing declared
-percentile *values* beyond the displayed range (values are not clamped on open bounds),
-so that `F(bound)` interpolates to the intended fraction. The only ceiling on
-out-of-bound mass comes from min/max-step feasibility (roughly 0.99, since 200 bins each
+There is no fixed cap on out-of-bound mass. A distribution can legitimately place,
+say, 78% of its mass below an open lower bound. An explicit open-side probability sets
+that bound's CDF anchor; without one, declared percentile *values* beyond the displayed
+range determine `F(bound)` by interpolation (values are not clamped on open bounds).
+The only ceiling on out-of-bound mass comes from min/max-step feasibility (roughly 0.99,
+since 200 bins each
 need at least a min-step). The `_pin_endpoints` helper (`numeric/utils.py`) and the
 validation in `_validate_pchip_cdf` (`pchip_processing.py`) both apply this one-sided
 logic.
@@ -654,7 +711,7 @@ agree. The pool never gives a bin less than a third of the mass any member put t
 `aggregation_pipeline._numeric_combine_strategy` returns MEAN when `elicit_per_bin` holds for
 the question's numeric view and the configured strategy otherwise, so percentile members keep
 the MEDIAN everywhere, on both platforms (the benchmarked median-over-mean decision in
-`FUTURE.md` stands for them). The `NUMERIC_AGGREGATE` marker's trailing `method=` records which rule ran: `mean` (pooled
+backlog decision-9 "Mean over median, always-on stacking, stacker as judge, coherence weighting" stands for them). The `NUMERIC_AGGREGATE` marker's trailing `method=` records which rule ran: `mean` (pooled
 per-bin members), `median`, `stacked` or `single`; `unrecorded` means the aggregation never
 recorded a method and is a bug signal.
 
@@ -721,7 +778,7 @@ combination), on fourteen aggregate shapes each: six ordinary ones and eight wit
 or 99.9% of the mass already beyond one bound.
 
 **Why.** Mantic scores an out-of-range resolution against a fixed 0.05 reference,
-`50 * ln(mass / 0.05)`: 5% there scores 0 and the structural 1% the pipeline builds whenever every
+`50 * ln(mass / 0.05)`: 5% there scores 0 and the structural 1% from the legacy fallback when every
 declared percentile sits inside the range scores -80.5. Mantic's writers set the ranges and are
 paid for bot disagreement; in Series 1 half the date questions, a quarter of the discrete and an
 eighth of the numeric ones resolved outside the displayed range. Applying the same floor to every
@@ -730,15 +787,17 @@ average for any type and gained up to 9.1 for thin-tailed bots
 (`scratch_docs_and_planning/mantic_adversarial_candidates_2026-09-08.md`, section 1).
 Operator-approved 2026-09-08.
 
-**The platform gate.** A Metaculus aggregate comes back as the very same object, byte-identical;
-per-member forecasts are never touched (their `MEMBER_FORECAST` tails keep measuring what the
+**The platform gate.** Metaculus gets its own, lower floor, `METACULUS_OUT_OF_RANGE_TAIL_FLOOR`
+(2%, since 2026-11-24; reasoning and receipts in docs/constants.md), through the same code; an aggregate
+that needs no lift comes back as the very same object. Per-member forecasts are never touched (their `MEMBER_FORECAST` tails keep measuring what the
 models declared); the backtest, ablation and benchmark harnesses replay Metaculus questions, so
-the gate covers them without a flag.
+the same 2% floor applies there too. Backtest and ablation results from before 2026-11-24
+are not directly comparable with later results because the floor now applies there.
 
 **Telemetry.** `NUMERIC_AGGREGATE` keeps `oor_low` / `oor_high` as the PUBLISHED tails and adds
 three trailing fields: `oor_low_raw` / `oor_high_raw`, the aggregate's own tails before the
 floor, and `tail_floor`, the level the moved tails were actually raised to: `0.050000` normally,
-less where the other tail capped the raise, and `0.000000` when nothing moved (Metaculus, a
+less where the other tail capped the raise, and `0.000000` when nothing moved (a
 closed-bound question, tails already at or above the floor, an interior already at its minimum).
 Raw against published is how the floor gets benchmarked on this bot's own forecasts once live
 Mantic telemetry accumulates.

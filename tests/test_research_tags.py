@@ -13,6 +13,7 @@ from pathlib import Path
 
 from metaculus_bot.performance_analysis.research_tags import (
     attach_research_tags,
+    load_verified_archive_record,
     research_tags_for_qid,
     research_tags_for_record,
 )
@@ -320,3 +321,39 @@ class TestLogBackfillVetoOnQidLookup:
             json.dumps({"research_text": "## Time Series Anchor\nband\n", "source": "log_backfill"})
         )
         assert research_tags_for_qid(101, tmp_path)["anchor_present"] is None
+
+
+class TestPlatformSeparation:
+    """Mantic question ids share the integer space with Metaculus ids, so ``latest/<id>.json`` can
+    hold a record from either platform. A record with no ``platform`` field is Metaculus: every
+    archive record written before Mantic arrived is."""
+
+    def _write_mantic_record(self, latest_dir: Path) -> None:
+        (latest_dir / "101.json").write_text(
+            json.dumps(
+                {
+                    **_record("## Time Series Anchor\nband\n"),
+                    "platform": "mantic",
+                    "page_url": "https://competitions.mantic.com/questions/101/",
+                }
+            )
+        )
+
+    def test_a_mantic_archive_record_never_joins_a_metaculus_question(self, tmp_path: Path):
+        self._write_mantic_record(tmp_path)
+
+        assert load_verified_archive_record({"question_id": 101, "post_id": 101}, tmp_path) is None
+
+    def test_it_joins_the_mantic_question_with_the_same_id(self, tmp_path: Path):
+        self._write_mantic_record(tmp_path)
+
+        loaded = load_verified_archive_record({"question_id": 101, "post_id": 101, "platform": "mantic"}, tmp_path)
+
+        assert loaded is not None
+        assert loaded["platform"] == "mantic"
+
+    def test_an_archive_record_without_a_platform_is_metaculus(self, tmp_path: Path):
+        (tmp_path / "101.json").write_text(json.dumps(_record("text")))
+
+        assert load_verified_archive_record({"question_id": 101}, tmp_path) is not None
+        assert load_verified_archive_record({"question_id": 101, "platform": "mantic"}, tmp_path) is None

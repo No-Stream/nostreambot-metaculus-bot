@@ -4,8 +4,7 @@ Mantic scores an outcome beyond an OPEN bound against a fixed 5% reference (``50
 5% there scores 0, the structural 1% this pipeline publishes when every percentile sits inside the
 range scores -80.5. Mantic's writers set the ranges and half its date questions resolved above the
 displayed range in Series 1, so the PUBLISHED aggregate of a Mantic numeric, discrete or date question
-gets each open tail raised to ``MANTIC_OUT_OF_RANGE_TAIL_FLOOR``; Metaculus aggregates stay
-byte-identical and per-member forecasts are never touched.
+gets each open tail raised to ``MANTIC_OUT_OF_RANGE_TAIL_FLOOR``; Metaculus aggregates receive their own lower floor and per-member forecasts are never touched.
 
 A tail rises only as far as the other tail leaves room for: the server needs every one of the grid's
 N steps to be at least ``round(0.01 / N, 9)``, so when one open tail already holds most of the mass
@@ -38,7 +37,12 @@ from forecasting_tools.data_models.questions import DateQuestion
 from scipy.stats import norm
 
 from metaculus_bot.aggregation_strategies import AggregationStrategy
-from metaculus_bot.constants import MANTIC_OUT_OF_RANGE_TAIL_FLOOR, PLATFORM_MANTIC, PLATFORM_METACULUS
+from metaculus_bot.constants import (
+    MANTIC_OUT_OF_RANGE_TAIL_FLOOR,
+    METACULUS_OUT_OF_RANGE_TAIL_FLOOR,
+    PLATFORM_MANTIC,
+    PLATFORM_METACULUS,
+)
 from metaculus_bot.numeric.config import (
     OPEN_TAIL_MIN_MASS,
     PMF_FLOOR_MARGIN,
@@ -492,14 +496,14 @@ def _fields(line: str) -> dict[str, str]:
 
 
 class TestPlatformGate:
-    def test_mantic_gets_the_floor_and_metaculus_gets_none(self) -> None:
+    def test_each_platform_gets_its_own_floor(self) -> None:
         mantic = on_mantic(make_real_numeric_question(open_lower_bound=True))
         assert question_platform(mantic) == PLATFORM_MANTIC
         assert tail_floor_for_platform(mantic) == FLOOR
 
         metaculus = make_real_numeric_question(open_lower_bound=True)
         assert question_platform(metaculus) == PLATFORM_METACULUS
-        assert tail_floor_for_platform(metaculus) == 0.0
+        assert tail_floor_for_platform(metaculus) == METACULUS_OUT_OF_RANGE_TAIL_FLOOR == 0.02
 
     def test_the_date_adapter_keeps_the_platform(self) -> None:
         date_question = make_real_date_question(open_upper_bound=True)
@@ -543,7 +547,7 @@ class TestTheForecasterSeam:
         assert fields["tail_floor"] == "0.050000"
 
     @pytest.mark.asyncio
-    async def test_a_metaculus_aggregate_is_byte_identical_to_the_combiner_output(
+    async def test_a_metaculus_aggregate_with_structural_tails_is_raised_to_the_metaculus_floor(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         caplog.set_level(logging.INFO, logger="metaculus_bot")
@@ -556,16 +560,19 @@ class TestTheForecasterSeam:
         aggregated = await bot._aggregate_predictions(cast(list[PredictionTypes], members), question)
 
         assert isinstance(aggregated, NumericDistribution)
-        assert np.array_equal(cdf_heights(aggregated), expected)
-        assert (expected[0], expected[-1]) == pytest.approx((0.01, 0.99)), "the structural 1% tails, unfloored"
+        assert (expected[0], expected[-1]) == pytest.approx((0.01, 0.99)), "the combiner builds structural 1% tails"
+        published = cdf_heights(aggregated)
+        assert (published[0], published[-1]) == pytest.approx(
+            (METACULUS_OUT_OF_RANGE_TAIL_FLOOR, 1.0 - METACULUS_OUT_OF_RANGE_TAIL_FLOOR)
+        )
         (line,) = _aggregate_lines(caplog)
         fields = _fields(line)
-        assert fields["oor_low"] == fields["oor_low_raw"] == "0.010000"
-        assert fields["oor_high"] == fields["oor_high_raw"] == "0.010000"
-        assert fields["tail_floor"] == "0.000000"
+        assert (fields["oor_low_raw"], fields["oor_high_raw"]) == ("0.010000", "0.010000")
+        assert (fields["oor_low"], fields["oor_high"]) == ("0.020000", "0.020000")
+        assert fields["tail_floor"] == "0.020000"
 
     def test_the_same_object_comes_back_when_nothing_is_floored(self) -> None:
-        question = make_real_numeric_question(open_lower_bound=True, open_upper_bound=True)
+        question = make_real_numeric_question(open_lower_bound=False, open_upper_bound=False)
         members = _normal_members(question, centres=(10.0, 10.4, 9.7), sd=1.0)
         aggregated = aggregate_numeric(members, question, method="median")
 
@@ -574,7 +581,7 @@ class TestTheForecasterSeam:
         assert outcome.distribution is aggregated
         assert outcome.floor == 0.0
         assert outcome.raw == outcome.published
-        assert outcome.raw == pytest.approx((0.01, 0.01))
+        assert outcome.raw == pytest.approx((0.0, 0.0))
         assert outcome.cdf_size == 201
 
     @pytest.mark.asyncio

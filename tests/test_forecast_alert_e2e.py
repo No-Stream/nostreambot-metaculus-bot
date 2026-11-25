@@ -219,7 +219,7 @@ def test_clean_cli_run_persists_success_and_renders_notification(
 
     status = _read_runtime_status(status_path)
     assert status["outcome"] == "clean"
-    assert status["models"]["attempted"] == status["models"]["succeeded"] == 3
+    assert status["models"]["attempted"] == status["models"]["succeeded"] == 4
     assert status["publishing"]["forecasts"] == {"attempted": 1, "succeeded": 1, "failed": 0}
     assert status["publishing"]["comments"] == {"attempted": 1, "succeeded": 1, "failed": 0}
     assert len([request for request in recorded_requests if request.path == mantic._FORECAST_PATH]) == 1
@@ -227,7 +227,7 @@ def test_clean_cli_run_persists_success_and_renders_notification(
 
     summary, output, annotation = _render_notification(tmp_path, status_path, outcome="success")
     assert "Forecast run: Clean" in summary
-    assert "Models: 3/3 succeeded" in summary
+    assert "Models: 4/4 succeeded" in summary
     assert "Forecasts: 1/1 succeeded" in summary
     assert "Comments: 1/1 succeeded" in summary
     assert "title=Published OK" in output
@@ -264,7 +264,7 @@ def test_partial_polymarket_loss_still_publishes_and_keeps_cli_red(
     assert "Polymarket HTTP 403" in summary
     assert "lookups affected" in summary
     assert "source checks affected" in summary
-    assert "3/3 succeeded" in summary
+    assert "4/4 succeeded" in summary
     assert "Forecasts: 1/1 succeeded" in summary
     assert "Comments: 1/1 succeeded" in summary
     assert "title=Published OK; Polymarket HTTP 403" in output
@@ -288,7 +288,7 @@ def test_partial_manifold_detail_failure_remains_clean_and_renders_known_success
     assert all(cause["component"] != "resolution_source" for cause in status["causes"])
     assert ("wc26brazil", 503) in detail_responses
     assert any(status_code == 200 and market_id != "wc26brazil" for market_id, status_code in detail_responses)
-    assert status["models"]["attempted"] == status["models"]["succeeded"] == 3
+    assert status["models"]["attempted"] == status["models"]["succeeded"] == 4
     assert status["publishing"]["forecasts"] == {"attempted": 1, "succeeded": 1, "failed": 0}
     assert status["publishing"]["comments"] == {"attempted": 1, "succeeded": 1, "failed": 0}
     assert any(request.path == mantic._FORECAST_PATH for request in recorded_requests)
@@ -297,7 +297,7 @@ def test_partial_manifold_detail_failure_remains_clean_and_renders_known_success
     summary, output, annotation = _render_notification(tmp_path, status_path, outcome="success")
     assert "Forecast run: Clean" in summary
     assert "Resolution source provider failure" not in summary
-    assert "Models: 3/3 succeeded" in summary
+    assert "Models: 4/4 succeeded" in summary
     assert "Forecasts: 1/1 succeeded" in summary
     assert "Comments: 1/1 succeeded" in summary
     assert "title=Published OK" in output
@@ -337,7 +337,7 @@ def test_empty_asknews_source_check_remains_clean_under_existing_alert_policy(
     ]
     assert len(empty_asknews_checks) == 1
     assert empty_asknews_checks[0]["affected"] == empty_asknews_checks[0]["attempted"] == 1
-    assert status["models"]["attempted"] == status["models"]["succeeded"] == 3
+    assert status["models"]["attempted"] == status["models"]["succeeded"] == 4
     assert status["publishing"]["forecasts"] == {"attempted": 1, "succeeded": 1, "failed": 0}
     assert status["publishing"]["comments"] == {"attempted": 1, "succeeded": 1, "failed": 0}
     assert any(request.path == mantic._FORECAST_PATH for request in recorded_requests)
@@ -359,8 +359,8 @@ def test_model_timeout_keeps_survivors_publishing_and_cli_red(monkeypatch: pytes
 
     status = _read_runtime_status(status_path)
     assert status["outcome"] == "degraded"
-    assert status["models"]["attempted"] == 3
-    assert status["models"]["succeeded"] == 2
+    assert status["models"]["attempted"] == 4
+    assert status["models"]["succeeded"] == 3
     assert status["models"]["timed_out"] == 1
     assert status["publishing"]["forecasts"]["succeeded"] == 1
     assert status["publishing"]["comments"]["succeeded"] == 1
@@ -368,7 +368,7 @@ def test_model_timeout_keeps_survivors_publishing_and_cli_red(monkeypatch: pytes
     assert any(request.path == mantic._COMMENT_PATH for request in recorded_requests)
 
     summary, output, annotation = _render_notification(tmp_path, status_path, outcome="failure")
-    assert "Models: 2/3 succeeded, 1 timed out, 1 dropped" in summary
+    assert "Models: 3/4 succeeded, 1 timed out, 1 dropped" in summary
     assert "Forecasts: 1/1 succeeded" in summary
     assert "Comments: 1/1 succeeded" in summary
     assert "1 model timed out" in output

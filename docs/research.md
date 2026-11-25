@@ -823,7 +823,7 @@ Four stages per question:
    guard on a claim a long-closed market cannot make rather than as a measured fix: only 9
    archived rows are graded `same_quantity_same_date` at all, and q45163's own offender was
    graded one tier below that. Whether to demote that tier too (the dossier's own
-   recommendation, `driver_or_consequence`) is an open operator decision in FUTURE.md,
+   recommendation, `driver_or_consequence`) is an open operator decision (backlog task-12 "Widen the market staleness tier cap"),
    because that tier changes how the forecaster prompt weights the row. An actual
    demotion logs `MARKET_TIER_CAPPED: question=... rows=... capped=venue@rank` at
    INFO, only on a real cap, harvested as `market_tier_capped`.
@@ -1319,7 +1319,7 @@ and the 5 s DOM-read bound, reserved so a goto that runs its budget out can stil
 plus `RENDER_EXIT_RESERVE_MS` (3 s, described below), 15 s in all, so a render admitted with 12 to
 15 s of wall left declines at the gates with a `wall_budget` skip rather than launching. That band
 is deliberate: raising the floor to 15 s would make the pre-gate check truthful at the cost of the
-band's reach, and the call is the operator's (FUTURE.md item 5). The rendered DOM re-enters
+band's reach, and the call is the operator's (backlog task-14 "The 45 s resolution-source wall discards pages that already succeeded"). The rendered DOM re-enters
 `_classify_html_body`, so a rescued page gets the same chart read, ARIA rewrite, floors and
 disclosure leads as a directly-fetched one, and can still be withheld. A transport that declines
 (Playwright missing or broken, a host that will not pin to a public IP, or a browser error) is

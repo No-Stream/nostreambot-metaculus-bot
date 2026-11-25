@@ -503,7 +503,7 @@ def _count_qtypes(selected: dict[int, dict]) -> dict[str, int]:
     """How many of the ghosts to score carry each question type, before the join.
 
     The inventory is what makes a date ghost visible at all: the residual dataset excludes
-    date questions by decision (FUTURE.md, Mantic section), so a date ghost never finds a
+    date questions by decision (backlog task-26 "Mantic, awaiting live data"), so a date ghost never finds a
     record to join and would otherwise be indistinguishable from a question still waiting
     on its resolution.
     """
@@ -650,7 +650,7 @@ def _inventory_lines(summary: dict) -> list[str]:
     if qtype_counts.get("date"):
         lines.append(
             "  date ghosts cannot be scored yet: the residual dataset excludes date questions by decision "
-            "(FUTURE.md, Mantic section)"
+            '(backlog task-26 "Mantic, awaiting live data")'
         )
     return lines
 

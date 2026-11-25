@@ -1,12 +1,13 @@
 """Tests for the Metaculus collector: its HTTP retry, its two pulls, and per-record processing.
 
-Covers ``_api_get``'s shared retry budget, the paged resolved-post pull, the public-plus-private
+Covers ``api_get``'s shared retry budget, the paged resolved-post pull, the public-plus-private
 comment pull, and the fields ``_process_post`` stamps onto a record (the comment timestamp, the
 crowd size, the stacker outcome and its provenance, the practice-post and date-question skips).
 """
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 from pathlib import Path
@@ -14,13 +15,81 @@ from pathlib import Path
 import pytest
 import requests
 
+from metaculus_bot.constants import MANTIC_API_BASE_URL, MANTIC_BOT_USER_ID, PLATFORM_MANTIC
 from metaculus_bot.performance_analysis import collector
 from metaculus_bot.performance_analysis.collector import _process_post
 from tests.performance_analysis_fakes import _binary_post, _FakeResponse
 
+DATA_DIR = Path(__file__).parent / "data"
+MANTIC_PUBLIC_RESOLVED_PAGE = DATA_DIR / "mantic_series1_resolved_list_with_cp_public_2026_09_09.json"
+# What Mantic's author listing served on 2026-11-19: `next` set on every page, these sizes, then [].
+MANTIC_COMMENT_PAGE_SIZES = (100, 100, 18)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_request_pacing(monkeypatch):
+    """Each test starts as a fresh process would: no previous request to space against."""
+    monkeypatch.setattr(collector._REQUEST_PACER, "last_started_at", None)
+
+
+class TestApiGetPacing:
+    """Consecutive requests are spaced by MIN_REQUEST_INTERVAL_SECS, whoever the caller is.
+
+    Back-to-back archived-comment expansions drew two Cloudflare 429s each on 2026-11-19,
+    because only the page loops slept between requests.
+    """
+
+    def test_back_to_back_comment_expansions_are_spaced(self, monkeypatch):
+        clock = [1000.0]
+        sleeps: list[float] = []
+
+        def fake_sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+            clock[0] += seconds
+
+        def fake_get(url: str, headers: dict | None = None, params: dict | None = None, timeout: float | None = None):
+            comment_id = int(url.rstrip("/").rsplit("/", 1)[1])
+            return _FakeResponse(200, {"id": comment_id, "text": "full comment text"})
+
+        monkeypatch.setattr(collector.time, "monotonic", lambda: clock[0])
+        monkeypatch.setattr(collector.time, "sleep", fake_sleep)
+        monkeypatch.setattr(collector.requests, "get", fake_get)
+        stub_template = json.loads((Path(__file__).parent / "data" / "truncated_comment_payloads.json").read_text())
+
+        list_comment = stub_template["list_comment"]
+        collector.expand_truncated_comment(list_comment, "token")
+        collector.expand_truncated_comment(list_comment, "token")
+        clock[0] += collector.MIN_REQUEST_INTERVAL_SECS
+        collector.expand_truncated_comment(list_comment, "token")
+
+        # The second request waits out the interval; the third, already past it, does not wait.
+        assert sleeps == [collector.MIN_REQUEST_INTERVAL_SECS]
+
+    def test_the_request_after_a_successful_retry_is_still_spaced(self, monkeypatch):
+        clock = [1000.0]
+        starts: list[float] = []
+        outcomes = [_FakeResponse(429), _FakeResponse(200, {"results": []}), _FakeResponse(200, {"results": []})]
+
+        def fake_sleep(seconds: float) -> None:
+            clock[0] += seconds
+
+        def fake_get(url: str, headers: dict | None = None, params: dict | None = None, timeout: float | None = None):
+            starts.append(clock[0])
+            return outcomes.pop(0)
+
+        monkeypatch.setattr(collector.time, "monotonic", lambda: clock[0])
+        monkeypatch.setattr(collector.time, "sleep", fake_sleep)
+        monkeypatch.setattr(collector.requests, "get", fake_get)
+
+        collector.api_get("/comments/", "token")
+        collector.api_get("/comments/", "token")
+
+        gaps = [later - earlier for earlier, later in itertools.pairwise(starts)]
+        assert gaps == [collector.RETRY_BACKOFF_SECS, collector.MIN_REQUEST_INTERVAL_SECS]
+
 
 class TestApiGetRetry:
-    """``_api_get`` retries a transient network failure, and its wall clock stays bounded.
+    """``api_get`` retries a transient network failure, and its wall clock stays bounded.
 
     A read timeout used to propagate on its first occurrence, so one slow page abandoned a
     whole tournament sweep and wrote nothing after several minutes of paging. Nine residual
@@ -35,6 +104,7 @@ class TestApiGetRetry:
         sleeps: list[float] = []
         calls: list[dict] = []
         remaining = list(outcomes)
+        clock = [1000.0]
 
         def fake_get(url: str, headers: dict | None = None, params: dict | None = None, timeout: float | None = None):
             calls.append({"url": url, "headers": dict(headers or {}), "timeout": timeout})
@@ -45,9 +115,11 @@ class TestApiGetRetry:
 
         def fake_sleep(seconds: float) -> None:
             sleeps.append(seconds)
+            clock[0] += seconds
 
         monkeypatch.setattr(collector.requests, "get", fake_get)
         monkeypatch.setattr(collector.time, "sleep", fake_sleep)
+        monkeypatch.setattr(collector.time, "monotonic", lambda: clock[0])
         return sleeps, calls
 
     def test_a_read_timeout_is_retried_and_the_next_attempt_wins(self, monkeypatch):
@@ -56,7 +128,7 @@ class TestApiGetRetry:
             [requests.exceptions.ReadTimeout("slow page"), _FakeResponse(200, {"results": [{"id": 7}]})],
         )
 
-        assert collector._api_get("/posts/", "token") == {"results": [{"id": 7}]}
+        assert collector.api_get("/posts/", "token") == {"results": [{"id": 7}]}
         assert len(calls) == 2
         assert sleeps == [collector.RETRY_BACKOFF_SECS]
 
@@ -65,14 +137,14 @@ class TestApiGetRetry:
             monkeypatch, [requests.exceptions.ConnectionError("reset by peer"), _FakeResponse(200, {"results": []})]
         )
 
-        assert collector._api_get("/comments/", "token") == {"results": []}
+        assert collector.api_get("/comments/", "token") == {"results": []}
 
     def test_exhausted_transient_retries_raise_the_underlying_requests_error(self, monkeypatch):
         timeout = requests.exceptions.ReadTimeout("still slow")
         sleeps, calls = self._install(monkeypatch, [timeout] * collector.MAX_RETRIES)
 
         with pytest.raises(requests.exceptions.ReadTimeout):
-            collector._api_get("/posts/", "token")
+            collector.api_get("/posts/", "token")
 
         # Every attempt is spent, and the last one does not sleep before giving up.
         assert len(calls) == collector.MAX_RETRIES
@@ -84,7 +156,7 @@ class TestApiGetRetry:
         sleeps, calls = self._install(monkeypatch, outcomes)
 
         with pytest.raises(requests.exceptions.RequestException):
-            collector._api_get("/posts/", "token")
+            collector.api_get("/posts/", "token")
 
         assert len(calls) == collector.MAX_RETRIES
         # Worst-case wall clock: MAX_RETRIES reads at the request timeout, plus these backoffs.
@@ -94,13 +166,13 @@ class TestApiGetRetry:
         self._install(monkeypatch, [_FakeResponse(429)] * collector.MAX_RETRIES)
 
         with pytest.raises(requests.exceptions.HTTPError, match="429 rate limit"):
-            collector._api_get("/posts/", "token")
+            collector.api_get("/posts/", "token")
 
     def test_a_server_error_is_not_retried(self, monkeypatch):
         _sleeps, calls = self._install(monkeypatch, [_FakeResponse(500)])
 
         with pytest.raises(requests.exceptions.HTTPError):
-            collector._api_get("/posts/", "token")
+            collector.api_get("/posts/", "token")
 
         assert len(calls) == 1
 
@@ -109,7 +181,7 @@ class TestApiGetRetry:
             monkeypatch, [requests.exceptions.ReadTimeout("slow"), _FakeResponse(200, {"results": []})]
         )
 
-        collector._api_get("/posts/", "token")
+        collector.api_get("/posts/", "token")
 
         assert [call["timeout"] for call in calls] == [collector.REQUEST_TIMEOUT_SECS] * 2
 
@@ -132,13 +204,14 @@ class TestFetchResolvedQuestions:
         seen: list[dict] = []
         remaining = list(pages)
 
-        def fake_api_get(path: str, token: str, params: dict | None = None) -> dict:
+        def fake_api_get(
+            path: str, token: str, params: dict | None = None, *, base_url: str = collector.BASE_URL
+        ) -> dict:
             seen.append({"path": path, "token": token, "params": dict(params or {})})
             page = remaining.pop(0)
             return {"results": page, "next": "next-page" if remaining else None}
 
-        monkeypatch.setattr(collector, "_api_get", fake_api_get)
-        monkeypatch.setattr(collector, "FETCH_DELAY_SECS", 0.0)
+        monkeypatch.setattr(collector, "api_get", fake_api_get)
         return seen
 
     def test_returns_the_list_payloads_across_pages_with_no_per_post_get(self, monkeypatch):
@@ -189,15 +262,16 @@ class TestFetchBotComments:
         seen: list[dict] = []
         remaining = {False: list(public_pages), True: list(private_pages)}
 
-        def fake_api_get(path: str, token: str, params: dict | None = None) -> dict:
+        def fake_api_get(
+            path: str, token: str, params: dict | None = None, *, base_url: str = collector.BASE_URL
+        ) -> dict:
             call_params = dict(params or {})
             seen.append({"path": path, "token": token, "params": call_params})
             pages = remaining[bool(call_params.get("is_private"))]
             page = pages.pop(0)
             return {"results": page, "next": "next-page" if pages else None}
 
-        monkeypatch.setattr(collector, "_api_get", fake_api_get)
-        monkeypatch.setattr(collector, "FETCH_DELAY_SECS", 0.0)
+        monkeypatch.setattr(collector, "api_get", fake_api_get)
         return seen
 
     @staticmethod
@@ -263,12 +337,14 @@ class TestTruncatedCommentRecovery:
         detail_comment = payloads["detail_comment"]
         calls: list[str] = []
 
-        def fake_api_get(path: str, token: str, params: dict | None = None) -> dict:
+        def fake_api_get(
+            path: str, token: str, params: dict | None = None, *, base_url: str = collector.BASE_URL
+        ) -> dict:
             calls.append(path)
             assert token == "bot-token"
             return detail_comment
 
-        monkeypatch.setattr(collector, "_api_get", fake_api_get)
+        monkeypatch.setattr(collector, "api_get", fake_api_get)
 
         lookup = collector._build_comment_lookup([list_comment], "bot-token")
         records = _process_post(_binary_post(list_comment["on_post"], 45859), lookup)
@@ -281,7 +357,9 @@ class TestTruncatedCommentRecovery:
 
     def test_truncated_comment_without_full_text_raises(self, monkeypatch):
         list_comment = self._payloads()["list_comment"]
-        monkeypatch.setattr(collector, "_api_get", lambda path, token, params=None: {"id": list_comment["id"]})
+        monkeypatch.setattr(
+            collector, "api_get", lambda path, token, params=None, **_options: {"id": list_comment["id"]}
+        )
 
         with pytest.raises(ValueError, match=r"full comment .* has no text"):
             collector._build_comment_lookup([list_comment], "bot-token")
@@ -290,8 +368,8 @@ class TestTruncatedCommentRecovery:
         comment = self._payloads()["list_comment_with_markdown_link"]
         monkeypatch.setattr(
             collector,
-            "_api_get",
-            lambda path, token, params=None: {"id": comment["id"], "text": "full comment text"},
+            "api_get",
+            lambda path, token, params=None, **_options: {"id": comment["id"], "text": "full comment text"},
         )
 
         assert collector.expand_truncated_comment(comment, "bot-token")["text"] == "full comment text"
@@ -498,3 +576,131 @@ class TestCollectorStackerOutcome:
         rec = self._run(9, 99, comment)
         assert rec["stacker_outcome"] == "fallback_median"
         assert rec["stacker_outcome_source"] == "marker_outcome"
+
+
+class TestManticPull:
+    """A Mantic tournament runs through the same collector functions against Mantic's API root.
+
+    The posts page is the public series-1 page recorded 2026-09-09, read without a token, with a
+    ``my_forecasts`` block added by hand in the Metaculus shape, because no authenticated Mantic
+    page has been recorded yet. Replace it with a recorded token-bearing page once one exists.
+    """
+
+    @staticmethod
+    def _page_with_our_forecasts() -> dict:
+        page = json.loads(MANTIC_PUBLIC_RESOLVED_PAGE.read_text())
+        for post in page["results"]:
+            question = post["question"]
+            n_points = question["scaling"]["inbound_outcome_count"] + 1
+            question["my_forecasts"] = {
+                "history": [],
+                "latest": {"forecast_values": [0.05 + 0.9 * i / (n_points - 1) for i in range(n_points)]},
+                "score_data": {"spot_baseline_score": 4.0, "baseline_score": 3.5},
+            }
+        return page
+
+    @staticmethod
+    def _comments(post_ids: list[int]) -> list[dict]:
+        filler_count = sum(MANTIC_COMMENT_PAGE_SIZES) - len(post_ids)
+        on_posts = [*post_ids, *range(10_000, 10_000 + filler_count)]
+        return [
+            {"id": 500 + index, "on_post": post_id, "text": "*Forecaster 1*: 40%\n", "is_private": False}
+            for index, post_id in enumerate(on_posts)
+        ]
+
+    def _install(self, monkeypatch, posts_page: dict, comments: list[dict]) -> list[dict]:
+        calls: list[dict] = []
+
+        def fake_get(url: str, headers: dict | None = None, params: dict | None = None, timeout: float | None = None):
+            call_params = dict(params or {})
+            calls.append({"url": url, "params": call_params})
+            offset = call_params.get("offset", 0)
+            served = posts_page["results"] if url.endswith("/posts/") else comments
+            results = served[offset : offset + collector.PAGE_SIZE]
+            return _FakeResponse(200, {"results": results, "next": f"{url}?offset={offset + collector.PAGE_SIZE}"})
+
+        monkeypatch.setattr(collector.requests, "get", fake_get)
+        monkeypatch.setattr(collector.time, "sleep", lambda seconds: None)
+        return calls
+
+    def test_every_request_goes_to_mantic_and_records_carry_the_platform(self, monkeypatch, tmp_path: Path):
+        page = self._page_with_our_forecasts()
+        post_ids = [post["id"] for post in page["results"]]
+        calls = self._install(monkeypatch, page, self._comments(post_ids))
+
+        records = collector.build_performance_dataset(
+            "series-1", token="fake", research_archive_dir=tmp_path, platform=collector.MANTIC_PLATFORM
+        )
+
+        assert {call["url"].removeprefix(MANTIC_API_BASE_URL) for call in calls} == {"/posts/", "/comments/"}
+        comment_calls = [call for call in calls if call["url"].endswith("/comments/")]
+        assert {call["params"]["author"] for call in comment_calls} == {MANTIC_BOT_USER_ID}
+        # Both listings page to the empty page although `next` never goes null.
+        assert len(comment_calls) == 2 * (len(MANTIC_COMMENT_PAGE_SIZES) + 1)
+        assert sorted(record["post_id"] for record in records) == sorted(post_ids)
+        assert {record["platform"] for record in records} == {PLATFORM_MANTIC}
+        assert all(record["comment_text"] for record in records)
+        assert all(record["metaculus_scores"]["spot_baseline_score"] == 4.0 for record in records)
+        assert all(record["numeric_log_score"] is not None for record in records)
+
+    def test_the_public_page_alone_yields_no_records(self, monkeypatch, tmp_path: Path):
+        """Without a token Mantic serves no ``my_forecasts``, so every question reads as one the bot
+        never forecast. Reading the bot's values out of the public snapshot is deliberately not built."""
+        page = json.loads(MANTIC_PUBLIC_RESOLVED_PAGE.read_text())
+        self._install(monkeypatch, page, self._comments([post["id"] for post in page["results"]]))
+
+        records = collector.build_performance_dataset(
+            "series-1", token="fake", research_archive_dir=tmp_path, platform=collector.MANTIC_PLATFORM
+        )
+
+        assert records == []
+
+
+class TestCommentLookupScope:
+    """Only the posts a pull needs get their comment looked up, and only those stubs are expanded."""
+
+    def test_a_stub_outside_the_requested_posts_is_never_expanded(self, monkeypatch, tmp_path: Path):
+        list_comment = json.loads((DATA_DIR / "truncated_comment_payloads.json").read_text())["list_comment"]
+        calls: list[str] = []
+        monkeypatch.setattr(collector, "api_get", lambda path, token, params=None, **_options: calls.append(path))
+
+        records = collector.records_from_posts(
+            [_binary_post(list_comment["on_post"], 45859)],
+            [list_comment],
+            "bot-token",
+            research_archive_dir=tmp_path,
+            comment_post_ids=set(),
+        )
+
+        assert calls == []
+        assert records[0]["comment_text"] is None
+        assert records[0]["platform"] == "metaculus"
+
+    def test_the_lookup_keeps_only_the_named_posts(self, monkeypatch):
+        comments = [{"id": 1, "on_post": 11, "text": "a"}, {"id": 2, "on_post": 22, "text": "b"}]
+
+        assert set(collector._build_comment_lookup(comments, "token", post_ids={22})) == {22}
+        assert set(collector._build_comment_lookup(comments, "token")) == {11, 22}
+
+
+class TestCollectorExcludesMultiResolutionQuestions:
+    """A Mantic multi-resolution question is skipped with a named warning until one has resolved and
+    its scoring has been read; single-resolution scoring could otherwise publish a wrong score."""
+
+    def test_a_multi_resolution_question_is_skipped_and_named(self, caplog):
+        post = _binary_post(700, 7000)
+        post["question"]["multi_resolution"] = True
+
+        with caplog.at_level(logging.WARNING, logger="metaculus_bot.performance_analysis"):
+            assert _process_post(post, {}) == []
+
+        (message,) = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert "Q7000" in message
+        assert "post 700" in message
+        assert "multi-resolution" in message
+
+    def test_an_explicit_false_is_an_ordinary_question(self):
+        post = _binary_post(701, 7001)
+        post["question"]["multi_resolution"] = False
+
+        assert len(_process_post(post, {})) == 1

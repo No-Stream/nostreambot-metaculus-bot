@@ -9,11 +9,13 @@ import pytest
 from metaculus_bot.research.agentic import fetch_outcomes
 from metaculus_bot.research.agentic import tools as agentic_tools
 from metaculus_bot.research.agentic.dispatch import _materialize_delivered_evidence
+from metaculus_bot.research.agentic.loop import _materialize_text_proposal
 from metaculus_bot.research.agentic.loop_state import _LoopState, _ToolExecutionResult
 from metaculus_bot.research.agentic.types import EvidencePassage, LoopConfig
 from metaculus_bot.research.known_api import adapters, backends
 from metaculus_bot.research.known_api.result import KnownApiResult
 from metaculus_bot.research.market_retrieval.types import MarketChild, MarketMatch
+from metaculus_bot.research.source_documents import ParsedSource, SourceMember, SourceSection
 from metaculus_bot.research.source_evidence import SourceExcerpt
 
 
@@ -233,6 +235,159 @@ def test_clipped_window_passage_stays_marked_in_materialized_tool_result() -> No
 
     assert "clipped: true" in delivered_content
     assert state.delivered_evidence["ev_1"].clipped is True
+
+
+def test_local_csv_fetch_exposes_visible_complete_rows_as_exact_finding_support(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "https://agency.example/results.zip"
+    member = "data/results.csv"
+    rows = _local_csv_rows(38, row_chars=200)
+    source = ParsedSource(
+        kind="archive",
+        sections=(SourceSection(member, None, "columns: A B C\n" + "\n".join(rows), rows=38, columns=3),),
+        members=(SourceMember(member, 8_000, True, kind="csv"),),
+    )
+    monkeypatch.setattr(agentic_tools.run_cache, "local_source_for", lambda _url: source)
+
+    outcome = agentic_tools._local_source_fetch_outcome(
+        url,
+        fetch_outcomes.PlainFetchResult(
+            status="ok", method="local_source", text="", links=[], url=url, local_kind="archive"
+        ),
+        start_char=0,
+        member=member,
+        sheet=None,
+    )
+    visible_complete_rows = [row for row in rows if row in outcome.content_markdown]
+
+    assert outcome.truncated is True
+    assert visible_complete_rows
+    assert [passage.text for passage in outcome.evidence_passages] == ["columns: A B C", *visible_complete_rows]
+    assert all(not passage.clipped for passage in outcome.evidence_passages)
+
+    state = _LoopState(messages=[], started_at_s=0.0, deadline_at_s=100.0)
+    result = _ToolExecutionResult(tool_call_id="call_csv", tool_name="fetch", content="", outcome=outcome)
+    _materialize_delivered_evidence(result, state, LoopConfig(model="test-model"))
+    materialized, reason = _materialize_text_proposal(
+        {"claim": "The first row reports 947.", "evidence_refs": ["ev_2", "ev_3"]}, state
+    )
+
+    assert reason is None
+    assert materialized is not None
+    assert materialized["quote"] == rows[0]
+    assert [support["quote"] for support in materialized["supports"]] == rows[:2]
+
+
+def test_local_csv_pagination_omits_partial_start_row_and_keeps_complete_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "https://agency.example/results.zip"
+    member = "data/results.csv"
+    rows = _local_csv_rows(38, row_chars=200)
+    source_text = "columns: A B C\n" + "\n".join(rows)
+    source = ParsedSource(
+        kind="archive",
+        sections=(SourceSection(member, None, source_text, rows=38, columns=3),),
+        members=(SourceMember(member, 8_000, True, kind="csv"),),
+    )
+    monkeypatch.setattr(agentic_tools.run_cache, "local_source_for", lambda _url: source)
+    partial_row_start = len(f"[Member: {member}]\n") + source_text.index(rows[9]) + 25
+
+    outcome = agentic_tools._local_source_fetch_outcome(
+        url,
+        fetch_outcomes.PlainFetchResult(
+            status="ok", method="local_source", text="", links=[], url=url, local_kind="archive"
+        ),
+        start_char=partial_row_start,
+        member=member,
+        sheet=None,
+    )
+    visible_complete_rows = [row for row in rows[10:] if row in outcome.content_markdown]
+
+    assert rows[9] not in [passage.text for passage in outcome.evidence_passages]
+    assert [passage.text for passage in outcome.evidence_passages] == visible_complete_rows
+    assert all(not passage.clipped for passage in outcome.evidence_passages)
+
+
+def test_local_csv_fetch_skips_an_oversized_single_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    url = "https://agency.example/results.zip"
+    member = "data/results.csv"
+    surrounding_rows = _local_csv_rows(2, row_chars=180)
+    oversized_row = _local_csv_rows(1, row_chars=1_700)[0]
+    rows = [surrounding_rows[0], oversized_row, surrounding_rows[1]]
+    source = ParsedSource(
+        kind="archive",
+        sections=(SourceSection(member, None, "columns: A B C\n" + "\n".join(rows), rows=3, columns=3),),
+        members=(SourceMember(member, 2_000, True, kind="csv"),),
+    )
+    monkeypatch.setattr(agentic_tools.run_cache, "local_source_for", lambda _url: source)
+
+    outcome = agentic_tools._local_source_fetch_outcome(
+        url,
+        fetch_outcomes.PlainFetchResult(
+            status="ok", method="local_source", text="", links=[], url=url, local_kind="archive"
+        ),
+        start_char=0,
+        member=member,
+        sheet=None,
+    )
+
+    assert [passage.text for passage in outcome.evidence_passages] == ["columns: A B C", *surrounding_rows]
+    assert oversized_row not in [passage.text for passage in outcome.evidence_passages]
+
+
+def test_local_archive_navigation_inventory_is_never_citable(monkeypatch: pytest.MonkeyPatch) -> None:
+    url = "https://agency.example/results.zip"
+    member = "data/results.csv"
+    row = _local_csv_rows(1, row_chars=180)[0]
+    source = ParsedSource(
+        kind="archive",
+        sections=(SourceSection(member, None, row, rows=1, columns=3),),
+        members=(SourceMember(member, 200, True, kind="csv"),),
+    )
+    monkeypatch.setattr(agentic_tools.run_cache, "local_source_for", lambda _url: source)
+
+    outcome = agentic_tools._local_source_fetch_outcome(
+        url,
+        fetch_outcomes.PlainFetchResult(
+            status="ok", method="local_source", text="", links=[], url=url, local_kind="archive"
+        ),
+        start_char=0,
+        member=None,
+        sheet=None,
+    )
+
+    assert outcome.method == "local_navigation"
+    assert "Navigation only;" in outcome.content_markdown
+    assert outcome.evidence_passages == []
+
+
+def test_fetch_splits_long_generic_paragraph_into_bounded_sentences() -> None:
+    first_sentence = "The report confirms the first estimate: " + "a" * 900 + "."
+    oversized_sentence = "An unrelated statement contains a long value: " + "b" * 1_650 + "."
+    final_sentence = "The confirmed count was 947: " + "c" * 900 + "."
+    text = f"{first_sentence} {oversized_sentence} {final_sentence}"
+
+    outcome = agentic_tools._render_fetch_outcome(
+        "https://agency.example/report",
+        text,
+        [],
+        method="plain",
+        start_char=0,
+    )
+
+    assert [passage.text.strip() for passage in outcome.evidence_passages] == [first_sentence, final_sentence]
+    assert all(len(passage.text) <= 1600 for passage in outcome.evidence_passages)
+
+
+def _local_csv_rows(count: int, *, row_chars: int) -> list[str]:
+    rows = []
+    for index in range(1, count + 1):
+        row_prefix = f"row {index} (A{index}:C{index}): 2026-01-01\t{947 if index == 1 else index}\t"
+        row = row_prefix + ("x" * max(0, row_chars - len(row_prefix)))
+        rows.append(row)
+    return rows
 
 
 def test_local_digest_adapter_binds_candidate_passages_to_url_and_fetched_method() -> None:

@@ -39,7 +39,7 @@ key on ``other_mass`` / ``concentration``, which the MC prompt no longer asks fo
 fire only on an archived block or on a model emitting the field from habit; turning
 ``PROBABILISTIC_TOOLS_ENABLED`` on today would produce binary lines and no MC ones. The
 schema fields stay optional so archived blocks still parse. Why those fields were retired,
-and what reviving any of it would cost, is in FUTURE.md and AGENTS.md rather than here.
+and what reviving any of it would cost, is in backlog decision-30 "Probabilistic tooling for base forecasters" and AGENTS.md rather than here.
 """
 
 from __future__ import annotations

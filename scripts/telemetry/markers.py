@@ -111,6 +111,10 @@ def _parse_line_ts(line: str) -> str | None:
 # Why: question= leads on gap-fill v2/ghost, trails elsewhere. Receipt: docs/telemetry_markers.md "Parsing notes".
 MARKER_SPECS: list[MarkerSpec] = [
     MarkerSpec(
+        "anthropic_forecast_route",
+        re.compile(r"ANTHROPIC_FORECAST_ROUTE:\s*model=(?P<model>\S+)\s+route=(?P<route>\S+)\s+reason=(?P<reason>\S+)"),
+    ),
+    MarkerSpec(
         "extraction_rung",
         re.compile(
             r"EXTRACTION_RUNG:\s*question=(?P<question>\S+)\s+model=(?P<model>.+?)"
@@ -274,6 +278,16 @@ MARKER_SPECS: list[MarkerSpec] = [
             r"\s+spread_applied=(?P<spread_applied>\S+)"
         ),
         qid_kind=QID_KIND_QUESTION_ID,  # numeric/pipeline.py emits question.id_of_question
+    ),
+    MarkerSpec(
+        "numeric_stated_tail",
+        # Why: separates declared tails from constructed mass. Receipt: docs/telemetry_markers.md "NUMERIC_STATED_TAIL".
+        re.compile(
+            r"NUMERIC_STATED_TAIL:\s*question=(?P<question>\S+)\s+model=(?P<model>.+?)"
+            r"\s+bound=(?P<bound>\S+)\s+stated=(?P<stated>\S+)\s+status=(?P<status>\S+)"
+            r"\s+dropped_percentiles=(?P<dropped_percentiles>\S+)\s+resulting_mass=(?P<resulting_mass>\S+)"
+        ),
+        qid_kind=QID_KIND_QUESTION_ID,  # forecaster_runners.py emits question.id_of_question
     ),
     MarkerSpec(
         "numeric_aggregate_grid_mismatch",

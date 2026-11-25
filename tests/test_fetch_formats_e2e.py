@@ -47,6 +47,9 @@ from tests.agentic_fakes import tool_call as _tool_call
 _CONTINUATION_RE = re.compile(
     r"\n\[truncated at (?P<offset>\d+) of (?P<total>\d+) chars — call again with start_char=(?P=offset)\]"
 )
+_EVIDENCE_HEADER_RE = re.compile(
+    r"\[evidence_ref: ev_\d+; source: .*?; method: .*?; origin: .*?; clipped: (?:true|false)\]\n"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -306,11 +309,13 @@ async def test_workbook_sheet_selector_uses_cached_download_and_excludes_other_s
     assert hits["/report.xlsx"] == 1
 
 
-class _DocxContinuationLlm:
-    def __init__(self, url: str) -> None:
+class _ContinuationLlm:
+    def __init__(self, url: str, *, member: str | None = None) -> None:
         self.url = url
+        self.member = member
         self.calls: list[dict[str, Any]] = []
-        self.offset: int | None = None
+        self.page_ids: list[str] = []
+        self.requested_offsets: list[int] = []
 
     async def __call__(
         self,
@@ -325,15 +330,52 @@ class _DocxContinuationLlm:
         step = len(self.calls) - 1
         if step == 0:
             return _response(tool_calls=[_plan_call()])
-        if step == 1:
-            return _response(tool_calls=[_tool_call("page1", "fetch", {"url": self.url})])
-        if step == 2:
-            first = next(message["content"] for message in reversed(messages) if message.get("tool_call_id") == "page1")
-            match = _CONTINUATION_RE.search(first)
-            assert match is not None
-            self.offset = int(match.group("offset"))
-            return _response(tool_calls=[_tool_call("page2", "fetch", {"url": self.url, "start_char": self.offset})])
-        return _response(tool_calls=[_tool_call("done", "conclude", {"gap_accounting": _accounting("g1")})])
+        previous_page = next(
+            (message for message in reversed(messages) if message.get("tool_call_id", "").startswith("page")), None
+        )
+        if previous_page is None:
+            page_offset = 0
+        else:
+            match = _CONTINUATION_RE.search(previous_page["content"])
+            if match is None:
+                return _response(tool_calls=[_tool_call("done", "conclude", {"gap_accounting": _accounting("g1")})])
+            page_offset = int(match.group("offset"))
+        page_id = f"page{len(self.page_ids) + 1}"
+        self.page_ids.append(page_id)
+        self.requested_offsets.append(page_offset)
+        arguments = {"url": self.url, "start_char": page_offset}
+        if self.member is not None:
+            arguments["member"] = self.member
+        return _response(tool_calls=[_tool_call(page_id, "fetch", arguments)])
+
+
+def _source_body(tool_content: str) -> str:
+    body = tool_content.split("\n\n", 1)[1]
+    return _EVIDENCE_HEADER_RE.sub("", body)
+
+
+def _reconstruct_source_pages(result: Any, llm: _ContinuationLlm, complete_text: str) -> str:
+    source_parts: list[str] = []
+    source_offset = 0
+    assert len(llm.page_ids) >= 2
+    assert len(llm.requested_offsets) == len(llm.page_ids)
+    for index, page_id in enumerate(llm.page_ids):
+        tool_content = _tool_content(result, page_id)
+        assert len(tool_content) <= 8_000
+        source_body = _source_body(tool_content)
+        marker = _CONTINUATION_RE.search(source_body)
+        assert llm.requested_offsets[index] == source_offset
+        if marker is None:
+            assert index == len(llm.page_ids) - 1
+            source_part = source_body
+            assert source_offset + len(source_part) == len(complete_text)
+        else:
+            source_part = source_body[: marker.start()]
+            assert int(marker.group("offset")) == source_offset + len(source_part)
+            assert int(marker.group("total")) == len(complete_text)
+        source_parts.append(source_part)
+        source_offset += len(source_part)
+    return "".join(source_parts)
 
 
 @pytest.mark.asyncio
@@ -364,32 +406,72 @@ async def test_docx_order_and_dispatch_pagination_preserve_every_character_withi
         tools = agentic_tools.build_gap_fill_tools(
             "document ordering", ctx=agentic_tools.question_ladder_context(session=session)
         )
-        llm = _DocxContinuationLlm(urls["/report.docx"])
+        llm = _ContinuationLlm(urls["/report.docx"])
         result = await run_agentic_loop(
             "system",
             "brief",
             tools,
-            _config(max_steps=5, max_conclude_gate_rejections=0),
+            _config(max_steps=12, max_conclude_gate_rejections=0),
             llm_call=llm,
         )
 
-    first = _tool_content(result, "page1")
-    second = _tool_content(result, "page2")
-    assert len(first) <= 8_000
-    assert len(second) <= 8_000
-    match = _CONTINUATION_RE.search(first)
-    assert match is not None
-    assert llm.offset == int(match.group("offset"))
-    first_body = first.split("\n\n", 1)[1][: match.start() - first.index("\n\n") - 2]
-    second_body = second.split("\n\n", 1)[1]
     parsed = run_cache.local_source_for(urls["/report.docx"])
     assert parsed is not None
     complete_text = source_text(select_source_sections(parsed))
-    assert first_body + second_body == complete_text
+    assert _reconstruct_source_pages(result, llm, complete_text) == complete_text
+    assert all(
+        any(passage.text in section.text for section in parsed.sections) for passage in result.delivered_evidence
+    )
     assert complete_text.index("BEFORE TABLE") < complete_text.index("OUTER CELL")
     assert complete_text.index("OUTER CELL") < complete_text.index("NESTED CELL")
     assert complete_text.index("NESTED CELL") < complete_text.index("AFTER TABLE")
     assert hits["/report.docx"] == 1
+
+
+@pytest.mark.asyncio
+async def test_csv_order_and_dispatch_pagination_preserve_every_character_within_total_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    csv_text = "region,value\n" + "".join(f"region-{index:04d},{'x' * 24}\n" for index in range(300))
+    archive = _zip_bytes({"report.csv": csv_text.encode()})
+    monkeypatch.setattr(guard, "is_public_http_url", lambda _url: _async_true())
+
+    async with (
+        _local_source_server({"/report.zip": (archive, "application/zip")}) as (urls, hits),
+        aiohttp.ClientSession() as session,
+    ):
+        tools = agentic_tools.build_gap_fill_tools(
+            "CSV pagination", ctx=agentic_tools.question_ladder_context(session=session)
+        )
+        llm = _ContinuationLlm(urls["/report.zip"], member="report.csv")
+        result = await run_agentic_loop(
+            "system",
+            "brief",
+            tools,
+            _config(max_steps=12, max_conclude_gate_rejections=0),
+            llm_call=llm,
+        )
+
+    parsed = run_cache.local_source_for(urls["/report.zip"])
+    assert parsed is not None
+    complete_text = source_text(select_source_sections(parsed, member="report.csv"))
+    reconstructed = _reconstruct_source_pages(result, llm, complete_text)
+    assert reconstructed == complete_text, (len(reconstructed), len(complete_text), llm.page_ids, llm.requested_offsets)
+    section_text = parsed.sections[0].text
+    section_start = complete_text.index(section_text)
+    invalid_passages = []
+    for passage in result.delivered_evidence:
+        start = passage.source_start_char
+        end = passage.source_end_char
+        if start is None or end is None:
+            invalid_passages.append((passage.text, start, end))
+            continue
+        starts_at_line_boundary = start == section_start or section_text[start - section_start - 1] == "\n"
+        ends_at_line_boundary = end == section_start + len(section_text) or section_text[end - section_start] == "\n"
+        if complete_text[start:end] != passage.text or not starts_at_line_boundary or not ends_at_line_boundary:
+            invalid_passages.append((passage.text, start, end, starts_at_line_boundary, ends_at_line_boundary))
+    assert invalid_passages == [], invalid_passages[:5]
+    assert hits["/report.zip"] == 1
 
 
 @pytest.mark.asyncio

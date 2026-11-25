@@ -47,7 +47,7 @@ from metaculus_bot.research.market_retrieval import generation, queries, renderi
 from metaculus_bot.research.market_retrieval.http import PLATFORM_HTTP_TIMEOUT, read_json_capped
 from metaculus_bot.research.market_retrieval.types import MarketMatch, MarketSnapshot
 from metaculus_bot.research.number_format import format_decimal_change, format_decimal_value
-from metaculus_bot.research.source_evidence import SourceExcerpt
+from metaculus_bot.research.source_evidence import SourceExcerpt, bounded_passages
 
 logger = logging.getLogger(__name__)
 
@@ -679,8 +679,7 @@ async def _edgar_document(session: Any, url: str) -> KnownApiResult:
             retrieval_method="known_api",
             content_origin="source_text",
         )
-        for paragraph in text.split("\n\n")
-        if paragraph.strip() and len(paragraph) <= GAP_FILL_V2_EVIDENCE_PASSAGE_MAX_CHARS
+        for paragraph in bounded_passages(text)
     ]
     return KnownApiResult(
         status="ok",

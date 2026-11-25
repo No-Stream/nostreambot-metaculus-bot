@@ -76,7 +76,7 @@ session does not run them: it proposes, the operator runs and decides.
 
 - **Resolve "latest per vendor" from a LIVE model-list read, never from memory.**
   The roster design (`FORECASTER_LLMS` in `metaculus_bot/llm_configs.py`) is the
-  newest frontier reasoning model from each vendor, one slot each, and nothing in
+  newest frontier reasoning model from each vendor, with additional slots by operator decision, and nothing in
   the repo can say what that currently resolves to. The 2026-08-31 gemini-slot
   review found that a roster decision needs this one read before anything else.
   OpenRouter's public models endpoint lists every slug with `created`, its
@@ -106,7 +106,7 @@ session does not run them: it proposes, the operator runs and decides.
 - **A roster change is a config-era boundary.** Residual analysis buckets by the
   merge-to-main timestamp, so make any swap once, in the same merge as everything
   else that shifts the forecast distribution, before the first question, never
-  mid-window (`FUTURE.md`, "FREEZE the triple").
+  mid-window (the retired design log (git history), "FREEZE the triple").
 - **Refresh the tournament constants** (`TOURNAMENT_ID`, the date checks in
   `constants.py`) and flip the cup reminder off once configured
   (`FALL_CUP_CONFIGURED`), or every scheduled run reddens on the reminder.
@@ -279,7 +279,7 @@ Gemini has two separate routes, which is the other easy thing to confuse:
   Google credits are used, or disable "Always use for this provider" on that BYOK
   key), then re-verify with one live call. See
   `metaculus_bot/fallback_openrouter.py:should_route_via_donated_key` and
-  `FUTURE.md` "Gemini on the donated OpenRouter key".
+  the retired design log (git history) "Gemini on the donated OpenRouter key".
 - **Gemini grounded search** (`research/gemini_search.py`) always uses the
   personal `GOOGLE_API_KEY`. The donated toggle does not touch it, and neither
   does anything else on the OpenRouter side. What that key costs is its own
@@ -389,7 +389,7 @@ is pinned to the personal key with no donated attempt, no 429 and no fallback-co
 models run through a free-tier Google AI Studio BYOK key on the donated account that has no Pro
 free tier (limit 0, so every call 429s), so a donated attempt would always fail over to personal
 anyway. The pin is a temporary workaround; see the `TODO(gemini-3.1-pro-donated)` tag on that
-constant, the "Known exception" paragraph above, and `FUTURE.md` "Gemini on the donated OpenRouter
+constant, the "Known exception" paragraph above, and the retired design log (git history) "Gemini on the donated OpenRouter
 key".
 
 #### Prompt-echo truncation (`_PROMPT_ECHO_MARKERS`, `_without_prompt_echo`)
@@ -500,7 +500,7 @@ non-litellm caller, and a provider that words the failure without a recognizable
 request, so the personal key genuinely can serve the same call. Two donated-key quirks produce
 them: the server-side allowed-providers preferences ("no allowed providers"), and the Metaculus
 data-collection guardrail that excludes OpenAI's native-search endpoint ("No endpoints available
-matching your guardrail restrictions and data policy"), for which see `FUTURE.md` "Resolve
+matching your guardrail restrictions and data policy"), for which see the retired design log (git history) "Resolve
 OAI_ANTH_OPENROUTER_KEY data-policy block". They are classified by text on purpose, and checked on
 every status including 403: OpenRouter returns them as 404, the same status as a plain missing
 model, which must not fall back, so the status alone cannot tell the two apart.
@@ -1054,8 +1054,8 @@ tee'd from `run_logs/` during the run, alongside the run's
     run's, which is the only place the lagged spend is observable. The most
     recent run has no successor yet, so it shows as unsettled until another runs.
 - `CREDIT_ROLE_SPEND:` (`credit_telemetry.py`): one line per (role, key), which
-  pipeline stage spent what, off OpenRouter's own per-call accounting. On a
-  one-question smoke run expect three `forecaster:<vendor>` rows plus the
+  pipeline stage spent what, from per-call accounting. On a
+  one-question smoke run expect four forecaster role rows plus the
   research roles; `usd=n/a` means no cost data, `role=untagged` means a builder
   call site is missing its `role=`. Described under "Credit telemetry" below.
 - `FORECASTERS_SURVIVED:` (`forecaster.py`): the answer to "did every forecaster
@@ -1084,8 +1084,8 @@ platform client. Everything in this section was verified against the live API on
 "Running it" below).
 
 The current target is Series 2: slug `series-2` (`MANTIC_TOURNAMENT_ID`), project id 5,
-opened 2026-09-23, forecasting closes 2026-12-16 23:59 UTC (`MANTIC_TOURNAMENT_END_DATE`),
-`score_type` `spot_baseline_tournament`, API-verified 2026-09-24 with five open practice
+opened 2026-09-23, forecasting closes 2027-01-20 23:59 UTC (`MANTIC_TOURNAMENT_END_DATE`; Mantic
+moved it from 2026-12-16, re-read 2026-11-19), `score_type` `spot_baseline_tournament`, API-verified 2026-09-24 with five open practice
 questions and submissions not yet open. The previous target was Preseason 2: slug
 `preseason-2`, project id 4, forecasting closed 2026-09-20 12:00 UTC. It held four questions: one binary, one
 multiple choice with four options, one discrete with 450 bins and
@@ -1133,7 +1133,7 @@ The margin is smaller than "hundreds versus tens of thousands": the evergreen
 is already below the Mantic counter, harmless because the bot only archives the
 open tournament posts it forecasts), so with the open Mantic posts in the 650s
 the next Metaculus key above them is 14333, about 13,700 Mantic posts away. The
-revisit is logged in `FUTURE.md`.
+revisit is logged in backlog task-26 "Mantic, awaiting live data".
 
 Three things differ from Metaculus in the API, each with its fix:
 
@@ -1300,7 +1300,7 @@ prompts already carried the same wording: `_scoring_sentence` renders in all thr
   unfloored behaviour, and the per-question `NUMERIC_AGGREGATE` marker carries the published
   tails beside additive `oor_low_raw=` / `oor_high_raw=` / `tail_floor=` fields, so the floor
   can be benchmarked on this bot's own forecasts once live telemetry accumulates (the ask is
-  recorded in `FUTURE.md` "Mantic Crucible").
+  recorded in backlog task-26 "Mantic, awaiting live data").
 - **Platform-aware scoring text** (item 6). The numeric prompt no longer claims a uniform 0.01
   PDF floor or that sharpness above 35 stops paying, two Metaculus facts that told the model the
   out-of-range cliff was an order of magnitude shallower than it is; `_CONTINUOUS_SCORING_RULE`
@@ -1597,7 +1597,7 @@ Operator steps, in order:
    enabled, so `make cronjob_dispatch_setup` shows it in the dry-run plan. Applying the
    plan with `ARGS="--apply"` is paid and ask-first; see "Scheduling reliability" above.
 4. Done 2026-09-24: `MANTIC_TOURNAMENT_ID` and `MANTIC_TOURNAMENT_END_DATE` re-pointed to
-   Series 2 (`series-2`, closing 2026-12-16). For the next season, the "Series 2 discovery"
+   Series 2 (`series-2`, then closing 2026-12-16; extended to 2027-01-20, re-pointed 2026-11-19). For the next season, the "Series 2 discovery"
    and "Stale slug goes red" checks above are what flag the hand-over.
 
 ## Cost discipline
@@ -1837,7 +1837,8 @@ calls under the `try` degrades that malformed-but-200 case to a WARNING and
 
 The per-key deltas above say what a run cost; the role lines say which part of
 the pipeline spent it: `forecaster:openai` / `forecaster:anthropic` /
-`forecaster:google` (the vendor slot, so the series survives a model swap),
+`forecaster:anthropic_fable` / `forecaster:google` (the vendor roles retain their
+history across model swaps; Fable has its own role),
 `stacker`, `stacker_fallback`, `parser`, `summarizer`, `crux_analyzer`,
 `native_search`, `targeted_search`, `gap_fill_analyzer`, `gap_fill_resolver`,
 `gap_fill_v2_driver`, `market_query_author`, `market_ranker`,
@@ -3011,3 +3012,11 @@ richer red signal.
 The startup half of `cli.py`, the logging levels, the two hardening patches, the identity
 preflight and the research-archive labels, is in `docs/architecture.md` "CLI startup
 wiring".
+# Mantic Anthropic forecasters
+
+Mantic uses `PERSONAL_ANT_KEY` for direct Anthropic forecaster calls when set. Fast
+authentication, credit, rate-limit and server failures retry the same prompt on the
+personal OpenRouter key within the existing forecaster deadline. When the direct key is
+unset, the forecasters use OpenRouter. `ANTHROPIC_FORECAST_ROUTE` records each direct
+success or fallback; direct spend is tagged `direct` in the role ledger.
+

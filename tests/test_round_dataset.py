@@ -33,6 +33,7 @@ from metaculus_bot.performance_analysis.round_dataset import (
     prior_snapshot,
     score_transition,
     strip_tags,
+    tag_fresh_records,
 )
 from metaculus_bot.performance_analysis.round_outputs import write_round_outputs
 
@@ -317,6 +318,54 @@ class TestBuildRoundDataset:
         _, dataset = built
         assert dataset.degraded.runs == []
         assert dataset.degraded.union_question_ids == set(round_dataset.DEGRADED_FULL_QUESTION_IDS)
+
+
+class TestTagFreshRecords:
+    """Records pulled between rounds must carry the tags the next round would give them."""
+
+    TAGGED_FIELDS = (
+        "config_era",
+        "triple_subera",
+        "triple_subera_fine",
+        "ft_unfreeze_side",
+        "post_linters_merge",
+        "question_weight",
+        "is_new_since_prior",
+        "newly_scored",
+        "degraded_run",
+        "partial_degraded",
+        "known_bug",
+    )
+
+    def test_the_same_record_gets_identical_tags_by_both_paths(self, tmp_path: Path) -> None:
+        fresh = [
+            _binary_record(101, 201, WEIGHTED_SLUG, PRE_FLIP_SUBMITTED),
+            _binary_record(103, 203, WEIGHTED_SLUG, TRIPLE_SUBMITTED),
+            # A canonical known-bug question, so the cohort half of the tagging is exercised.
+            _binary_record(int(sorted(round_dataset.KNOWN_BUG_QUESTION_IDS)[0]), 204, WEIGHTED_SLUG, TRIPLE_SUBMITTED),
+        ]
+        prior = [_binary_record(101, 201, WEIGHTED_SLUG, PRE_FLIP_SUBMITTED)]
+        weights = {101: 1.0, 103: 0.5}
+        spec = _write_round(tmp_path, fresh=fresh, prior=prior, weights=weights)
+        by_round = {r["question_id"]: r for r in build_round_dataset(spec).records}
+
+        overlay = [{**record} for record in json.loads((spec.round_dir / f"perf_{WEIGHTED_SLUG}.json").read_text())]
+        for record in overlay:
+            record["source_tournament"] = WEIGHTED_SLUG
+        tag_fresh_records(
+            overlay,
+            prior_records=prior,
+            prior_label=spec.prior_label,
+            weights=weights,
+            weighted_slug=WEIGHTED_SLUG,
+            telemetry_dir=spec.telemetry_dir,
+        )
+
+        for record in overlay:
+            twin = by_round[record["question_id"]]
+            assert {f: record[f] for f in self.TAGGED_FIELDS} == {f: twin[f] for f in self.TAGGED_FIELDS}
+        assert any(record["known_bug"] for record in overlay)
+        assert [record["is_new_since_prior"] for record in overlay] == [False, True, True]
 
 
 class TestWriteRoundOutputs:

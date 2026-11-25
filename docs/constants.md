@@ -85,6 +85,10 @@ id 5, `start_date` 2026-09-23T00:00:00Z, `forecasting_end_date` equal to `close_
 closing 2026-10-23T18:00Z; question submissions had not opened. The Preseason 2 reading above
 is kept as the record of the previous season. An unknown slug answers HTTP 400.
 
+Mantic extended Series 2. A re-read of the same endpoint on 2026-11-19 gave `forecasting_end_date`
+and `close_date` 2027-01-20T23:59:00Z, so `MANTIC_TOURNAMENT_END_DATE` moved to 2027-01-20 with the
+operator's approval, since the extra five weeks are paid, publishing Mantic runs.
+
 ### MANTIC_FETCH_QUESTION_CEILING
 
 The tournament fetch asks the framework for this many questions so that it walks offsets until an
@@ -99,10 +103,24 @@ batch releases.
 The bot's own account, `nostreambot-bot`, public at `/api/users/81/`. An unauthenticated read of
 that user has no `my_forecasts`, which is why the id is pinned here rather than discovered.
 
+### METACULUS_OUT_OF_RANGE_TAIL_FLOOR
+
+The least mass a published Metaculus numeric, discrete or date aggregate carries beyond each open
+bound (2%), enforced by the same code as the Mantic floor below, in `numeric/out_of_range_floor.py`.
+Since P1 and P99 joined the elicited percentiles (PR #53, 2026-07-11), a forecast with every
+percentile inside the range has carried exactly 1% beyond the bound. Raising a 1% tail to 2% costs
+about 1 spot-peer point per open side when the question resolves in range and gains about 35 when
+it escapes, so it breaks even at a 1.44% escape rate per side. Our history ran 1.3% to 3.7% depending
+on the period, and the offline replay over 334 Metaculus questions came out +33 overall (summer 2026
+-29, fall FutureEval +50). Adopted 2026-11-24 with the stated-tail prompt fields as a backstop, at
+the operator's call. Re-check at each residual round with escapes counted only on questions
+forecast after that date. Receipt: `scratch/trace_evals_2026-11-23/tail_mass_investigation.md` in
+the artifacts repo.
+
 ### MANTIC_OUT_OF_RANGE_TAIL_FLOOR
 
 The least mass a published Mantic numeric, discrete or date aggregate carries beyond each open
-bound, enforced in `numeric/out_of_range_floor.py`. Metaculus aggregates are untouched.
+bound, enforced in `numeric/out_of_range_floor.py`. Metaculus has its own, lower floor above.
 
 Mantic scores an out-of-range resolution against a fixed 0.05 reference, `50 * ln(mass / 0.05)`.
 Five percent there scores 0, while the structural 1% the pipeline publishes when every percentile
@@ -659,7 +677,7 @@ and the second review pass measured 42 s at 5.2 MiB on a heavier synthetic tree.
 
 Sized so a body around 1 to 2 MiB still gets its second pass on a slower GitHub runner. A bigger body
 near the wall is withheld rather than published, and the real lever for those is
-`RENDERED_DOM_MAX_CHARS` (see `FUTURE.md`). The budget is read against the wall remaining after the
+`RENDERED_DOM_MAX_CHARS` (see the retired design log (git history)). The budget is read against the wall remaining after the
 default pass, so that pass's own cost counts.
 
 ## Inline chart configs (Highcharts), read straight out of the page we already hold
@@ -775,7 +793,7 @@ content stream decompresses past the cap into that page's `''` rather than an un
 The clock also starts late. `extract_pdf_text` reads the declared page count and walks the whole
 bookmark outline before `_read_pages` computes any deadline, and this budget covers neither: the
 measured ceiling is about 16 s for a body built to maximize both, so the real worst case is that
-prologue plus this budget plus one page. See `FUTURE.md`, "The PDF parse overruns `max_seconds`".
+prologue plus this budget plus one page. See the retired design log (git history), "The PDF parse overruns `max_seconds`".
 
 ### DOCUMENT_TEXT_PDF_MAX_BYTES
 
@@ -1720,7 +1738,7 @@ A chart-image side channel. When on, and `TS_ANCHOR_ENABLED` is also on, the pro
 (the series plus its P10 to P90 band, sized in `research/ts_chart.py`) for single-level questions and stashes it
 per qid; the forecaster passes it to each base model as a vision message.
 
-Off everywhere until the text-versus-image A/B, see `FUTURE.md` "TS anchor chart image". Independent of
+Off everywhere until the text-versus-image A/B, see backlog task-33 "TS-anchor chart image A/B". Independent of
 `TS_ANCHOR_ENABLED` so the text anchor can ship before the costlier, unvalidated image does. Note that matplotlib
 is a dev-only dependency, so under the bot workflows' `--no-dev` install, flipping this on degrades to the
 text-only anchor with one ERROR log.

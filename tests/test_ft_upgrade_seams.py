@@ -1,5 +1,5 @@
 """Seam-pinning tests for the forecasting-tools integration points that the
-0.2.54 -> 0.2.92+ upgrade is known to silently break (FUTURE.md Workstream B).
+0.2.54 -> 0.2.92+ upgrade is known to silently break (Workstream B of the retired design log (git history)).
 
 All tests are green on the currently-installed 0.2.54 and are designed to go red
 at ft HEAD until the corresponding shim is repointed at the moved seam.

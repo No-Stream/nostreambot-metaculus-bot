@@ -9,7 +9,7 @@ import logging
 import os
 import re
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,6 +17,14 @@ from typing import Any
 import requests
 
 from metaculus_bot.config import load_environment
+from metaculus_bot.constants import (
+    MANTIC_API_BASE_URL,
+    MANTIC_BOT_USER_ID,
+    MANTIC_TOKEN_ENV,
+    METACULUS_TOKEN_ENV,
+    PLATFORM_MANTIC,
+    PLATFORM_METACULUS,
+)
 from metaculus_bot.performance_analysis.parsing import (
     parse_explanation_detail_status,
     parse_forecasters_used_marker,
@@ -42,7 +50,33 @@ BASE_URL = "https://www.metaculus.com/api"
 DEFAULT_BOT_USER_ID = 275109
 DEFAULT_TOURNAMENT = "spring-aib-2026"
 
-FETCH_DELAY_SECS: float = 0.5
+
+@dataclass(frozen=True, slots=True)
+class CollectorPlatform:
+    """One question platform the collector can pull: its API root, the bot's account, the token variable.
+
+    Mantic's Crucible is a Metaculus fork with the same posts and comments API, so a Mantic pull runs
+    the same functions against a different root (docs/performance_analysis.md "Mantic records").
+    """
+
+    name: str
+    api_base_url: str
+    bot_user_id: int
+    token_env: str
+
+
+METACULUS_PLATFORM = CollectorPlatform(PLATFORM_METACULUS, BASE_URL, DEFAULT_BOT_USER_ID, METACULUS_TOKEN_ENV)
+MANTIC_PLATFORM = CollectorPlatform(PLATFORM_MANTIC, MANTIC_API_BASE_URL, MANTIC_BOT_USER_ID, MANTIC_TOKEN_ENV)
+COLLECTOR_PLATFORMS: dict[str, CollectorPlatform] = {
+    platform.name: platform for platform in (METACULUS_PLATFORM, MANTIC_PLATFORM)
+}
+
+# Minimum gap between any two API requests this process sends, to either platform. Cloudflare's per-IP
+# limiter answers a burst with 429s that outlast the 2s Retry-After it sends: on 2026-11-19
+# back-to-back comment expansions drew two 429s each (5s and 10s backoffs) before succeeding,
+# while a comment listing paced at 2s drew none over 17 pages. Paced inside api_get so every
+# caller (page loops, comment expansion, the backfill script) shares one budget.
+MIN_REQUEST_INTERVAL_SECS: float = 2.0
 MAX_RETRIES: int = 3
 RETRY_BACKOFF_SECS: float = 5.0
 REQUEST_TIMEOUT_SECS: float = 30.0
@@ -67,8 +101,30 @@ def _make_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Token {token}"}
 
 
-def _api_get(path: str, token: str, params: dict | None = None) -> dict:
+@dataclass
+class _RequestPacer:
+    """When this process last started an API request, so the next one can keep its distance."""
+
+    last_started_at: float | None = None
+
+    def wait_for_slot(self) -> None:
+        """Sleep until ``MIN_REQUEST_INTERVAL_SECS`` has passed since the previous request started."""
+        if self.last_started_at is not None:
+            remaining = MIN_REQUEST_INTERVAL_SECS - (time.monotonic() - self.last_started_at)
+            if remaining > 0:
+                time.sleep(remaining)
+        self.last_started_at = time.monotonic()
+
+
+_REQUEST_PACER = _RequestPacer()
+
+
+def api_get(path: str, token: str, params: dict | None = None, *, base_url: str = BASE_URL) -> dict:
     """GET one page, retrying a 429 or a transient network failure within one shared budget.
+
+    Every attempt, retries included, waits for its slot under ``MIN_REQUEST_INTERVAL_SECS`` and records
+    its start, so the request after a quickly successful retry is still spaced. A retry itself
+    never waits on the pacer in practice, because its backoff is already longer than the interval.
 
     Both causes draw on the same ``MAX_RETRIES`` attempts, so the worst-case wall clock is
     unchanged from the 429-only retry this replaced: ``MAX_RETRIES`` reads at
@@ -76,11 +132,12 @@ def _api_get(path: str, token: str, params: dict | None = None) -> dict:
     returning a partial page, because a sweep that reports a slow success is worse than one
     that stops. Receipts: docs/performance_analysis.md "The round pull".
     """
-    url = f"{BASE_URL}{path}"
+    url = f"{base_url}{path}"
     headers = _make_headers(token)
     for attempt in range(MAX_RETRIES):
         last_attempt = attempt == MAX_RETRIES - 1
         wait = RETRY_BACKOFF_SECS * (attempt + 1)
+        _REQUEST_PACER.wait_for_slot()
         try:
             resp = requests.get(url, headers=headers, params=params, timeout=REQUEST_TIMEOUT_SECS)
         except _TRANSIENT_NETWORK_ERRORS as exc:
@@ -108,7 +165,7 @@ def _api_get(path: str, token: str, params: dict | None = None) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def fetch_resolved_questions(tournament: str, token: str) -> list[dict]:
+def fetch_resolved_questions(tournament: str, token: str, *, base_url: str = BASE_URL) -> list[dict]:
     """Every resolved post in a tournament, as the posts list serves them.
 
     ``with_cp=true`` puts the token's own ``my_forecasts`` (forecast values and score data) on
@@ -118,7 +175,7 @@ def fetch_resolved_questions(tournament: str, token: str) -> list[dict]:
     posts: list[dict] = []
     offset = 0
     while True:
-        data = _api_get(
+        data = api_get(
             "/posts/",
             token,
             params={
@@ -128,6 +185,7 @@ def fetch_resolved_questions(tournament: str, token: str) -> list[dict]:
                 "limit": PAGE_SIZE,
                 "offset": offset,
             },
+            base_url=base_url,
         )
         results = data.get("results", [])
         posts.extend(results)
@@ -135,28 +193,30 @@ def fetch_resolved_questions(tournament: str, token: str) -> list[dict]:
         if not results or data.get("next") is None:
             break
         offset += PAGE_SIZE
-        time.sleep(FETCH_DELAY_SECS)
     logger.info(f"Found {len(posts)} resolved posts in tournament '{tournament}'")
     return posts
 
 
-def _page_comments(token: str, params: dict[str, object]) -> list[dict]:
-    """Page one ``/comments/`` listing to exhaustion, on top of the caller's params."""
+def _page_comments(token: str, params: dict[str, object], *, base_url: str = BASE_URL) -> list[dict]:
+    """Page one ``/comments/`` listing to exhaustion, on top of the caller's params.
+
+    Mantic sets ``next`` on every page, the last one included, so the empty page is what ends a
+    Mantic listing (one extra GET); Metaculus ends on a null ``next``.
+    """
     comments: list[dict] = []
     offset = 0
     while True:
-        data = _api_get("/comments/", token, params={**params, "limit": PAGE_SIZE, "offset": offset})
+        data = api_get("/comments/", token, params={**params, "limit": PAGE_SIZE, "offset": offset}, base_url=base_url)
         results = data.get("results", [])
         comments.extend(results)
         logger.info(f"Fetched comments page: {offset=}, got {len(results)} comments, {params=}")
         if not results or data.get("next") is None:
             break
         offset += PAGE_SIZE
-        time.sleep(FETCH_DELAY_SECS)
     return comments
 
 
-def fetch_bot_comments(author_id: int, token: str) -> list[dict]:
+def fetch_bot_comments(author_id: int, token: str, *, base_url: str = BASE_URL) -> list[dict]:
     """Every comment by an author, public and private, deduplicated by comment id.
 
     The bot POSTs comments with ``is_private: true`` and Metaculus flips older ones public
@@ -165,8 +225,8 @@ def fetch_bot_comments(author_id: int, token: str) -> list[dict]:
     when the six fall comments were missing from a 1,054-comment public pull). Returns raw
     comment dicts, public listing order first.
     """
-    public = _page_comments(token, {"author": author_id})
-    private = _page_comments(token, {"author": author_id, "is_private": "true"})
+    public = _page_comments(token, {"author": author_id}, base_url=base_url)
+    private = _page_comments(token, {"author": author_id, "is_private": "true"}, base_url=base_url)
 
     merged: dict[int, dict] = {}
     for comment in (*public, *private):
@@ -182,8 +242,12 @@ def fetch_bot_comments(author_id: int, token: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def expand_truncated_comment(comment: dict, token: str) -> dict:
-    """Replace a Metaculus archived comment stub with its per-comment API payload."""
+def expand_truncated_comment(comment: dict, token: str, *, base_url: str = BASE_URL) -> dict:
+    """Replace a Metaculus archived comment stub with its per-comment API payload.
+
+    The stub pattern names www.metaculus.com on purpose: Mantic served no stub in 218 comments,
+    and a Mantic stub would fail the match and stop the pull with the ValueError below.
+    """
     comment_text = comment.get("text") or comment.get("comment_text") or ""
     if _TRUNCATED_COMMENT_MARKER not in comment_text:
         return comment
@@ -198,7 +262,7 @@ def expand_truncated_comment(comment: dict, token: str) -> dict:
     ):
         raise ValueError(f"comment {comment_id} has a malformed truncation stub")
 
-    full_comment = _api_get(f"/comments/{comment_id}/", token)
+    full_comment = api_get(f"/comments/{comment_id}/", token, base_url=base_url)
     full_text = full_comment.get("text")
     if full_comment.get("id") != comment_id:
         raise ValueError(f"full comment response for {comment_id} has a mismatched id")
@@ -207,17 +271,28 @@ def expand_truncated_comment(comment: dict, token: str) -> dict:
     return {**comment, "text": full_text}
 
 
-def _build_comment_lookup(comments: list[dict], token: str) -> dict[int, dict]:
-    """Build post_id -> comment mapping, expanding the most recent comment when archived."""
+def _build_comment_lookup(
+    comments: list[dict],
+    token: str,
+    *,
+    base_url: str = BASE_URL,
+    post_ids: Collection[int] | None = None,
+) -> dict[int, dict]:
+    """Build post_id -> comment mapping, expanding the most recent comment when archived.
+
+    With ``post_ids`` only those posts are kept and expanded. The author listing covers every post
+    the bot ever commented on, and each archived stub costs one paced GET, so a pull of one
+    tournament should not expand stubs for the other thousand posts.
+    """
     lookup: dict[int, dict] = {}
     for c in comments:
         post_id = c.get("on_post")
-        if post_id is None:
+        if post_id is None or (post_ids is not None and post_id not in post_ids):
             continue
         existing = lookup.get(post_id)
         if existing is None or c["id"] > existing["id"]:
             lookup[post_id] = c
-    return {post_id: expand_truncated_comment(comment, token) for post_id, comment in lookup.items()}
+    return {post_id: expand_truncated_comment(comment, token, base_url=base_url) for post_id, comment in lookup.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -409,6 +484,13 @@ def _process_single_question(
             f"  Skipping Q{question_id} (post {post_id}): date question, excluded from residual analysis by decision"
         )
         return None
+    if q.get("multi_resolution") is True:
+        # Mantic only, and none has resolved yet: how one reports its resolution is unread, so
+        # single-resolution scoring could be silently wrong (docs/performance_analysis.md "Mantic records").
+        logger.warning(
+            f"  Skipping Q{question_id} (post {post_id}): multi-resolution question, scoring not yet verified"
+        )
+        return None
     resolution_raw = q.get("resolution")
 
     if resolution_raw is None:
@@ -579,42 +661,30 @@ def _compute_scores(record: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
-def build_performance_dataset(
-    tournament: str = DEFAULT_TOURNAMENT,
-    token: str | None = None,
-    author_id: int = DEFAULT_BOT_USER_ID,
-    research_archive_dir: str | Path = DEFAULT_RESEARCH_ARCHIVE_LATEST,
+def records_from_posts(
+    posts: list[dict],
+    comments: list[dict],
+    token: str,
     *,
+    platform: CollectorPlatform = METACULUS_PLATFORM,
+    research_archive_dir: str | Path = DEFAULT_RESEARCH_ARCHIVE_LATEST,
     prior_records: Sequence[dict] | None = None,
+    comment_post_ids: Collection[int] | None = None,
 ) -> list[dict]:
-    """Fetch questions and comments, match them, parse per-model predictions, compute scores.
+    """Turn fetched posts and the author's comments into scored, tagged records.
 
-    Returns the dataset as a list of record dicts; ``token`` defaults to ``METACULUS_TOKEN``.
-    Every record is stamped with the six research-archive treatment tags read off
-    ``research_archive_dir`` (:mod:`~metaculus_bot.performance_analysis.research_tags`), and
-    with ``prior_records`` (a previous round's dataset) it is also diffed against that pull to
-    tag whatever Metaculus re-resolved or re-scored in place
-    (:mod:`~metaculus_bot.performance_analysis.rescore_diff`). Both tag families read as
-    TERNARIES, where None means "not measured" and only False means measured-and-absent:
-    docs/performance_analysis.md, "Pass --prior on every round pull" and "Two treatment tags
-    read as TERNARY".
+    The half of :func:`build_performance_dataset` after the two fetches, public so a caller that
+    pulls several tournaments can fetch the comment listing once. ``comment_post_ids`` limits
+    which posts get their comment looked up (and archived stubs expanded); None means every post
+    in ``posts``. A post outside the set still becomes a record, with no comment fields.
     """
-    if token is None:
-        token = os.environ["METACULUS_TOKEN"]
-
-    logger.info(f"Fetching resolved questions from tournament '{tournament}'...")
-    posts = fetch_resolved_questions(tournament, token)
-
-    logger.info(f"Fetching all bot comments (author_id={author_id})...")
-    all_comments = fetch_bot_comments(author_id, token)
-    logger.info(f"Fetched {len(all_comments)} total comments")
-    comment_lookup = _build_comment_lookup(all_comments, token)
+    lookup_post_ids = {post["id"] for post in posts} if comment_post_ids is None else set(comment_post_ids)
+    comment_lookup = _build_comment_lookup(comments, token, base_url=platform.api_base_url, post_ids=lookup_post_ids)
     logger.info(f"Comments mapped to {len(comment_lookup)} unique posts")
 
-    records: list[dict] = []
-    for post_data in posts:
-        post_records = _process_post(post_data, comment_lookup)
-        records.extend(post_records)
+    records = [record for post_data in posts for record in _process_post(post_data, comment_lookup)]
+    for record in records:
+        record["platform"] = platform.name
 
     attach_research_tags(records, research_archive_dir)
     if prior_records is not None:
@@ -623,6 +693,48 @@ def build_performance_dataset(
 
     logger.info(f"Collected {len(records)} question records")
     return records
+
+
+def build_performance_dataset(
+    tournament: str = DEFAULT_TOURNAMENT,
+    token: str | None = None,
+    author_id: int | None = None,
+    research_archive_dir: str | Path = DEFAULT_RESEARCH_ARCHIVE_LATEST,
+    *,
+    prior_records: Sequence[dict] | None = None,
+    platform: CollectorPlatform = METACULUS_PLATFORM,
+) -> list[dict]:
+    """Fetch questions and comments, match them, parse per-model predictions, compute scores.
+
+    Returns the dataset as a list of record dicts. ``token`` defaults to the platform's token
+    variable and ``author_id`` to the platform's bot account. Every record carries ``platform``
+    and the six research-archive treatment tags read off ``research_archive_dir``
+    (:mod:`~metaculus_bot.performance_analysis.research_tags`), and with ``prior_records`` (a
+    previous round's dataset) it is also diffed against that pull to tag whatever the platform
+    re-resolved or re-scored in place (:mod:`~metaculus_bot.performance_analysis.rescore_diff`).
+    Both tag families read as TERNARIES, where None means "not measured" and only False means
+    measured-and-absent: docs/performance_analysis.md, "Pass --prior on every round pull" and
+    "Two treatment tags read as TERNARY".
+    """
+    if token is None:
+        token = os.environ[platform.token_env]
+    if author_id is None:
+        author_id = platform.bot_user_id
+
+    logger.info(f"Fetching resolved questions from {platform.name} tournament '{tournament}'...")
+    posts = fetch_resolved_questions(tournament, token, base_url=platform.api_base_url)
+
+    logger.info(f"Fetching all bot comments (author_id={author_id})...")
+    all_comments = fetch_bot_comments(author_id, token, base_url=platform.api_base_url)
+    logger.info(f"Fetched {len(all_comments)} total comments")
+    return records_from_posts(
+        posts,
+        all_comments,
+        token,
+        platform=platform,
+        research_archive_dir=research_archive_dir,
+        prior_records=prior_records,
+    )
 
 
 # ---------------------------------------------------------------------------

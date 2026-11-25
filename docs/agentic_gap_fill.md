@@ -193,6 +193,12 @@ larger source excerpt; if a passage does not fit the result budget, it is omitte
 instead of being shortened into a citation. Tool metadata and other explanatory
 text do not become evidence passages.
 
+Oversized source paragraphs are split into bounded excerpts at line or sentence
+boundaries. Tabular sections split at complete rendered rows; an oversized row
+is omitted. Each excerpt remains a contiguous substring of the visible source,
+so later chunks do not repeat a header. Pagination and the unchanged result
+budget can still omit excerpts that are not fully delivered.
+
 ### The three known-API tools (built and wired)
 
 Three more tools are built in `research/known_api/tools.py` (`build_known_api_tools`) and are
@@ -301,7 +307,7 @@ client-side redirect.
 One capability the shared browser rung does not carry: the loop's old rendered rung escalated a
 render whose Content-Type was a document to `read_document`, and the shared rung classifies every
 rendered DOM as HTML instead. A page whose client-side redirect lands on a PDF now reads as a
-JavaScript wall rather than escalating. `FUTURE.md` carries the entry.
+JavaScript wall rather than escalating. backlog task-28 "Research reach, priced and not started" carries the entry.
 
 ### Local archives, spreadsheets, and Word documents
 
