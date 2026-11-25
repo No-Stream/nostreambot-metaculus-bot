@@ -95,10 +95,10 @@ Per question, in `forecaster.py:_research_and_make_predictions`. Stage by stage:
 
 ## Open work, parked ideas and rejected decisions: Backlog.md
 
-This repo tracks open levers, parked ideas and rejected decisions in Backlog.md (`.backlog/`, local and gitignored like
-`scratch*/`), not in a plain markdown doc; the old root design-log file is retired. Before proposing work, read
-`backlog task list --plain` and `backlog decision list --plain` (`backlog task <id> --plain` and
-`backlog search <query> --plain` show the detail). Check the decisions before re-proposing anything: a rejected idea
+This repo tracks open levers, parked ideas and rejected decisions in Backlog.md (`.backlog/`, tracked in git, unlike
+`scratch*/`: commit task and decision changes by path with the work they belong to), not in a plain markdown doc;
+the old root design-log file is retired. Before proposing work, read `backlog task list --plain` and
+`backlog decision list --plain` (`backlog task <id> --plain` and `backlog search <query> --plain` show the detail). Check the decisions before re-proposing anything: a rejected idea
 returns only with new evidence, and its decision says what that evidence is. Record a new lever or parked idea as a task
 (`backlog task create`) and a new rejection as a decision (`backlog decision create "<title>" -s rejected`), with the
 receipt path, date and numbers in the body. Cite items from code and docs as `backlog task-17 "<title>"` or

@@ -29,7 +29,7 @@ need; the repo-root pointers at the bottom cover quick-start and design history.
 - [AGENTS.md](../AGENTS.md): the terse starting point for coding agents, also symlinked as
   `CLAUDE.md`. It carries the cost gate, the repo's overrides, the layout, the pipeline
   outline, and the standing rules, and points here for depth rather than repeating it.
-- `.backlog/` (Backlog.md, local and gitignored): the design log. Tasks hold open levers, parked and study-only
+- `.backlog/` (Backlog.md, tracked in git): the design log. Tasks hold open levers, parked and study-only
   ideas; decisions hold rejected ideas with their receipts; `backlog doc list` shows "How to use this backlog".
   Read it for the "why," not for the current state of the code.
 

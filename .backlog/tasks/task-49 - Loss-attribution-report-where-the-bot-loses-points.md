@@ -1,9 +1,10 @@
 ---
 id: TASK-49
 title: Loss-attribution report (where the bot loses points)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-25 06:56'
+updated_date: '2026-11-25 09:00'
 labels:
   - analysis
 dependencies: []
