@@ -4,11 +4,12 @@ title: Short update round with partial cross-pollination
 status: To Do
 assignee: []
 created_date: '2026-11-24 22:48'
+updated_date: '2026-11-25 06:56'
 labels:
   - ensemble
   - cost
 dependencies: []
-priority: medium
+priority: high
 ordinal: 45000
 ---
 
