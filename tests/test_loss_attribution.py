@@ -5,6 +5,7 @@ from itertools import product
 from pathlib import Path
 from typing import Literal
 
+import numpy as np
 import pytest
 
 from metaculus_bot.performance_analysis.analysis import PitReading
@@ -23,6 +24,7 @@ from metaculus_bot.performance_analysis.loss_attribution import (
     pit_accounting,
     pit_bin_label,
     points_lost,
+    probability_mass_calibration,
     reliability_table,
     slice_ranking,
     winner_rank,
@@ -68,6 +70,94 @@ class TestAccounting:
         after = points_lost(records, "binary", confidence=True)
         assert before == after
         assert sum(row.sum_spot_peer for row in before) == pytest.approx(-10)
+
+
+class TestProbabilityMassCalibration:
+    def test_exact_binary_and_multiple_choice_counts_conserve_questions(self) -> None:
+        records = [
+            {
+                "type": "binary",
+                "our_prob_yes": 0.8,
+                "resolution_parsed": True,
+                "metadata": {"actual_resolve_time": "2026-01-01T00:00:00Z"},
+            },
+            {
+                "type": "binary",
+                "our_prob_yes": 0.2,
+                "resolution_parsed": False,
+                "metadata": {"actual_resolve_time": "2026-01-02T00:00:00Z"},
+            },
+            {
+                "type": "multiple_choice",
+                "options": ["A", "B"],
+                "our_forecast_values": [0.8, 0.2],
+                "resolution_parsed": "A",
+                "metadata": {"actual_resolve_time": "2026-01-03T00:00:00Z"},
+            },
+            {
+                "type": "multiple_choice",
+                "options": ["A", "B"],
+                "our_forecast_values": [0.2, 0.8],
+                "resolution_parsed": "B",
+                "metadata": {"actual_resolve_time": "2026-01-04T00:00:00Z"},
+            },
+        ]
+        binary = probability_mass_calibration(records, "binary")
+        multiple_choice = probability_mass_calibration(records, "multiple_choice")
+        binary_low = next(row for row in binary if row.label == "[0.15, 0.35)")
+        binary_high = next(row for row in binary if row.label == "[0.65, 0.85)")
+        mc_high = next(row for row in multiple_choice if row.label == "[0.65, 0.85)")
+        assert (binary_low.observed, binary_low.expected) == pytest.approx((0, 0.4))
+        assert (binary_high.observed, binary_high.expected) == pytest.approx((2, 1.6))
+        assert (mc_high.observed, mc_high.expected) == pytest.approx((2, 1.6))
+        assert sum(row.observed for row in binary) == pytest.approx(2)
+        assert sum(row.expected for row in binary) == pytest.approx(2)
+        assert sum(row.observed for row in multiple_choice) == pytest.approx(2)
+        assert sum(row.expected for row in multiple_choice) == pytest.approx(2)
+
+    def test_calibrated_draws_match_expected_counts(self) -> None:
+        rng = np.random.default_rng(731)
+        records = []
+        for index in range(4000):
+            probability = (0.03, 0.1, 0.3, 0.55, 0.8, 0.93)[index % 6]
+            records.append(
+                {
+                    "type": "binary",
+                    "our_prob_yes": probability,
+                    "resolution_parsed": bool(rng.random() < probability),
+                    "metadata": {"actual_resolve_time": f"2026-02-{index % 28 + 1:02d}T00:00:00Z"},
+                }
+            )
+        rows = probability_mass_calibration(records, "binary", seed=17, draws=100)
+        assert all(abs(row.observed - row.expected) < 45 for row in rows)
+
+    def test_rare_band_hides_its_interval(self) -> None:
+        records = [
+            {
+                "type": "binary",
+                "our_prob_yes": 0.99,
+                "resolution_parsed": True,
+                "metadata": {"actual_resolve_time": f"2026-03-{index % 28 + 1:02d}T00:00:00Z"},
+            }
+            for index in range(40)
+        ]
+        rows = probability_mass_calibration(records, "binary", seed=17, draws=100)
+        rare = next(row for row in rows if row.label == "[0, 0.02)")
+        assert (rare.n_with_mass, rare.observed, rare.expected) == (40, 0, pytest.approx(0.4))
+        assert rare.interval is None
+        assert all(row.interval is None for row in rows)
+
+    def test_outcome_table_does_not_require_spot_peer(self) -> None:
+        record = {
+            "type": "binary",
+            "our_prob_yes": 0.8,
+            "resolution_parsed": True,
+            "metaculus_scores": {},
+            "metadata": {"actual_resolve_time": "2026-01-01T00:00:00Z"},
+        }
+        rows = probability_mass_calibration([record], "binary")
+        assert {row.n_questions for row in rows} == {1}
+        assert sum(row.observed for row in rows) == 1
 
 
 class TestEraBuckets:
@@ -183,6 +273,10 @@ class TestCli:
         report = (tmp_path / "loss_attribution.md").read_text()
         assert "not run: no --telemetry-archive" in report
         assert "(n too small)" in report
+        assert report.index("Binary: where the points went") < report.index("Binary: observed versus expected winners")
+        assert report.index("Multiple choice: where the points went") < report.index(
+            "Multiple Choice: observed versus expected winners"
+        )
         assert (tmp_path / "loss_attribution.json").exists()
 
     def test_cli_joins_ghost_by_post_id(self, tmp_path: Path) -> None:
@@ -199,10 +293,19 @@ class TestCli:
             ]
         )
         payload = json.loads((tmp_path / "loss_attribution.json").read_text())
+        report = (tmp_path / "loss_attribution.md").read_text()
         assert payload["header"]["mc_joined_ghost"] == 1
         assert payload["header"]["unjoined_archived_ghosts"] == {"binary": 1}
         assert any(row["name"] == "ghost" and row["n"] == 1 for row in payload["eras"][0]["discrimination"])
         assert payload["header"]["mc_complete_member_vectors"] == 1
+        all_era = next(era for era in payload["eras"] if era["era"] == "all")
+        question = next(
+            question for row in all_era["ghost"]["rows"] for question in row["questions"] if question["post_id"] == 201
+        )
+        assert question["url"] == "https://www.metaculus.com/questions/201/"
+        assert "Questions in distance bins at or above 0.05, for trace review." in report
+        assert report.count("Questions in distance bins at or above 0.05, for trace review.") == 1
+        assert "[201](https://www.metaculus.com/questions/201/)" in report
 
     def test_numeric_ghost_uses_continuous_score_without_second_halving(self) -> None:
         record = {
@@ -528,6 +631,27 @@ class TestReviewRegressions:
         report = disagreement_report([record], {3: ghost}, seed=1, draws=20)
         assert report.rows[0].label == "all distances"
         assert report.counts_by_type[0].statuses["scored"] == 1
+
+    def test_ghost_bins_include_sorted_question_trace_details(self) -> None:
+        records = []
+        ghosts = {}
+        for post_id, published, ghost_probability in [(31, 0.5, 0.65), (32, 0.5, 0.75)]:
+            records.append(
+                {
+                    "post_id": post_id,
+                    "type": "binary",
+                    "our_prob_yes": published,
+                    "resolution_parsed": False,
+                    "metaculus_scores": {"spot_peer_score": 2.0},
+                    "metadata": {"actual_resolve_time": "2026-01-01T00:00:00Z"},
+                }
+            )
+            ghosts[post_id] = {"qtype": "binary", "source": "json", "payload": {"prob": ghost_probability}}
+        report = disagreement_report(records, ghosts, seed=1, draws=20)
+        bin_row = next(row for row in report.rows if row.label == "[0.15, 0.3)")
+        assert [question.post_id for question in bin_row.questions] == [32, 31]
+        assert [question.distance for question in bin_row.questions] == pytest.approx([0.25, 0.15])
+        assert all(question.url.endswith(f"/{question.post_id}/") for question in bin_row.questions)
 
     def test_negative_zero_formatting(self) -> None:
         assert _number(-0.00001) == "0.000"

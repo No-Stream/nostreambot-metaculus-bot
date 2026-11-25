@@ -1041,6 +1041,17 @@ outcome-blind confidence tables and never alone. The additional binary `by p_yes
 preserves the YES-probability direction, while the numeric and discrete table groups spot-peer results by PIT placement
 and keeps out-of-bound resolutions separate by side and open or closed bound.
 
+The accounting table is circular as a calibration check: it groups a question by the probability assigned to the
+outcome that already happened. Its companion observed-versus-expected table asks whether outcomes in each probability
+band occurred as often as our forecasts assigned them mass. For binary questions it treats Yes and No as the two
+outcomes; for multiple choice it uses the probability of every option. Expected counts sum the forecast mass in each
+band, and observed counts tally the winning outcome there, so both totals equal the number of eligible questions.
+The reported difference is observed minus expected in question counts, with a 95% resolution-day cluster bootstrap
+interval; the interval is shown only when at least ten questions assign nonzero mass to the band across five or more
+UTC resolution days, and at least five winners are expected both inside and outside the band (a bootstrap of a rarer
+count is degenerate and can exclude zero when nothing happened). This is the non-circular companion to the accounting table, and it uses the same forecast and
+outcome eligibility rules without requiring a spot-peer score.
+
 The **OUTCOME-BLIND** confidence tables use the published confidence rather than the realized outcome: binary bins
 use `max(p_yes, 1 - p_yes)`, and MC bins use the top-option probability. These tables show the same spot-peer
 accounting quantities across confidence levels and help check whether the accounting pattern comes from a particular
@@ -1064,7 +1075,10 @@ only top rankings. Top accuracy scores the first tied option in option order whe
 directional counts treat a winner tied at the maximum as on top in both directions, and rank averages tied positions. The ghost comparison groups forecasts by outcome-blind distance from the published
 vector and reports counterfactual changes by distance; binary distance is absolute probability difference, MC uses
 total variation, and numeric or discrete uses the published-grid CDF distance. Ghost status counts explain unjoined
-and unscoreable records, and the descriptive slice ranking and worst-decile list provide follow-up cohorts for review.
+and unscoreable records. Every distance bin also keeps its question ids, URLs, distances and spot-peer changes in the
+JSON, ordered from the lowest change for trace review. The markdown report prints those lists once in the all-era
+section and omits distances below 0.05. The descriptive slice ranking and worst-decile list provide additional
+follow-up cohorts for review.
 
 Every number in the report is in SPOT PEER points. Point accounting reads `spot_peer_score`; member counterfactuals
 and binary or MC ghost changes go through `spot_peer_delta`. Numeric and discrete ghost changes are the difference of

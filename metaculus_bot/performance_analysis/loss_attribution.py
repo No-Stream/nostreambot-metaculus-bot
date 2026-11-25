@@ -43,6 +43,9 @@ DEFAULT_SEED = 20261125
 DEFAULT_DRAWS = 2000
 MIN_N_FOR_INTERVAL = 10
 MIN_CLUSTERS_FOR_INTERVAL = 5
+# A bootstrap of a rare count is degenerate (no resampled winner gives an interval excluding zero), so the
+# observed-versus-expected table also needs this many expected winners inside and outside the band.
+MIN_EXPECTED_FOR_INTERVAL = 5
 FLOOR_THRESHOLD = 0.0101
 PROBABILITY_EDGES = (0.0, 0.02, 0.05, 0.15, 0.35, 0.65, 0.85, 0.95, 0.98, 1.0)
 BINARY_CONFIDENCE_EDGES = (0.5, 0.65, 0.85, 0.95, 1.0)
@@ -119,6 +122,94 @@ class ScoreBin:
     negative_share: float
     fraction_negative: float
     interval: tuple[float, float] | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProbabilityMassBin:
+    label: str
+    n_questions: int
+    n_with_mass: int
+    observed: int
+    expected: float
+    observed_minus_expected: float
+    interval: tuple[float, float] | None
+
+
+def probability_mass_calibration(
+    records: list[dict], question_type: str, *, seed: int = DEFAULT_SEED, draws: int = DEFAULT_DRAWS
+) -> tuple[ProbabilityMassBin, ...]:
+    """Compare winner counts with forecast mass in outcome-probability bands."""
+    if question_type not in ("binary", "multiple_choice"):
+        raise ValueError(f"Unsupported question type: {question_type}")
+    edges = PROBABILITY_EDGES if question_type == "binary" else MC_OPTION_EDGES
+    observations_by_bin, question_count = _probability_mass_observations(records, question_type, edges)
+    return tuple(
+        _probability_mass_bin(index, edges, observations, question_count, seed=seed, draws=draws)
+        for index, observations in enumerate(observations_by_bin)
+    )
+
+
+def _probability_mass_observations(
+    records: list[dict], question_type: str, edges: tuple[float, ...]
+) -> tuple[list[list[tuple[float, str, float, int]]], int]:
+    observations_by_bin: list[list[tuple[float, str, float, int]]] = [[] for _ in range(len(edges) - 1)]
+    question_count = 0
+    for record in records:
+        if record["type"] != question_type or _outcome_exclusion(record) is not None:
+            continue
+        if question_type == "binary":
+            probabilities = [record["our_prob_yes"], 1 - record["our_prob_yes"]]
+            winner_index = 0 if record["resolution_parsed"] else 1
+        else:
+            probabilities = record["our_forecast_values"]
+            winner_index = record["options"].index(record["resolution_parsed"])
+        cluster = _cluster(record)
+        question_count += 1
+        mass_by_bin = [0.0] * (len(edges) - 1)
+        for probability in probabilities:
+            mass_by_bin[_bin_index(float(probability), edges)] += float(probability)
+        winner_bin = _bin_index(float(probabilities[winner_index]), edges)
+        for index, mass in enumerate(mass_by_bin):
+            observed = int(index == winner_bin)
+            observations_by_bin[index].append((observed - mass, cluster, mass, observed))
+    return observations_by_bin, question_count
+
+
+def _probability_mass_bin(
+    index: int,
+    edges: tuple[float, ...],
+    observations: list[tuple[float, str, float, int]],
+    question_count: int,
+    *,
+    seed: int,
+    draws: int,
+) -> ProbabilityMassBin:
+    deltas = [delta for delta, _, _, _ in observations]
+    clusters = [cluster for _, cluster, _, _ in observations]
+    masses = [mass for _, _, mass, _ in observations]
+    active_clusters = [cluster for cluster, mass in zip(clusters, masses, strict=True) if mass > 0]
+    active_count = sum(mass > 0 for mass in masses)
+    expected = sum(masses)
+    interval = None
+    if (
+        _interval_allowed(active_count, active_clusters)
+        and expected >= MIN_EXPECTED_FOR_INTERVAL
+        and active_count - expected >= MIN_EXPECTED_FOR_INTERVAL
+    ):
+        if draws <= 0:
+            raise ValueError("draws must be positive")
+        means = ClusterSums.from_values(deltas, clusters).resampled_means(np.random.default_rng(seed), draws)
+        bounds = np.percentile(means * len(deltas), [2.5, 97.5])
+        interval = float(bounds[0]), float(bounds[1])
+    return ProbabilityMassBin(
+        _bin_label(edges, index),
+        question_count,
+        active_count,
+        sum(observed for _, _, _, observed in observations),
+        expected,
+        sum(deltas),
+        interval,
+    )
 
 
 def _bin_index(value: float, edges: tuple[float, ...]) -> int:
@@ -691,12 +782,22 @@ def calibration_reports(records: list[dict]) -> tuple[CalibrationReport, ...]:
 
 
 @dataclass(frozen=True, slots=True)
+class GhostQuestion:
+    post_id: int
+    url: str
+    distance: float
+    spot_peer_change: float
+
+
+@dataclass(frozen=True, slots=True)
 class GhostBin:
     question_type: str
     label: str
+    distance_lower: float | None
     n: int
     mean_delta: float
     interval: tuple[float, float] | None
+    questions: tuple[GhostQuestion, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -718,7 +819,7 @@ class GhostReport:
 
 def disagreement_report(records: list[dict], ghosts: dict[int, dict], *, seed: int, draws: int) -> GhostReport:
     """Group joined ghosts by distance and count each exclusion reason."""
-    groups: dict[tuple[str, int], list[tuple[float, str]]] = {}
+    groups: dict[tuple[str, int], list[tuple[float, str, GhostQuestion]]] = {}
     counts: dict[str, Counter[str]] = {}
     excluded_scores: dict[str, float] = {}
     for record in records:
@@ -742,20 +843,29 @@ def disagreement_report(records: list[dict], ghosts: dict[int, dict], *, seed: i
             continue
         assert comparison.distance is not None
         assert comparison.delta is not None
-        observation = (comparison.delta, _cluster(record))
+        question = GhostQuestion(
+            int(record["post_id"]),
+            f"https://www.metaculus.com/questions/{record['post_id']}/",
+            comparison.distance,
+            comparison.delta,
+        )
+        observation = (comparison.delta, _cluster(record), question)
         groups.setdefault((record["type"], -1), []).append(observation)
         groups.setdefault((record["type"], _bin_index(comparison.distance, DISTANCE_EDGES)), []).append(observation)
     rows = []
     for (question_type, index), observations in sorted(groups.items()):
-        values = [value for value, _ in observations]
-        clusters = [cluster for _, cluster in observations]
+        values = [value for value, _, _ in observations]
+        clusters = [cluster for _, cluster, _ in observations]
+        questions = tuple(sorted((question for _, _, question in observations), key=lambda item: item.spot_peer_change))
         rows.append(
             GhostBin(
                 question_type,
                 "all distances" if index == -1 else _bin_label(DISTANCE_EDGES, index),
+                None if index == -1 else DISTANCE_EDGES[index],
                 len(values),
                 sum(values) / len(values),
                 cluster_interval(values, clusters, seed=seed, draws=draws),
+                questions,
             )
         )
     by_type = tuple(
@@ -775,6 +885,7 @@ def disagreement_report(records: list[dict], ghosts: dict[int, dict], *, seed: i
 class EraReport:
     era: str
     accounting: dict[str, tuple[ScoreBin, ...]]
+    probability_mass: dict[str, tuple[ProbabilityMassBin, ...]]
     calibration: tuple[CalibrationReport, ...]
     floor: FloorSummary
     exclusions: dict[str, dict[str, int]]
@@ -894,6 +1005,10 @@ def build_era_report(
             accounting[label] = points_lost(records, question_type, confidence=confidence, seed=seed, draws=draws)
     accounting["binary: by p_yes"] = points_lost(records, "binary", p_yes=True, seed=seed, draws=draws)
     accounting["numeric and discrete: placement in the distribution"] = pit_accounting(records, seed=seed, draws=draws)
+    probability_mass = {
+        question_type: probability_mass_calibration(records, question_type, seed=seed, draws=draws)
+        for question_type in ("binary", "multiple_choice")
+    }
     scored: list[tuple[float, dict]] = []
     for record in records:
         score = spot_peer_score(record)
@@ -918,6 +1033,7 @@ def build_era_report(
     return EraReport(
         era,
         accounting,
+        probability_mass,
         calibration_reports(records),
         floor_summary(records),
         exclusions,

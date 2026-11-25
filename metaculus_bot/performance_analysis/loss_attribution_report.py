@@ -154,7 +154,51 @@ def _accounting(era: dict) -> list[str]:
             ],
         )
         lines.append("")
+        if name.endswith("where the points went"):
+            question_type = name.split(":")[0]
+            lines += _probability_mass(era, question_type)
     return lines
+
+
+def _probability_mass(era: dict, question_type: str) -> list[str]:
+    counts = era["exclusions"][f"{question_type}: outcome diagnostics"]
+    rows = era["probability_mass"][question_type]
+    n_questions = rows[0]["n_questions"]
+    return [
+        f"#### {question_type.replace('_', ' ').title()}: observed versus expected winners",
+        "",
+        "Did outcomes we called unlikely happen more often than we said? Expected counts come from our own forecasts; "
+        "a calibrated forecaster's observed counts match them up to noise. This table is the non-circular companion "
+        "to the accounting table above, which bins by probability assigned to the outcome that happened. "
+        "An interval is shown only when at least 5 winners are expected both inside and outside the band. "
+        f"Eligible questions: {n_questions}; "
+        f"excluded: {_counts(counts)}.",
+        "",
+        *markdown_table(
+            [
+                "outcome probability band",
+                "n questions",
+                "n with forecast mass",
+                "observed winners",
+                "expected winners",
+                "observed minus expected",
+                "95% interval on difference",
+            ],
+            [
+                [
+                    row["label"],
+                    str(row["n_questions"]),
+                    str(row["n_with_mass"]),
+                    str(row["observed"]),
+                    _number(row["expected"]),
+                    _number(row["observed_minus_expected"]),
+                    _interval(row["interval"]),
+                ]
+                for row in rows
+            ],
+        ),
+        "",
+    ]
 
 
 def _calibration(era: dict) -> list[str]:
@@ -279,7 +323,7 @@ def _ghosts(era: dict) -> list[str]:
     heading = "### Ghost forecast compared with the published forecast"
     if ghost is None:
         return [heading, "", "not run: no --telemetry-archive", ""]
-    return [
+    lines = [
         heading,
         "",
         "Spot peer change from publishing the ghost instead, binned by its distance from the published forecast; "
@@ -311,6 +355,33 @@ def _ghosts(era: dict) -> list[str]:
         ),
         "",
     ]
+    if era["era"] == "all":
+        questions = [
+            (row, question)
+            for row in ghost["rows"]
+            if row["distance_lower"] is not None and row["distance_lower"] >= 0.05
+            for question in row["questions"]
+        ]
+        if questions:
+            lines += [
+                "Questions in distance bins at or above 0.05, for trace review.",
+                "",
+                *markdown_table(
+                    ["type", "distance bin", "question", "distance", "spot peer change"],
+                    [
+                        [
+                            row["question_type"],
+                            row["label"],
+                            f"[{question['post_id']}]({question['url']})",
+                            _number(question["distance"]),
+                            _number(question["spot_peer_change"]),
+                        ]
+                        for row, question in questions
+                    ],
+                ),
+                "",
+            ]
+    return lines
 
 
 def _slices(era: dict) -> list[str]:
