@@ -24,7 +24,6 @@ from metaculus_bot.performance_analysis.loss_attribution import (
     pit_accounting,
     pit_bin_label,
     points_lost,
-    probability_mass_calibration,
     reliability_table,
     slice_ranking,
     winner_rank,
@@ -72,94 +71,6 @@ class TestAccounting:
         assert sum(row.sum_spot_peer for row in before) == pytest.approx(-10)
 
 
-class TestProbabilityMassCalibration:
-    def test_exact_binary_and_multiple_choice_counts_conserve_questions(self) -> None:
-        records = [
-            {
-                "type": "binary",
-                "our_prob_yes": 0.8,
-                "resolution_parsed": True,
-                "metadata": {"actual_resolve_time": "2026-01-01T00:00:00Z"},
-            },
-            {
-                "type": "binary",
-                "our_prob_yes": 0.2,
-                "resolution_parsed": False,
-                "metadata": {"actual_resolve_time": "2026-01-02T00:00:00Z"},
-            },
-            {
-                "type": "multiple_choice",
-                "options": ["A", "B"],
-                "our_forecast_values": [0.8, 0.2],
-                "resolution_parsed": "A",
-                "metadata": {"actual_resolve_time": "2026-01-03T00:00:00Z"},
-            },
-            {
-                "type": "multiple_choice",
-                "options": ["A", "B"],
-                "our_forecast_values": [0.2, 0.8],
-                "resolution_parsed": "B",
-                "metadata": {"actual_resolve_time": "2026-01-04T00:00:00Z"},
-            },
-        ]
-        binary = probability_mass_calibration(records, "binary")
-        multiple_choice = probability_mass_calibration(records, "multiple_choice")
-        binary_low = next(row for row in binary if row.label == "[0.15, 0.35)")
-        binary_high = next(row for row in binary if row.label == "[0.65, 0.85)")
-        mc_high = next(row for row in multiple_choice if row.label == "[0.65, 0.85)")
-        assert (binary_low.observed, binary_low.expected) == pytest.approx((0, 0.4))
-        assert (binary_high.observed, binary_high.expected) == pytest.approx((2, 1.6))
-        assert (mc_high.observed, mc_high.expected) == pytest.approx((2, 1.6))
-        assert sum(row.observed for row in binary) == pytest.approx(2)
-        assert sum(row.expected for row in binary) == pytest.approx(2)
-        assert sum(row.observed for row in multiple_choice) == pytest.approx(2)
-        assert sum(row.expected for row in multiple_choice) == pytest.approx(2)
-
-    def test_calibrated_draws_match_expected_counts(self) -> None:
-        rng = np.random.default_rng(731)
-        records = []
-        for index in range(4000):
-            probability = (0.03, 0.1, 0.3, 0.55, 0.8, 0.93)[index % 6]
-            records.append(
-                {
-                    "type": "binary",
-                    "our_prob_yes": probability,
-                    "resolution_parsed": bool(rng.random() < probability),
-                    "metadata": {"actual_resolve_time": f"2026-02-{index % 28 + 1:02d}T00:00:00Z"},
-                }
-            )
-        rows = probability_mass_calibration(records, "binary", seed=17, draws=100)
-        assert all(abs(row.observed - row.expected) < 45 for row in rows)
-
-    def test_rare_band_hides_its_interval(self) -> None:
-        records = [
-            {
-                "type": "binary",
-                "our_prob_yes": 0.99,
-                "resolution_parsed": True,
-                "metadata": {"actual_resolve_time": f"2026-03-{index % 28 + 1:02d}T00:00:00Z"},
-            }
-            for index in range(40)
-        ]
-        rows = probability_mass_calibration(records, "binary", seed=17, draws=100)
-        rare = next(row for row in rows if row.label == "[0, 0.02)")
-        assert (rare.n_with_mass, rare.observed, rare.expected) == (40, 0, pytest.approx(0.4))
-        assert rare.interval is None
-        assert all(row.interval is None for row in rows)
-
-    def test_outcome_table_does_not_require_spot_peer(self) -> None:
-        record = {
-            "type": "binary",
-            "our_prob_yes": 0.8,
-            "resolution_parsed": True,
-            "metaculus_scores": {},
-            "metadata": {"actual_resolve_time": "2026-01-01T00:00:00Z"},
-        }
-        rows = probability_mass_calibration([record], "binary")
-        assert {row.n_questions for row in rows} == {1}
-        assert sum(row.observed for row in rows) == 1
-
-
 class TestEraBuckets:
     def test_none_and_fall_are_visible(self) -> None:
         records = [
@@ -176,6 +87,107 @@ class TestReliability:
         assert [row.n for row in rows] == [2, 1]
         assert rows[0].observed == pytest.approx(0.5)
         assert rows[0].mean_forecast == pytest.approx(0.25)
+        assert rows[0].observed_count == 1
+        assert rows[0].expected_count == pytest.approx(0.5)
+        assert rows[0].observed_minus_expected == pytest.approx(0.5)
+        assert rows[0].cluster_interval is None
+
+    def test_binary_and_multiple_choice_counts_use_existing_reliability_denominators(self) -> None:
+        records = [
+            {
+                "type": "binary",
+                "our_prob_yes": probability,
+                "resolution_parsed": outcome,
+                "metaculus_scores": {},
+                "metadata": {"actual_resolve_time": f"2026-01-{index + 1:02d}T00:00:00Z"},
+            }
+            for index, (probability, outcome) in enumerate([(0.8, True), (0.2, False)])
+        ] + [
+            {
+                "type": "multiple_choice",
+                "options": ["A", "B"],
+                "our_forecast_values": probabilities,
+                "resolution_parsed": outcome,
+                "metaculus_scores": {},
+                "metadata": {"actual_resolve_time": f"2026-01-{index + 3:02d}T00:00:00Z"},
+            }
+            for index, (probabilities, outcome) in enumerate([([0.8, 0.2], "A"), ([0.2, 0.8], "B")])
+        ]
+        reports = {report.name: report for report in calibration_reports(records)}
+        binary = reports["binary p_yes"].reliability
+        top = reports["MC top option"].reliability
+        options = reports["MC secondary: options within a ballot are dependent"].reliability
+        assert sum(row.observed_count for row in binary) == 1
+        assert sum(row.expected_count for row in binary) == pytest.approx(1.0)
+        assert sum(row.observed_count for row in top) == 2
+        assert sum(row.expected_count for row in top) == pytest.approx(1.6)
+        assert sum(row.observed_count for row in options) == 2
+        assert sum(row.expected_count for row in options) == pytest.approx(2.0)
+        assert sum(row.n for row in options) == 4
+
+    def test_option_interval_requires_distinct_questions(self) -> None:
+        records = [
+            {
+                "type": "multiple_choice",
+                "options": ["A", "B", "C", "D"],
+                "our_forecast_values": [0.25] * 4,
+                "resolution_parsed": "A",
+                "metadata": {"actual_resolve_time": f"2026-01-{index + 1:02d}T00:00:00Z"},
+            }
+            for index in range(6)
+        ]
+        report = next(
+            report
+            for report in calibration_reports(records)
+            if report.name == "MC secondary: options within a ballot are dependent"
+        )
+        row = report.reliability[0]
+        assert row.n == 24
+        assert row.n_questions == 6
+        assert row.expected_count == 6
+        assert row.cluster_interval is None
+        assert row.jeffreys_interval is None
+
+    def test_calibrated_draws_match_expected_counts(self) -> None:
+        rng = np.random.default_rng(731)
+        pairs = []
+        for index in range(4000):
+            probability = (0.03, 0.1, 0.3, 0.55, 0.8, 0.93)[index % 6]
+            pairs.append((probability, bool(rng.random() < probability)))
+        rows = reliability_table(pairs, (0.0, 0.05, 0.15, 0.35, 0.65, 0.85, 1.0))
+        assert all(abs(row.observed_count - row.expected_count) < 45 for row in rows)
+
+    @pytest.mark.parametrize(
+        ("probability", "count", "days"),
+        [(0.01, 40, 10), (0.99, 40, 10), (0.5, 9, 5), (0.5, 20, 4)],
+    )
+    def test_cluster_interval_requires_sample_days_and_expected_counts(
+        self, probability: float, count: int, days: int
+    ) -> None:
+        row = reliability_table(
+            [(probability, index % 2 == 0) for index in range(count)],
+            (0.0, 1.0),
+            clusters=[f"day-{index % days}" for index in range(count)],
+            seed=17,
+            draws=100,
+        )[0]
+        assert row.cluster_interval is None
+        if count >= 10 and days >= 5:
+            assert row.jeffreys_interval is not None
+
+    def test_cluster_interval_resamples_whole_resolution_days(self) -> None:
+        row = reliability_table(
+            [(0.5, index < 12) for index in range(20)],
+            (0.0, 1.0),
+            clusters=[f"day-{index // 2}" for index in range(20)],
+            seed=17,
+            draws=1000,
+        )[0]
+        assert row.observed_count == 12
+        assert row.expected_count == 10
+        assert row.observed_minus_expected == 2
+        assert row.cluster_interval == pytest.approx((-4, 8))
+        assert row.jeffreys_interval is not None
 
     def test_perfectly_calibrated_forecast_has_zero_mcb(self) -> None:
         result = corp_decomposition(
@@ -273,10 +285,12 @@ class TestCli:
         report = (tmp_path / "loss_attribution.md").read_text()
         assert "not run: no --telemetry-archive" in report
         assert "(n too small)" in report
-        assert report.index("Binary: where the points went") < report.index("Binary: observed versus expected winners")
-        assert report.index("Multiple choice: where the points went") < report.index(
-            "Multiple Choice: observed versus expected winners"
+        assert "observed versus expected winners" not in report
+        assert (
+            "| observed count | expected count | observed minus expected | 95% interval on count difference |" in report
         )
+        report_data = json.loads((tmp_path / "loss_attribution.json").read_text())
+        assert all("probability_mass" not in era for era in report_data["eras"])
         assert (tmp_path / "loss_attribution.json").exists()
 
     def test_cli_joins_ghost_by_post_id(self, tmp_path: Path) -> None:
@@ -351,6 +365,14 @@ class TestRealDataset:
         )
         payload = json.loads((tmp_path / "loss_attribution.json").read_text())
         assert payload["header"]["before"]["multiple_choice"] == 130
+        recalibration = payload["recalibration"]
+        assert recalibration["era_order"][:3] == ["pre_flip", "post_flip", "triple_pre_market"]
+        assert recalibration["exclusions"]["missing era"] > 0
+        assert all(
+            any(row["method"] == method and row["status"] == "evaluated" for row in recalibration["rows"])
+            for method in ("platt", "isotonic", "power")
+        )
+        assert (tmp_path / "loss_attribution.md").read_text().count("## Out-of-sample recalibration") == 1
         assert payload["header"]["after"]["multiple_choice"] == 127
         assert payload["header"]["mc_fall"] == 13
         era = next(era for era in payload["eras"] if era["era"] == "all")

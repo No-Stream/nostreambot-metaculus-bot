@@ -1041,16 +1041,13 @@ outcome-blind confidence tables and never alone. The additional binary `by p_yes
 preserves the YES-probability direction, while the numeric and discrete table groups spot-peer results by PIT placement
 and keeps out-of-bound resolutions separate by side and open or closed bound.
 
-The accounting table is circular as a calibration check: it groups a question by the probability assigned to the
-outcome that already happened. Its companion observed-versus-expected table asks whether outcomes in each probability
-band occurred as often as our forecasts assigned them mass. For binary questions it treats Yes and No as the two
-outcomes; for multiple choice it uses the probability of every option. Expected counts sum the forecast mass in each
-band, and observed counts tally the winning outcome there, so both totals equal the number of eligible questions.
-The reported difference is observed minus expected in question counts, with a 95% resolution-day cluster bootstrap
-interval; the interval is shown only when at least ten questions assign nonzero mass to the band across five or more
-UTC resolution days, and at least five winners are expected both inside and outside the band (a bootstrap of a rarer
-count is degenerate and can exclude zero when nothing happened). This is the non-circular companion to the accounting table, and it uses the same forecast and
-outcome eligibility rules without requiring a spot-peer score.
+The points-lost tables are circular bookkeeping: they group questions by the probability assigned to the outcome
+that happened. The non-circular counterparts are calibration, measured in the reliability tables, and discrimination,
+measured by CORP and the outcome-blind tables. The option-level multiple-choice reliability table asks whether options
+we called unlikely won more often than their assigned probabilities predicted. Each bin reports the observed count,
+the sum of forecast probabilities, and their difference. Its 95% resolution-day cluster bootstrap interval requires at
+least ten questions across five days and at least five expected outcomes both inside and outside the bin. These
+outcome diagnostics do not require a spot-peer score.
 
 The **OUTCOME-BLIND** confidence tables use the published confidence rather than the realized outcome: binary bins
 use `max(p_yes, 1 - p_yes)`, and MC bins use the top-option probability. These tables show the same spot-peer
@@ -1065,8 +1062,17 @@ algorithm (PAV), with equal forecast probabilities pooled before fitting, decomp
 (MCB), discrimination (DSC), and uncertainty (UNC), where score = MCB - DSC + UNC. The report gives Brier and log
 score decompositions, plus reliability bins with observed frequency and a Jeffreys interval. MC's one-observation-per-
 question top-option result is primary because options within one ballot are dependent; the option-pooled line is
-secondary. The floor calibration comparison carries forward the 1.01% MC option check formerly run from
+secondary. For binary questions, log miscalibration times 100 is an in-sample upper bound on spot-peer improvement
+per question; it overstates the gain expected out of sample. The floor calibration comparison carries forward the 1.01% MC option check formerly run from
 `scratch/residual_2026-11-25_floors/floor_calibration.py`; that scratch script is retired.
+
+The report also tests recalibration out of sample across chronological config eras. For each test era it fits binary
+Platt scaling and isotonic regression, or multiple-choice power scaling, on eligible questions from all earlier eras
+and scores the later questions with `spot_peer_delta`. It skips a test era when fewer than 50 training questions are
+available for its question type, and counts missing eras and other exclusions. The per-era rows report training and
+test counts, fitted parameters where applicable, and mean spot-peer change with resolution-day cluster intervals; the
+pooled row averages the held-out question changes. Positive change means the fitted layer would have helped, but a
+layer still requires a decisive out-of-sample era test before shipping.
 
 The MC discrimination table compares the published forecast, each complete member vector, and the ghost when an
 archive is supplied. It reports top accuracy, normalized rank and probability of the winning option, counterfactual

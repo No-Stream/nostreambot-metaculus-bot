@@ -22,7 +22,6 @@ from scipy.optimize import isotonic_regression
 from metaculus_bot.performance_analysis.analysis import PitReading, jeffreys_ci, per_model_cohort
 from metaculus_bot.performance_analysis.cohorts import EXCLUSION_COHORTS, parse_exclude_qids
 from metaculus_bot.performance_analysis.collector import load_dataset, resolve_numeric_record_to_score_inputs
-from metaculus_bot.performance_analysis.era_gap import ClusterSums
 from metaculus_bot.performance_analysis.ghosts import (
     ghost_binary_prob,
     ghost_cdf_on_published_grid,
@@ -30,8 +29,19 @@ from metaculus_bot.performance_analysis.ghosts import (
     ghost_numeric_percentiles,
     load_concluding_ghosts,
 )
+from metaculus_bot.performance_analysis.loss_attribution_intervals import (
+    DEFAULT_DRAWS,
+    DEFAULT_SEED,
+    MIN_CLUSTERS_FOR_INTERVAL,
+    MIN_N_FOR_INTERVAL,
+    cluster_interval,
+)
+from metaculus_bot.performance_analysis.loss_attribution_intervals import (
+    interval_allowed as _interval_allowed,
+)
 from metaculus_bot.performance_analysis.loss_attribution_report import render_report
 from metaculus_bot.performance_analysis.platform_scores import spot_peer_score
+from metaculus_bot.performance_analysis.recalibration import forward_chaining_recalibration
 from metaculus_bot.performance_analysis.width_monitor import compute_pit_reading
 from metaculus_bot.scoring_common import numeric_log_score, resolution_to_bucket_index, spot_peer_delta
 from metaculus_bot.time_utils import parse_iso_utc
@@ -39,12 +49,8 @@ from metaculus_bot.time_utils import parse_iso_utc
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_SEED = 20261125
-DEFAULT_DRAWS = 2000
-MIN_N_FOR_INTERVAL = 10
-MIN_CLUSTERS_FOR_INTERVAL = 5
 # A bootstrap of a rare count is degenerate (no resampled winner gives an interval excluding zero), so the
-# observed-versus-expected table also needs this many expected winners inside and outside the band.
+# reliability count interval also needs this many expected events and non-events in the bin.
 MIN_EXPECTED_FOR_INTERVAL = 5
 FLOOR_THRESHOLD = 0.0101
 PROBABILITY_EDGES = (0.0, 0.02, 0.05, 0.15, 0.35, 0.65, 0.85, 0.95, 0.98, 1.0)
@@ -57,10 +63,6 @@ DISTANCE_EDGES = (0.0, 0.05, 0.15, 0.3, 1.0)
 
 def _bin_label(edges: tuple[float, ...], index: int) -> str:
     return f"[{edges[index]:g}, {edges[index + 1]:g}{']' if index == len(edges) - 2 else ')'}"
-
-
-def _interval_allowed(n: int, clusters: list[str] | set[str]) -> bool:
-    return n >= MIN_N_FOR_INTERVAL and len(set(clusters)) >= MIN_CLUSTERS_FOR_INTERVAL
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,94 +126,6 @@ class ScoreBin:
     interval: tuple[float, float] | None
 
 
-@dataclass(frozen=True, slots=True)
-class ProbabilityMassBin:
-    label: str
-    n_questions: int
-    n_with_mass: int
-    observed: int
-    expected: float
-    observed_minus_expected: float
-    interval: tuple[float, float] | None
-
-
-def probability_mass_calibration(
-    records: list[dict], question_type: str, *, seed: int = DEFAULT_SEED, draws: int = DEFAULT_DRAWS
-) -> tuple[ProbabilityMassBin, ...]:
-    """Compare winner counts with forecast mass in outcome-probability bands."""
-    if question_type not in ("binary", "multiple_choice"):
-        raise ValueError(f"Unsupported question type: {question_type}")
-    edges = PROBABILITY_EDGES if question_type == "binary" else MC_OPTION_EDGES
-    observations_by_bin, question_count = _probability_mass_observations(records, question_type, edges)
-    return tuple(
-        _probability_mass_bin(index, edges, observations, question_count, seed=seed, draws=draws)
-        for index, observations in enumerate(observations_by_bin)
-    )
-
-
-def _probability_mass_observations(
-    records: list[dict], question_type: str, edges: tuple[float, ...]
-) -> tuple[list[list[tuple[float, str, float, int]]], int]:
-    observations_by_bin: list[list[tuple[float, str, float, int]]] = [[] for _ in range(len(edges) - 1)]
-    question_count = 0
-    for record in records:
-        if record["type"] != question_type or _outcome_exclusion(record) is not None:
-            continue
-        if question_type == "binary":
-            probabilities = [record["our_prob_yes"], 1 - record["our_prob_yes"]]
-            winner_index = 0 if record["resolution_parsed"] else 1
-        else:
-            probabilities = record["our_forecast_values"]
-            winner_index = record["options"].index(record["resolution_parsed"])
-        cluster = _cluster(record)
-        question_count += 1
-        mass_by_bin = [0.0] * (len(edges) - 1)
-        for probability in probabilities:
-            mass_by_bin[_bin_index(float(probability), edges)] += float(probability)
-        winner_bin = _bin_index(float(probabilities[winner_index]), edges)
-        for index, mass in enumerate(mass_by_bin):
-            observed = int(index == winner_bin)
-            observations_by_bin[index].append((observed - mass, cluster, mass, observed))
-    return observations_by_bin, question_count
-
-
-def _probability_mass_bin(
-    index: int,
-    edges: tuple[float, ...],
-    observations: list[tuple[float, str, float, int]],
-    question_count: int,
-    *,
-    seed: int,
-    draws: int,
-) -> ProbabilityMassBin:
-    deltas = [delta for delta, _, _, _ in observations]
-    clusters = [cluster for _, cluster, _, _ in observations]
-    masses = [mass for _, _, mass, _ in observations]
-    active_clusters = [cluster for cluster, mass in zip(clusters, masses, strict=True) if mass > 0]
-    active_count = sum(mass > 0 for mass in masses)
-    expected = sum(masses)
-    interval = None
-    if (
-        _interval_allowed(active_count, active_clusters)
-        and expected >= MIN_EXPECTED_FOR_INTERVAL
-        and active_count - expected >= MIN_EXPECTED_FOR_INTERVAL
-    ):
-        if draws <= 0:
-            raise ValueError("draws must be positive")
-        means = ClusterSums.from_values(deltas, clusters).resampled_means(np.random.default_rng(seed), draws)
-        bounds = np.percentile(means * len(deltas), [2.5, 97.5])
-        interval = float(bounds[0]), float(bounds[1])
-    return ProbabilityMassBin(
-        _bin_label(edges, index),
-        question_count,
-        active_count,
-        sum(observed for _, _, _, observed in observations),
-        expected,
-        sum(deltas),
-        interval,
-    )
-
-
 def _bin_index(value: float, edges: tuple[float, ...]) -> int:
     for index, (lower, upper) in enumerate(pairwise(edges)):
         if lower <= value < upper or (index == len(edges) - 2 and value == upper):
@@ -224,19 +138,6 @@ def _cluster(record: dict) -> str:
     if resolved is None:
         raise ValueError(f"Missing resolution timestamp for question {record.get('question_id')}")
     return resolved.date().isoformat()
-
-
-def cluster_interval(
-    values: list[float], clusters: list[str], *, seed: int = DEFAULT_SEED, draws: int = DEFAULT_DRAWS
-) -> tuple[float, float] | None:
-    """Return a resolution-day bootstrap interval when the sample is large enough."""
-    if not _interval_allowed(len(values), clusters):
-        return None
-    if draws <= 0:
-        raise ValueError("draws must be positive")
-    means = ClusterSums.from_values(values, clusters).resampled_means(np.random.default_rng(seed), draws)
-    bounds = np.percentile(means, [2.5, 97.5])
-    return float(bounds[0]), float(bounds[1])
 
 
 def _accounting_value(record: dict, question_type: str, *, confidence: bool) -> float | None:
@@ -336,30 +237,76 @@ class ReliabilityBin:
     observed: float
     jeffreys_interval: tuple[float, float] | None
     observed_minus_forecast: float
+    n_questions: int
+    observed_count: int
+    expected_count: float
+    observed_minus_expected: float
+    cluster_interval: tuple[float, float] | None
 
 
 def reliability_table(
-    pairs: list[tuple[float, bool]], edges: tuple[float, ...], *, clusters: list[str] | None = None
+    pairs: list[tuple[float, bool]],
+    edges: tuple[float, ...],
+    *,
+    clusters: list[str] | None = None,
+    question_ids: list[int] | None = None,
+    seed: int = DEFAULT_SEED,
+    draws: int = DEFAULT_DRAWS,
 ) -> tuple[ReliabilityBin, ...]:
-    """Bin calibration observations and compute Jeffreys intervals."""
+    """Bin calibration observations, rates, counts and resolution-day intervals."""
     if clusters is not None and len(clusters) != len(pairs):
         raise ValueError("Cluster count must match observation count")
-    bins: list[list[tuple[float, bool, str]]] = [[] for _ in range(len(edges) - 1)]
-    for (probability, outcome), cluster in zip(pairs, clusters or [""] * len(pairs), strict=True):
-        bins[_bin_index(probability, edges)].append((probability, outcome, cluster))
-    result = []
-    for index, group in enumerate(bins):
-        if not group:
-            continue
-        count = len(group)
-        hits = sum(outcome for _, outcome, _ in group)
-        mean_forecast = sum(probability for probability, _, _ in group) / count
-        observed = hits / count
-        _, lower, upper = jeffreys_ci(hits, count)
-        interval = (lower, upper) if _interval_allowed(count, [cluster for _, _, cluster in group]) else None
-        label = _bin_label(edges, index)
-        result.append(ReliabilityBin(label, count, mean_forecast, observed, interval, observed - mean_forecast))
-    return tuple(result)
+    if question_ids is not None and len(question_ids) != len(pairs):
+        raise ValueError("Question count must match observation count")
+    bins: list[list[tuple[float, bool, str, int]]] = [[] for _ in range(len(edges) - 1)]
+    for (probability, outcome), cluster, question_id in zip(
+        pairs,
+        clusters if clusters is not None else [""] * len(pairs),
+        question_ids if question_ids is not None else range(len(pairs)),
+        strict=True,
+    ):
+        bins[_bin_index(probability, edges)].append((probability, outcome, cluster, question_id))
+    return tuple(
+        _reliability_bin(_bin_label(edges, index), group, seed=seed, draws=draws)
+        for index, group in enumerate(bins)
+        if group
+    )
+
+
+def _reliability_bin(label: str, group: list[tuple[float, bool, str, int]], *, seed: int, draws: int) -> ReliabilityBin:
+    count = len(group)
+    question_count = len({question_id for _, _, _, question_id in group})
+    hits = sum(outcome for _, outcome, _, _ in group)
+    expected = sum(probability for probability, _, _, _ in group)
+    mean_forecast = expected / count
+    observed = hits / count
+    _, lower, upper = jeffreys_ci(hits, count)
+    group_clusters = [cluster for _, _, cluster, _ in group]
+    allowed = _interval_allowed(question_count, group_clusters)
+    interval = (lower, upper) if allowed else None
+    count_interval = None
+    if allowed and expected >= MIN_EXPECTED_FOR_INTERVAL and count - expected >= MIN_EXPECTED_FOR_INTERVAL:
+        mean_interval = cluster_interval(
+            [int(outcome) - probability for probability, outcome, _, _ in group],
+            group_clusters,
+            seed=seed,
+            draws=draws,
+        )
+        if mean_interval is not None:
+            count_interval = mean_interval[0] * count, mean_interval[1] * count
+    return ReliabilityBin(
+        label,
+        count,
+        mean_forecast,
+        observed,
+        interval,
+        observed - mean_forecast,
+        question_count,
+        hits,
+        expected,
+        hits - expected,
+        count_interval,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -715,17 +662,19 @@ class CalibrationReport:
     tied_top: int = 0
 
 
-def calibration_reports(records: list[dict]) -> tuple[CalibrationReport, ...]:
+def calibration_reports(
+    records: list[dict], *, seed: int = DEFAULT_SEED, draws: int = DEFAULT_DRAWS
+) -> tuple[CalibrationReport, ...]:
     """Calculate binary, top-choice, and secondary option-level calibration."""
-    binary: list[tuple[float, bool, str]] = []
-    top: list[tuple[float, bool, str]] = []
-    options: list[tuple[float, bool, str]] = []
-    for record in records:
+    binary: list[tuple[float, bool, str, int]] = []
+    top: list[tuple[float, bool, str, int]] = []
+    options: list[tuple[float, bool, str, int]] = []
+    for question_id, record in enumerate(records):
         if record["type"] == "binary":
             probability = record["our_prob_yes"]
             outcome = record["resolution_parsed"]
             if probability is not None and isinstance(outcome, bool):
-                binary.append((probability, outcome, _cluster(record)))
+                binary.append((probability, outcome, _cluster(record), question_id))
         elif record["type"] == "multiple_choice":
             names, probabilities, outcome = (
                 record["options"],
@@ -736,9 +685,9 @@ def calibration_reports(records: list[dict]) -> tuple[CalibrationReport, ...]:
                 continue
             # A tie at the top scores the first tied option in option order, chosen before the outcome is read.
             top_index = probabilities.index(max(probabilities))
-            top.append((probabilities[top_index], names[top_index] == outcome, _cluster(record)))
+            top.append((probabilities[top_index], names[top_index] == outcome, _cluster(record), question_id))
             options.extend(
-                (probability, name == outcome, _cluster(record))
+                (probability, name == outcome, _cluster(record), question_id)
                 for name, probability in zip(names, probabilities, strict=True)
             )
     specifications = (
@@ -754,16 +703,19 @@ def calibration_reports(records: list[dict]) -> tuple[CalibrationReport, ...]:
     for name, pairs, edges in specifications:
         if not pairs:
             continue
-        probabilities = [probability for probability, _, _ in pairs]
-        outcomes = [outcome for _, outcome, _ in pairs]
-        clusters = [cluster for _, _, cluster in pairs]
+        probabilities = [probability for probability, _, _, _ in pairs]
+        outcomes = [outcome for _, outcome, _, _ in pairs]
+        clusters = [cluster for _, _, cluster, _ in pairs]
+        question_ids = [question_id for _, _, _, question_id in pairs]
         observations = list(zip(probabilities, outcomes, strict=True))
         reports.append(
             CalibrationReport(
                 name,
                 corp_decomposition(probabilities, outcomes, "brier"),
                 corp_decomposition(probabilities, outcomes, "log"),
-                reliability_table(observations, edges, clusters=clusters),
+                reliability_table(
+                    observations, edges, clusters=clusters, question_ids=question_ids, seed=seed, draws=draws
+                ),
                 sum(
                     1
                     for record in records
@@ -885,7 +837,6 @@ def disagreement_report(records: list[dict], ghosts: dict[int, dict], *, seed: i
 class EraReport:
     era: str
     accounting: dict[str, tuple[ScoreBin, ...]]
-    probability_mass: dict[str, tuple[ProbabilityMassBin, ...]]
     calibration: tuple[CalibrationReport, ...]
     floor: FloorSummary
     exclusions: dict[str, dict[str, int]]
@@ -1005,10 +956,6 @@ def build_era_report(
             accounting[label] = points_lost(records, question_type, confidence=confidence, seed=seed, draws=draws)
     accounting["binary: by p_yes"] = points_lost(records, "binary", p_yes=True, seed=seed, draws=draws)
     accounting["numeric and discrete: placement in the distribution"] = pit_accounting(records, seed=seed, draws=draws)
-    probability_mass = {
-        question_type: probability_mass_calibration(records, question_type, seed=seed, draws=draws)
-        for question_type in ("binary", "multiple_choice")
-    }
     scored: list[tuple[float, dict]] = []
     for record in records:
         score = spot_peer_score(record)
@@ -1033,8 +980,7 @@ def build_era_report(
     return EraReport(
         era,
         accounting,
-        probability_mass,
-        calibration_reports(records),
+        calibration_reports(records, seed=seed, draws=draws),
         floor_summary(records),
         exclusions,
         excluded_spot_peer,
@@ -1119,7 +1065,11 @@ def main(argv: list[str] | None = None) -> None:
     )
     output = Path(args.out)
     output.mkdir(parents=True, exist_ok=True)
-    payload = {"header": header, "eras": [asdict(report) for report in reports]}
+    payload = {
+        "header": header,
+        "eras": [asdict(report) for report in reports],
+        "recalibration": asdict(forward_chaining_recalibration(included, seed=args.seed, draws=args.draws)),
+    }
     (output / "loss_attribution.json").write_text(json.dumps(payload, indent=2) + "\n")
     (output / "loss_attribution.md").write_text(render_report(payload))
     logger.info("Wrote loss attribution reports to %s", output)

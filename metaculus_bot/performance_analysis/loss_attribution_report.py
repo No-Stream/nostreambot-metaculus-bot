@@ -154,51 +154,7 @@ def _accounting(era: dict) -> list[str]:
             ],
         )
         lines.append("")
-        if name.endswith("where the points went"):
-            question_type = name.split(":")[0]
-            lines += _probability_mass(era, question_type)
     return lines
-
-
-def _probability_mass(era: dict, question_type: str) -> list[str]:
-    counts = era["exclusions"][f"{question_type}: outcome diagnostics"]
-    rows = era["probability_mass"][question_type]
-    n_questions = rows[0]["n_questions"]
-    return [
-        f"#### {question_type.replace('_', ' ').title()}: observed versus expected winners",
-        "",
-        "Did outcomes we called unlikely happen more often than we said? Expected counts come from our own forecasts; "
-        "a calibrated forecaster's observed counts match them up to noise. This table is the non-circular companion "
-        "to the accounting table above, which bins by probability assigned to the outcome that happened. "
-        "An interval is shown only when at least 5 winners are expected both inside and outside the band. "
-        f"Eligible questions: {n_questions}; "
-        f"excluded: {_counts(counts)}.",
-        "",
-        *markdown_table(
-            [
-                "outcome probability band",
-                "n questions",
-                "n with forecast mass",
-                "observed winners",
-                "expected winners",
-                "observed minus expected",
-                "95% interval on difference",
-            ],
-            [
-                [
-                    row["label"],
-                    str(row["n_questions"]),
-                    str(row["n_with_mass"]),
-                    str(row["observed"]),
-                    _number(row["expected"]),
-                    _number(row["observed_minus_expected"]),
-                    _interval(row["interval"]),
-                ]
-                for row in rows
-            ],
-        ),
-        "",
-    ]
 
 
 def _calibration(era: dict) -> list[str]:
@@ -225,20 +181,45 @@ def _calibration(era: dict) -> list[str]:
                 for name, label in (("brier", "Brier"), ("log", "log"))
             ],
         )
+        if report["name"] == "binary p_yes" and report["log"]["mcb"] is not None:
+            lines += [
+                "",
+                f"Binary log miscalibration corresponds to {_number(100 * report['log']['mcb'])} spot peer points "
+                "per question. This in-sample upper bound overstates the gain expected out of sample.",
+            ]
         lines += [
             "",
-            "Reliability by forecast bin; a negative 'observed minus forecast' means our probabilities were too high.",
+            "Reliability by forecast bin; a negative 'observed minus forecast' means our probabilities were too high. "
+            "The count difference interval requires at least five expected outcomes inside and outside the bin, "
+            "in addition to the question and resolution-day gates.",
             "",
             *markdown_table(
-                ["forecast bin", "n", "mean forecast", "observed frequency", "95% interval", "observed minus forecast"],
+                [
+                    "forecast bin",
+                    "n",
+                    "questions",
+                    "mean forecast",
+                    "observed frequency",
+                    "95% interval",
+                    "observed minus forecast",
+                    "observed count",
+                    "expected count",
+                    "observed minus expected",
+                    "95% interval on count difference",
+                ],
                 [
                     [
                         row["label"],
                         str(row["n"]),
+                        str(row["n_questions"]),
                         _number(row["mean_forecast"]),
                         _number(row["observed"]),
                         _rate_interval(row["jeffreys_interval"]),
                         _number(row["observed_minus_forecast"]),
+                        str(row["observed_count"]),
+                        _number(row["expected_count"]),
+                        _number(row["observed_minus_expected"]),
+                        _interval(row["cluster_interval"]),
                     ]
                     for row in report["reliability"]
                 ],
@@ -453,6 +434,65 @@ def _worst_decile(era: dict, all_era_question_ids: set[int], era_of_question: di
     return [*lines, ""]
 
 
+def _recalibration(result: dict) -> list[str]:
+    return [
+        "## Out-of-sample recalibration",
+        "",
+        "Each fit uses all earlier eras of the same question type. Positive spot peer change means the fitted "
+        "layer would have helped; any layer still needs a decisive out-of-sample era test before shipping. "
+        "Earlier-era outcomes are used retrospectively, even if they had not resolved when a later forecast was made.",
+        "",
+        f"Chronological eras: {', '.join(result['era_order'])}. Excluded: {_counts(result['exclusions'])}.",
+        "",
+        *markdown_table(
+            [
+                "type",
+                "method",
+                "test era",
+                "train n",
+                "test n",
+                "status",
+                "parameters",
+                "mean spot peer change",
+                "95% interval",
+            ],
+            [
+                [
+                    row["question_type"],
+                    row["method"],
+                    row["era"],
+                    str(row["n_train"]),
+                    str(row["n_test"]),
+                    row["status"],
+                    ", ".join(f"{key}: {_number(value)}" for key, value in (row["parameters"] or {}).items()) or "n/a",
+                    _number(row["mean_delta"]),
+                    _interval(row["interval"]),
+                ]
+                for row in result["rows"]
+            ],
+        ),
+        "",
+        "Pooled held-out questions, with skipped test eras and their question counts:",
+        "",
+        *markdown_table(
+            ["type", "method", "test n", "mean spot peer change", "95% interval", "skipped eras", "skipped questions"],
+            [
+                [
+                    row["question_type"],
+                    row["method"],
+                    str(row["n_test"]),
+                    _number(row["mean_delta"]),
+                    _interval(row["interval"]),
+                    str(row["skipped_eras"]),
+                    str(row["skipped_questions"]),
+                ]
+                for row in result["pooled"]
+            ],
+        ),
+        "",
+    ]
+
+
 def render_report(payload: dict) -> str:
     """Render the computed results without recalculating statistics."""
     header = payload["header"]
@@ -498,4 +538,5 @@ def render_report(payload: dict) -> str:
             *_slices(era),
             *_worst_decile(era, all_era_question_ids, era_of_question),
         ]
+    lines += _recalibration(payload["recalibration"])
     return "\n".join(lines)
