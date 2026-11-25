@@ -1035,8 +1035,9 @@ Read each section's counts beside its own values rather than carrying one global
 The **ACCOUNTING** tables show where spot-peer points went on realized outcomes. Binary and multiple-choice bins
 group each question by the probability assigned to the realized answer, then report the count, sum and mean spot peer,
 the share of total negative spot peer, the fraction with negative spot peer, and a resolution-day cluster interval.
-At low probability on the realized outcome, negative point contribution follows from the score definition, so read
-these tables beside the outcome-blind confidence tables and never alone. The additional binary `by p_yes` table
+Low probability on the realized outcome usually loses spot peer, though not always, because spot peer is measured
+against the other forecasters; these tables say where points were won and lost but not why, so read them beside the
+outcome-blind confidence tables and never alone. The additional binary `by p_yes` table
 preserves the YES-probability direction, while the numeric and discrete table groups spot-peer results by PIT placement
 and keeps out-of-bound resolutions separate by side and open or closed bound.
 
@@ -1045,8 +1046,8 @@ use `max(p_yes, 1 - p_yes)`, and MC bins use the top-option probability. These t
 accounting quantities across confidence levels and help check whether the accounting pattern comes from a particular
 confidence range. Their bin assignment does not use the outcome, although the spot-peer values in each bin still
 depend on the realized outcome. The CORP decomposition and reliability tables diagnose forecast quality: binary
-forecasts contribute one observation per question, and MC contributes the top option's maximum probability and
-whether a tied top option won.
+forecasts contribute one observation per question, and MC contributes the top option's probability and whether that
+option won, where a tie at the top scores the first tied option in option order, chosen before the outcome is read.
 
 CORP follows Dimitriadis, Gneiting & Jordan (2021, PNAS): isotonic recalibration by the pool-adjacent-violators
 algorithm (PAV), with equal forecast probabilities pooled before fitting, decomposes proper score into miscalibration
@@ -1059,8 +1060,8 @@ secondary. The floor calibration comparison carries forward the 1.01% MC option 
 The MC discrimination table compares the published forecast, each complete member vector, and the ghost when an
 archive is supplied. It reports top accuracy, normalized rank and probability of the winning option, counterfactual
 spot peer and paired delta where both forecasts can be scored, and symmetric counts for member-only and published-
-only top rankings. A winner tied at maximum probability counts as top for accuracy and both directional counts, while
-rank averages tied positions. The ghost comparison groups forecasts by outcome-blind distance from the published
+only top rankings. Top accuracy scores the first tied option in option order when a ballot ties at the top; the two
+directional counts treat a winner tied at the maximum as on top in both directions, and rank averages tied positions. The ghost comparison groups forecasts by outcome-blind distance from the published
 vector and reports counterfactual changes by distance; binary distance is absolute probability difference, MC uses
 total variation, and numeric or discrete uses the published-grid CDF distance. Ghost status counts explain unjoined
 and unscoreable records, and the descriptive slice ranking and worst-decile list provide follow-up cohorts for review.

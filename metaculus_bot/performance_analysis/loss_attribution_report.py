@@ -8,7 +8,7 @@ ACCOUNTING_SECTIONS: dict[str, tuple[str, str, str]] = {
     "binary: where the points went": (
         "Binary: where the points went (uses the outcome)",
         "p on outcome",
-        "Binned by the probability we gave the outcome that happened; low bins lose points by construction.",
+        "Binned by the probability we gave the outcome that happened; describes where points were won and lost.",
     ),
     "binary: by our confidence": (
         "Binary: by our confidence (outcome-blind)",
@@ -18,7 +18,7 @@ ACCOUNTING_SECTIONS: dict[str, tuple[str, str, str]] = {
     "multiple_choice: where the points went": (
         "Multiple choice: where the points went (uses the outcome)",
         "p on winning option",
-        "Binned by the probability we gave the option that won; low bins lose points by construction.",
+        "Binned by the probability we gave the option that won; describes where points were won and lost.",
     ),
     "multiple_choice: by our confidence": (
         "Multiple choice: by our confidence (outcome-blind)",
@@ -61,10 +61,11 @@ def _how_to_read(header: dict) -> list[str]:
         "days, so only the point value is shown.",
         "- Each era section repeats the same tables on that era's questions. 'all' pools every era, and '(none)' holds "
         "questions with no value in the era field.",
-        "- Score tables by forecast probability: tables marked 'uses the outcome' are accounting. Questions where we "
-        "gave the realized outcome a low probability lose points by definition, so those tables say where the loss "
-        "was booked, not why. Tables marked 'outcome-blind' bin by a quantity known before resolution; a bin "
-        "with negative mean spot peer there shows a problem at that confidence level.",
+        "- Score tables by forecast probability: tables marked 'uses the outcome' are accounting. They bin by the "
+        "probability we gave the outcome that happened, so they show where points were won and lost but not why: "
+        "a low probability on the winner usually loses spot peer, though not always, since spot peer is measured "
+        "against the other forecasters. Tables marked 'outcome-blind' bin by a quantity known before resolution; "
+        "a bin with negative mean spot peer there shows a problem at that confidence level.",
         "- Score table columns: 'total' and 'mean' are spot peer; 'share of negative' is the bin's share of the "
         "table's summed negative spot peer (positive scores ignored); 'fraction negative' is the share of the bin's "
         "questions that scored below zero.",
@@ -82,8 +83,9 @@ def _how_to_read(header: dict) -> list[str]:
         'set of questions and eras (backlog decision-15 "Per-model peer ranking as an action"). The dissent '
         'counts cover both directions on every question (backlog decision-11 "Median drowns the correct '
         'dissenter").',
-        "- A winner tied for the maximum probability counts as top in accuracy and dissent counts. Multiple-choice "
-        "top-option CORP uses the maximum probability and whether any tied top option won.",
+        "- Ties at the top: top-option accuracy and the multiple-choice top-option CORP score the first tied option "
+        "in option order, chosen before the outcome is read. The two 'only ... had winner on top' counts treat a "
+        "winner tied for the maximum as on top, the same rule in both directions.",
         "- The ghost is the gap-fill driver's single-model forecast. The ghost table bins questions by its distance "
         "from the published forecast, which does not use the outcome: binary |p - q|, multiple choice total "
         "variation distance, numeric and discrete mean absolute CDF difference.",

@@ -347,7 +347,7 @@ def _read_ballot(record: dict, forecast: list[float]) -> _BallotReading:
     if comparable and not zero and peer is not None:
         delta = spot_peer_delta(old_prob=published[winner], new_prob=forecast[winner], question_type="multiple_choice")
     return _BallotReading(
-        member_top,
+        forecast.index(max(forecast)) == winner,
         forecast.count(max(forecast)) > 1,
         winner_rank(forecast, winner),
         forecast[winner],
@@ -643,8 +643,9 @@ def calibration_reports(records: list[dict]) -> tuple[CalibrationReport, ...]:
             )
             if not names or not probabilities or len(names) != len(probabilities) or outcome not in names:
                 continue
-            maximum = max(probabilities)
-            top.append((maximum, probabilities[names.index(outcome)] == maximum, _cluster(record)))
+            # A tie at the top scores the first tied option in option order, chosen before the outcome is read.
+            top_index = probabilities.index(max(probabilities))
+            top.append((probabilities[top_index], names[top_index] == outcome, _cluster(record)))
             options.extend(
                 (probability, name == outcome, _cluster(record))
                 for name, probability in zip(names, probabilities, strict=True)

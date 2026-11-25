@@ -21,7 +21,8 @@ maintained tool so these questions get the same answer every round instead of a 
 Core, agreed with the operator:
 1. **Points-lost accounting.** Bin each resolved binary and MC question by the probability the bot gave
    the REALIZED outcome; per bin report n, sum and mean spot peer, and share of total negative spot peer.
-   This is accounting (low p on the outcome is negative by construction), so it is always shown next to
+   This is accounting (low p on the outcome is usually, though not always, negative, since spot peer is
+   relative to the other forecasters), so it is always shown next to
    an outcome-blind table: the same quantities binned by the bot's top-option probability (MC) or
    max(p, 1-p) (binary). Label the two tables "where the points went" and "by our confidence".
    Numeric/discrete: bin by PIT (`width_monitor.compute_pit_reading`): [0, .025), [.025, .1), [.1, .9),

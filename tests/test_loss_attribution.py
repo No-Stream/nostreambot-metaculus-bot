@@ -12,6 +12,7 @@ from metaculus_bot.performance_analysis.cohorts import KNOWN_BUG_QIDS
 from metaculus_bot.performance_analysis.ghosts import ghost_cdf_on_published_grid
 from metaculus_bot.performance_analysis.loss_attribution import (
     build_era_report,
+    calibration_reports,
     corp_decomposition,
     disagreement_report,
     era_buckets,
@@ -395,19 +396,39 @@ class TestFloorCalibrationParity:
                 ]
             )
 
-    def test_top_accuracy_includes_tied_options(self) -> None:
+    @pytest.mark.parametrize(("winner", "expected_accuracy"), [("A", 1), ("B", 0)])
+    def test_tied_top_scores_the_first_option_in_option_order(self, winner: str, expected_accuracy: int) -> None:
         record = {
             "type": "multiple_choice",
             "question_id": 1,
             "options": ["A", "B"],
-            "resolution_parsed": "B",
+            "resolution_parsed": winner,
             "our_forecast_values": [0.5, 0.5],
             "metaculus_scores": {"spot_peer_score": 0},
             "metadata": {"actual_resolve_time": "2026-01-01T00:00:00Z"},
         }
         published = mc_discrimination([record])[0]
-        assert published.top_accuracy == 1
+        assert published.top_accuracy == expected_accuracy
+        assert published.tied_top == 1
         assert published.mean_rank == pytest.approx(0.5)
+
+    def test_balanced_tied_ballots_show_no_miscalibration(self) -> None:
+        records = [
+            {
+                "type": "multiple_choice",
+                "question_id": index,
+                "options": ["A", "B"],
+                "resolution_parsed": "A" if index % 2 else "B",
+                "our_forecast_values": [0.5, 0.5],
+                "metaculus_scores": {"spot_peer_score": 0},
+                "metadata": {"actual_resolve_time": f"2026-01-{index + 1:02d}T00:00:00Z"},
+            }
+            for index in range(10)
+        ]
+        top = next(item for item in calibration_reports(records) if item.name == "MC top option")
+        assert top.brier.mcb == pytest.approx(0.0)
+        assert top.log.mcb == pytest.approx(0.0)
+        assert top.reliability[0].observed == pytest.approx(0.5)
 
 
 class TestMultipleChoiceAccounting:
@@ -459,7 +480,7 @@ class TestReviewRegressions:
         assert top.tied_top == 1
         row = report.discrimination[0]
         assert row.n == 1
-        assert row.top_accuracy == 1
+        assert row.top_accuracy == 0
         assert row.tied_top == 1
         assert row.scored_n == 0
         assert report.exclusions["multiple_choice: by our confidence"]["no spot peer"] == 1
