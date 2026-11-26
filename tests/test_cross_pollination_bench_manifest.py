@@ -63,6 +63,20 @@ def test_an_archive_record_for_another_post_raises(tmp_path: Path) -> None:
         select_records(json.loads(fake_round.perf_path.read_text()), fake_round.archive_dir)
 
 
+def test_records_written_before_the_platform_field_read_as_metaculus(tmp_path: Path) -> None:
+    fake_round = write_fake_round(tmp_path)
+    old_record_path = fake_round.archive_dir / "106.json"
+    old_record = json.loads(old_record_path.read_text())
+    del old_record["platform"], old_record["post_id"]
+    old_record_path.write_text(json.dumps(old_record))
+    selected_record_path = fake_round.archive_dir / "101.json"
+    selected_record = json.loads(selected_record_path.read_text())
+    del selected_record["platform"]
+    selected_record_path.write_text(json.dumps(selected_record))
+    records = select_records(json.loads(fake_round.perf_path.read_text()), fake_round.archive_dir)
+    assert [int(row["question_id"]) for row, _ in records] == [101, 102, 103, 104, 105, 108]
+
+
 def test_duplicate_titles_share_an_event_and_the_map_overrides(tmp_path: Path) -> None:
     fake_round = write_fake_round(tmp_path)
     result = build_manifest(fake_round.perf_path, fake_round.archive_dir, event_map=None, fetch=fake_round.fetch)
