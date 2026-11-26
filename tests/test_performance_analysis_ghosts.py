@@ -6,6 +6,7 @@ from itertools import pairwise
 import pytest
 
 from metaculus_bot.performance_analysis.ghosts import (
+    ambiguous_post_ids,
     clamp_ghost_to_published_bounds,
     ghost_binary_prob,
     ghost_cdf_on_published_grid,
@@ -89,6 +90,13 @@ def test_records_are_indexed_by_post_id() -> None:
 
     assert indexed[17] is record
     assert 90017 not in indexed
+
+
+def test_ambiguous_group_post_ids_are_excluded_from_index() -> None:
+    records = [{"post_id": 17}, {"post_id": 17}, {"post_id": 18}]
+
+    assert ambiguous_post_ids(records) == {17}
+    assert records_by_post_id(records) == {18: records[2]}
 
 
 def test_ghost_cdf_uses_published_length_and_returns_none_for_missing_inputs() -> None:

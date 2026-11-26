@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from pathlib import Path
 
 from metaculus_bot.mc_processing import clamp_and_renormalize_probs
@@ -171,9 +172,16 @@ def ghost_numeric_percentiles(ghost: dict) -> dict[float, float] | None:
         return None
 
 
+def ambiguous_post_ids(records: list[dict]) -> set[int]:
+    """Return post ids shared by multiple records, where a post-level ghost cannot be joined safely."""
+    post_id_counts = Counter(record["post_id"] for record in records)
+    return {post_id for post_id, count in post_id_counts.items() if count > 1}
+
+
 def records_by_post_id(records: list[dict]) -> dict[int, dict]:
-    """Index resolved records by the post id used by ghost markers."""
-    return {record["post_id"]: record for record in records}
+    """Index only unique post ids; ambiguous group posts are excluded from ghost joins."""
+    ambiguous_ids = ambiguous_post_ids(records)
+    return {record["post_id"]: record for record in records if record["post_id"] not in ambiguous_ids}
 
 
 def ghost_cdf_on_published_grid(percentiles: dict[float, float], record: dict) -> list[float] | None:

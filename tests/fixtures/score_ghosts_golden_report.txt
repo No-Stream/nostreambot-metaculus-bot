@@ -3,6 +3,7 @@ Ghosts (latest per qid): 4
   by source: json=3 legacy=1
   by type: binary=2 multiple_choice=1 numeric=1
 Joined to resolved-question dataset: 4
+Ambiguous group posts excluded from post-id joins: 0
 Scored ghosts: 4
   binary: n=2 mean_delta=-189.7930 (published better)
   multiple_choice: n=1 mean_delta=+67.8072 (ghost better)

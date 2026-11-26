@@ -40,6 +40,7 @@ from metaculus_bot.performance_analysis.collector import (
     resolve_numeric_record_to_score_inputs,
 )
 from metaculus_bot.performance_analysis.ghosts import (
+    ambiguous_post_ids,
     clamp_ghost_to_published_bounds,
     ghost_cdf_on_published_grid,
     ghost_numeric_percentiles,
@@ -442,6 +443,7 @@ def join_and_score(
     sub-question id, so keying on it would make every join silently miss. Group posts collapse
     their sub-questions to one record per post on both sides, a limitation of the post-level ref.
     """
+    ambiguous_ids = ambiguous_post_ids(records)
     post_id_records = records_by_post_id(records)
     selected = select_ghost_per_qid(json_ghosts, legacy_ghosts)
     pre_by_qid = _json_ghosts_by_qid(pre_ghosts)
@@ -463,6 +465,7 @@ def join_and_score(
         "v1_pairs": paired_same_run_read(post_by_qid, _json_ghosts_by_qid(v1_ghosts), post_id_records),
         "n_ghosts": len(selected),
         "n_joined": n_joined,
+        "n_ambiguous_posts": len(ambiguous_ids),
         "n_scored": tally.n_scored,
         "source_counts": _count_sources(selected),
         "qtype_counts": _count_qtypes(selected),
@@ -498,6 +501,7 @@ def _inventory_lines(summary: dict) -> list[str]:
     if qtype_counts:
         lines.append("  by type: " + _counts_inline(qtype_counts))
     lines.append(f"Joined to resolved-question dataset: {summary['n_joined']}")
+    lines.append(f"Ambiguous group posts excluded from post-id joins: {summary['n_ambiguous_posts']}")
     if summary["joined_without_scorer"]:
         lines.append("  joined but no scorer for the type: " + _counts_inline(summary["joined_without_scorer"]))
     if qtype_counts.get("date"):

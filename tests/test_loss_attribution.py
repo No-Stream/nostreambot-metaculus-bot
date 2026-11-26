@@ -321,6 +321,57 @@ class TestCli:
         assert report.count("Questions in distance bins at or above 0.05, for trace review.") == 1
         assert "[201](https://www.metaculus.com/questions/201/)" in report
 
+    def test_group_post_ghost_is_counted_as_ambiguous_and_excluded(self, tmp_path: Path) -> None:
+        records = json.loads(Path("tests/fixtures/loss_attribution_records.json").read_text())
+        records.append(
+            {
+                **records[1],
+                "question_id": 102,
+                "triple_subera": None,
+                "metaculus_scores": {"spot_peer_score": 3.0},
+            }
+        )
+        cached = tmp_path / "records.json"
+        cached.write_text(json.dumps(records))
+
+        main(
+            [
+                "--cached",
+                str(cached),
+                "--telemetry-archive",
+                "tests/fixtures/loss_attribution_ghosts",
+                "--out",
+                str(tmp_path / "report"),
+                "--draws",
+                "20",
+            ]
+        )
+
+        payload = json.loads((tmp_path / "report/loss_attribution.json").read_text())
+        all_era = next(era for era in payload["eras"] if era["era"] == "all")
+        assert payload["header"]["ambiguous_group_posts"] == 1
+        assert payload["header"]["mc_joined_ghost"] == 0
+        assert all(row["n"] == 0 for row in all_era["discrimination"] if row["name"] == "ghost")
+        mc_counts = next(row for row in all_era["ghost"]["counts_by_type"] if row["question_type"] == "multiple_choice")
+        assert mc_counts["statuses"]["ambiguous_group_post"] == 2
+        assert mc_counts["excluded_spot_peer"] == pytest.approx(1.0)
+        era_counts = [
+            row["ghost"]["counts_by_type"]
+            for row in payload["eras"]
+            if row["era"] != "all" and row["ghost"] is not None
+        ]
+        assert (
+            sum(
+                row["statuses"].get("ambiguous_group_post", 0)
+                for counts in era_counts
+                for row in counts
+                if row["question_type"] == "multiple_choice"
+            )
+            == 2
+        )
+        report = (tmp_path / "report/loss_attribution.md").read_text()
+        assert "ambiguous_group_post: 2" in report
+
     def test_numeric_ghost_uses_continuous_score_without_second_halving(self) -> None:
         record = {
             "type": "numeric",

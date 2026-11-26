@@ -157,6 +157,15 @@ def test_score_ghosts_golden_report():
 
 
 class TestJoinAndScore:
+    def test_group_post_is_reported_as_ambiguous_and_not_joined(self) -> None:
+        records = [_binary_record(1, True, 0.5), _binary_record(1, False, 0.4)]
+
+        summary = join_and_score([_json_ghost(1, {"qtype": "binary", "prob": 0.8})], [], records)
+
+        assert summary["n_ambiguous_posts"] == 1
+        assert summary["n_joined"] == 0
+        assert "Ambiguous group posts excluded from post-id joins: 1" in render_report(summary)
+
     def test_n_zero_when_no_ghosts(self):
         summary = join_and_score([], [], [])
         assert summary["n_ghosts"] == 0

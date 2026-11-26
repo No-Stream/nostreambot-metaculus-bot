@@ -23,6 +23,7 @@ from metaculus_bot.performance_analysis.analysis import PitReading, jeffreys_ci,
 from metaculus_bot.performance_analysis.cohorts import EXCLUSION_COHORTS, parse_exclude_qids
 from metaculus_bot.performance_analysis.collector import load_dataset, resolve_numeric_record_to_score_inputs
 from metaculus_bot.performance_analysis.ghosts import (
+    ambiguous_post_ids,
     clamp_ghost_to_published_bounds,
     ghost_cdf_on_published_grid,
     ghost_numeric_percentiles,
@@ -62,6 +63,13 @@ DISTANCE_EDGES = (0.0, 0.05, 0.15, 0.3, 1.0)
 
 def _bin_label(edges: tuple[float, ...], index: int) -> str:
     return f"[{edges[index]:g}, {edges[index + 1]:g}{']' if index == len(edges) - 2 else ')'}"
+
+
+def _add_excluded_peer(excluded_scores: dict[str, float], record: dict) -> None:
+    peer = spot_peer_score(record)
+    if peer is not None:
+        kind = record["type"]
+        excluded_scores[kind] = excluded_scores.get(kind, 0.0) + peer
 
 
 @dataclass(frozen=True, slots=True)
@@ -768,19 +776,24 @@ class GhostReport:
     counts_by_type: tuple[GhostCounts, ...]
 
 
-def disagreement_report(records: list[dict], ghosts: dict[int, dict], *, seed: int, draws: int) -> GhostReport:
+def disagreement_report(
+    records: list[dict], ghosts: dict[int, dict], *, seed: int, draws: int, ambiguous_ids: set[int] | None = None
+) -> GhostReport:
     """Group joined ghosts by distance and count each exclusion reason."""
     groups: dict[tuple[str, int], list[tuple[float, str, GhostQuestion]]] = {}
     counts: dict[str, Counter[str]] = {}
     excluded_scores: dict[str, float] = {}
+    ambiguous_ids = ambiguous_post_ids(records) if ambiguous_ids is None else ambiguous_ids
     for record in records:
         type_counts = counts.setdefault(record["type"], Counter())
+        if record["post_id"] in ambiguous_ids:
+            type_counts["ambiguous_group_post"] += 1
+            _add_excluded_peer(excluded_scores, record)
+            continue
         ghost = ghosts.get(record["post_id"])
         if ghost is None:
             type_counts["unjoinable"] += 1
-            peer = spot_peer_score(record)
-            if peer is not None:
-                excluded_scores[record["type"]] = excluded_scores.get(record["type"], 0.0) + peer
+            _add_excluded_peer(excluded_scores, record)
             continue
         comparison = ghost_comparison(record, ghost)
         status = comparison.status
@@ -788,9 +801,7 @@ def disagreement_report(records: list[dict], ghosts: dict[int, dict], *, seed: i
             status = "no_spot_peer"
         type_counts[status] += 1
         if status != "scored":
-            peer = spot_peer_score(record)
-            if peer is not None:
-                excluded_scores[record["type"]] = excluded_scores.get(record["type"], 0.0) + peer
+            _add_excluded_peer(excluded_scores, record)
             continue
         assert comparison.distance is not None
         assert comparison.delta is not None
@@ -846,11 +857,21 @@ class EraReport:
     worst: tuple[dict, ...]
 
 
-def _ghost_discrimination(records: list[dict], ghosts: dict[int, dict], *, seed: int, draws: int) -> DiscriminationRow:
+def _ghost_discrimination(
+    records: list[dict],
+    ghosts: dict[int, dict],
+    *,
+    seed: int,
+    draws: int,
+    ambiguous_ids: set[int] | None = None,
+) -> DiscriminationRow:
     ballots: list[tuple[dict, list[float]]] = []
     incomplete = 0
+    ambiguous_ids = ambiguous_post_ids(records) if ambiguous_ids is None else ambiguous_ids
     for record in records:
         if record["type"] != "multiple_choice":
+            continue
+        if record["post_id"] in ambiguous_ids:
             continue
         ghost = ghosts.get(record["post_id"])
         if ghost is None or ghost["qtype"] != "multiple_choice":
@@ -945,7 +966,13 @@ def _section_exclusions(
 
 
 def build_era_report(
-    era: str, records: list[dict], ghosts: dict[int, dict] | None, *, seed: int, draws: int
+    era: str,
+    records: list[dict],
+    ghosts: dict[int, dict] | None,
+    *,
+    seed: int,
+    draws: int,
+    ambiguous_ids: set[int] | None = None,
 ) -> EraReport:
     """Compute accounting and diagnostics for one era."""
     accounting = {}
@@ -975,7 +1002,7 @@ def build_era_report(
     exclusions, excluded_spot_peer = _section_exclusions(records, accounting)
     discrimination = mc_discrimination(records, seed=seed, draws=draws)
     if ghosts is not None:
-        discrimination += (_ghost_discrimination(records, ghosts, seed=seed, draws=draws),)
+        discrimination += (_ghost_discrimination(records, ghosts, seed=seed, draws=draws, ambiguous_ids=ambiguous_ids),)
     return EraReport(
         era,
         accounting,
@@ -984,7 +1011,9 @@ def build_era_report(
         exclusions,
         excluded_spot_peer,
         discrimination,
-        None if ghosts is None else disagreement_report(records, ghosts, seed=seed, draws=draws),
+        None
+        if ghosts is None
+        else disagreement_report(records, ghosts, seed=seed, draws=draws, ambiguous_ids=ambiguous_ids),
         slice_ranking(records, seed=seed, draws=draws),
         worst,
     )
@@ -1020,6 +1049,13 @@ def main(argv: list[str] | None = None) -> None:
             raise ValueError(f"Telemetry archive directory does not exist: {archive}")
         ghosts = load_concluding_ghosts(archive)
     included_post_ids = {record["post_id"] for record in included}
+    ambiguous_ids = ambiguous_post_ids(
+        [
+            record
+            for record in data
+            if record.get("platform") != "mantic" and "mantic" not in str(record.get("source_tournament") or "").lower()
+        ]
+    )
     header = {
         "dataset": args.cached,
         "before": dict(before),
@@ -1054,12 +1090,18 @@ def main(argv: list[str] | None = None) -> None:
         else dict(
             Counter(str(ghost["qtype"]) for post_id, ghost in ghosts.items() if post_id not in included_post_ids)
         ),
+        "ambiguous_group_posts": len({record["post_id"] for record in included if record["post_id"] in ambiguous_ids}),
         "mc_joined_ghost": None
         if ghosts is None
-        else sum(record["type"] == "multiple_choice" and record.get("post_id") in ghosts for record in included),
+        else sum(
+            record["type"] == "multiple_choice"
+            and record.get("post_id") in ghosts
+            and record.get("post_id") not in ambiguous_ids
+            for record in included
+        ),
     }
     reports = tuple(
-        build_era_report(era, records, ghosts, seed=args.seed, draws=args.draws)
+        build_era_report(era, records, ghosts, seed=args.seed, draws=args.draws, ambiguous_ids=ambiguous_ids)
         for era, records in era_buckets(included, args.era_field).items()
     )
     output = Path(args.out)

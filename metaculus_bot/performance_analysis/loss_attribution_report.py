@@ -517,6 +517,7 @@ def render_report(payload: dict) -> str:
         f"- Multiple-choice questions: {header['mc_all']} in all eras, {header['mc_fall']} in triple_fall_config, "
         f"{'not run: no --telemetry-archive' if header['mc_joined_ghost'] is None else header['mc_joined_ghost']} "
         "with a joined ghost.",
+        f"- Ambiguous group posts excluded from ghost joins: {header['ambiguous_group_posts']}.",
         f"- Complete per-member multiple-choice vectors: {header['mc_complete_member_vectors_before']} of "
         f"{header['before'].get('multiple_choice', 0)} questions before exclusions and "
         f'{header["mc_complete_member_vectors"]} of {header["mc_all"]} after. Backlog decision-31 ("Time-of-tournament '
