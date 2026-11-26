@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from metaculus_bot.constants import BINARY_PROB_MAX, BINARY_PROB_MIN, MC_PROB_MIN
+from metaculus_bot.mc_processing import clamp_and_renormalize_probs
 from metaculus_bot.performance_analysis.recalibration import (
     RECALIBRATION_ERAS,
     fit_binary_isotonic,
@@ -69,7 +70,19 @@ class TestFits:
     def test_power_floor_then_renormalize(self) -> None:
         transformed = transform_mc_power([0.98, 0.01, 0.01], 20)
         assert sum(transformed) == pytest.approx(1)
-        assert transformed == pytest.approx([1 / 1.02, MC_PROB_MIN / 1.02, MC_PROB_MIN / 1.02])
+        powered = np.array([0.98**20, 0.01**20, 0.01**20])
+        expected = clamp_and_renormalize_probs((powered / powered.sum()).tolist())
+        assert transformed == pytest.approx(expected)
+
+    def test_power_transform_matches_production_floor_repair(self) -> None:
+        probabilities = [0.92] + [0.01] * 8
+
+        transformed = transform_mc_power(probabilities, 2.0)
+
+        assert all(probability >= MC_PROB_MIN for probability in transformed)
+        powered = np.array([probability**2 for probability in probabilities])
+        expected = clamp_and_renormalize_probs((powered / powered.sum()).tolist())
+        assert transformed == pytest.approx(expected)
 
 
 class TestForwardChaining:

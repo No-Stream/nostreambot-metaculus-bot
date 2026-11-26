@@ -13,7 +13,8 @@ import numpy as np
 from scipy.optimize import isotonic_regression
 from scipy.special import expit, logsumexp
 
-from metaculus_bot.constants import BINARY_PROB_MAX, BINARY_PROB_MIN, MC_PROB_MIN
+from metaculus_bot.constants import BINARY_PROB_MAX, BINARY_PROB_MIN
+from metaculus_bot.mc_processing import clamp_and_renormalize_probs
 from metaculus_bot.performance_analysis.eras import ERAS, NO_TS, POST_FLIP, PRE_FLIP, TRIPLE_ERA, TRIPLE_SUBERAS
 from metaculus_bot.performance_analysis.loss_attribution_intervals import DEFAULT_DRAWS, DEFAULT_SEED, cluster_interval
 from metaculus_bot.prob_math_utils import logit
@@ -99,13 +100,12 @@ def _valid_mc(probabilities: list[float]) -> bool:
 
 
 def transform_mc_power(probabilities: list[float], alpha: float) -> list[float]:
-    """Raise every option to alpha, normalize, apply the production floor, then normalize."""
+    """Raise every option to alpha, then apply the production clamp and renormalization."""
     if not _valid_mc(probabilities) or not math.isfinite(alpha):
         raise ValueError("Power scaling needs a probability vector and finite alpha")
     powered_logs = alpha * np.log(probabilities)
     transformed = np.exp(powered_logs - logsumexp(powered_logs))
-    clamped = np.maximum(transformed, MC_PROB_MIN)
-    return [float(value) for value in clamped / clamped.sum()]
+    return clamp_and_renormalize_probs([float(value) for value in transformed])
 
 
 def fit_mc_power(probabilities: list[list[float]], winners: list[int]) -> float:
