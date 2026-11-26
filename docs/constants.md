@@ -153,6 +153,12 @@ are data-contract tokens, since the research archive keys off the exact spelling
 never re-spell one. `question_platform.question_platform` reads one off a question's `page_url`
 host, and the research persistence writer stamps one on every archived record.
 
+### CROSS_POLLINATION_BENCH_HAIKU_MODEL, CROSS_POLLINATION_BENCH_DEEPSEEK_MODEL, CROSS_POLLINATION_BENCH_GLM_MODEL
+
+The model slugs pinned for the offline cross-pollination experiment. They live here because
+`tests/test_model_name_locations.py` limits model ids to the constants and model configuration
+modules. The bench pins these slugs to the first-party providers listed in its model table.
+
 ### gemini_use_donated_openrouter_key
 
 Whether OpenRouter Gemini calls route through the Metaculus-donated key. The default is True:

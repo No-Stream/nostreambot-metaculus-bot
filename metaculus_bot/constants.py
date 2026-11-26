@@ -51,6 +51,11 @@ QUESTION_PLATFORM_HOSTS: tuple[str, ...] = (METACULUS_HOST, MANTIC_HOST)
 PLATFORM_METACULUS: str = "metaculus"
 PLATFORM_MANTIC: str = "mantic"
 
+# Model slugs pinned for the offline cross-pollination experiment. Receipt: docs/constants.md "Cross-pollination bench models".
+CROSS_POLLINATION_BENCH_HAIKU_MODEL: str = "anthropic/claude-haiku-5.5"
+CROSS_POLLINATION_BENCH_DEEPSEEK_MODEL: str = "deepseek/deepseek-v4.1-flash-1017"
+CROSS_POLLINATION_BENCH_GLM_MODEL: str = "z-ai/glm-5.3-flash"
+
 
 def gemini_use_donated_openrouter_key() -> bool:
     """Whether OpenRouter Gemini calls should route through the Metaculus-donated key.
