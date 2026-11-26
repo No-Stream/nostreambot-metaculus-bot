@@ -634,7 +634,8 @@ class TestMiniFixtureAttribution(_RealCommentAttributionChecks):
     """
 
     @pytest.fixture(scope="class")
-    def records(self):
+    @classmethod
+    def records(cls):
         with _MINI_FIXTURE_PATH.open() as f:
             return [json.loads(line) for line in f if line.strip()]
 
@@ -730,7 +731,8 @@ class TestRealDataRegression(_RealCommentAttributionChecks):
     """
 
     @pytest.fixture(scope="class")
-    def records(self):
+    @classmethod
+    def records(cls):
         # Re-check existence rather than trusting the class-level skipif: that
         # predicate is evaluated once at COLLECTION, and the collector rewrites
         # this file in place, so a pull landing mid-run would turn a skip into a

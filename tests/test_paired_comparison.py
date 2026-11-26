@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import arviz as az
 import numpy as np
 import pytest
 
@@ -196,9 +197,8 @@ def test_sample_size_arithmetic() -> None:
     assert result["mean_units_per_cluster"] == 2.0
 
 
+@pytest.mark.filterwarnings("ignore:.*divide:RuntimeWarning")  # constant chains have zero within-chain variance
 def test_failed_diagnostics_raise_unless_allowed() -> None:
-    import arviz as az
-
     inference = az.from_dict(
         {
             "posterior": {"effect": np.array([[0.0] * 20, [10.0] * 20])},

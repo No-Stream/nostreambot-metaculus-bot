@@ -108,6 +108,7 @@ def test_missing_resolution_day_fails() -> None:
         prepare_data([record(1, "binary", "old", 3, "2026-01-01T00:00:00Z", None)])
 
 
+@pytest.mark.filterwarnings("ignore:.*divide:RuntimeWarning")  # constant chains have zero within-chain variance
 def test_diagnostic_failure_and_warning_override() -> None:
     inference = az.from_dict(
         {
