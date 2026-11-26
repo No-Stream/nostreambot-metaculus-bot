@@ -104,6 +104,10 @@ def test_correction_kind_parsing() -> None:
     assert [parse_correction_kind(f"UPDATE: prior=0.2 revised=0.3 correction={kind}") for kind in kinds] == list(kinds)
     assert parse_correction_kind("UPDATE: prior=0.2 revised=0.3 correction=fact\nUPDATE: correction=none") == "none"
     assert parse_correction_kind("No update line") == "unparsed"
+    assert parse_correction_kind("2. UPDATE: prior=50.0 revised=50.5 correction=reweighting") == "reweighting"
+    assert parse_correction_kind("**2.** UPDATE: prior=36.0 revised=36.3 correction=base_rate") == "base_rate"
+    assert parse_correction_kind("**UPDATE:** prior=0.2 revised=0.3 correction=**fact**") == "fact"
+    assert parse_correction_kind("The UPDATE: line comes later in prose correction=fact") == "unparsed"
 
 
 def test_the_instruction_pins() -> None:

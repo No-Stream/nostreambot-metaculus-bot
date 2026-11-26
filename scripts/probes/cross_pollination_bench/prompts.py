@@ -91,12 +91,16 @@ def update_block(variant: Variant, own_reply: str, peers: Sequence[PeerAnswer]) 
     return "\n\n".join(sections)
 
 
+# Models number the line as the instruction's list item ("2. UPDATE:", "**2.** UPDATE:") or bold the label.
+UPDATE_LINE_START = re.compile(r"^[\s*#>\-]*(?:\d+[.)]\**\s*)?\**UPDATE:")
+
+
 def parse_correction_kind(reply: str) -> str:
     """Read the correction kind from the final UPDATE line, or report it as unparsed."""
-    update_lines = [line for line in reply.splitlines() if line.startswith("UPDATE:")]
+    update_lines = [line for line in reply.splitlines() if UPDATE_LINE_START.match(line)]
     if not update_lines:
         return CORRECTION_UNPARSED
-    match = re.search(r"(?:^|\s)correction=(\w+)(?:\s|$)", update_lines[-1])
+    match = re.search(r"(?:^|\s)correction=\**(\w+)\**(?:\s|$)", update_lines[-1])
     if match is None or match.group(1) not in CORRECTION_KINDS:
         return CORRECTION_UNPARSED
     return match.group(1)
