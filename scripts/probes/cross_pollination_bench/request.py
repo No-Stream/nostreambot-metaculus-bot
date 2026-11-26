@@ -28,8 +28,14 @@ FORECASTER_ROLE = "cross_pollination_forecaster"
 CACHE_BREAKPOINT: dict[str, str] = {"type": "ephemeral"}
 
 
+def _cached_prompt_block(prompt: str) -> dict[str, Any]:
+    # In the 2026-11-25 smoke run, Haiku's one-block first call cached one token fewer than the same block inside
+    # a two-block update (trailing newline trimmed on a request's last block), so every first update missed.
+    return {"type": "text", "text": prompt.rstrip(), "cache_control": CACHE_BREAKPOINT}
+
+
 def first_messages(prompt: str) -> list[dict[str, Any]]:
-    return [{"role": "user", "content": [{"type": "text", "text": prompt, "cache_control": CACHE_BREAKPOINT}]}]
+    return [{"role": "user", "content": [_cached_prompt_block(prompt)]}]
 
 
 def update_messages(prompt: str, update_block: str) -> list[dict[str, Any]]:
@@ -37,7 +43,7 @@ def update_messages(prompt: str, update_block: str) -> list[dict[str, Any]]:
         {
             "role": "user",
             "content": [
-                {"type": "text", "text": prompt, "cache_control": CACHE_BREAKPOINT},
+                _cached_prompt_block(prompt),
                 {"type": "text", "text": update_block},
             ],
         }

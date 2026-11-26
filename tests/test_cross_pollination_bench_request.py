@@ -18,6 +18,7 @@ from scripts.probes.cross_pollination_bench import request
 from scripts.probes.cross_pollination_bench.models import BENCH_MODELS, BenchModel
 
 PROMPT = "Forecast prompt with exact bytes.\n"
+CACHED_PREFIX = "Forecast prompt with exact bytes."
 UPDATE = "First answer and peer context."
 
 
@@ -96,7 +97,9 @@ async def call_stub(
 async def test_first_call_body_is_one_block_with_the_breakpoint(openrouter_stub: OpenRouterStub) -> None:
     await call_stub(openrouter_stub, BENCH_MODELS[0], request.first_messages(PROMPT))
     body, _ = openrouter_stub.requests[0]
-    assert body["messages"][0]["content"] == [{"type": "text", "text": PROMPT, "cache_control": {"type": "ephemeral"}}]
+    assert body["messages"][0]["content"] == [
+        {"type": "text", "text": CACHED_PREFIX, "cache_control": {"type": "ephemeral"}}
+    ]
 
 
 @pytest.mark.asyncio
@@ -106,7 +109,7 @@ async def test_update_body_keeps_the_breakpoint_on_the_first_block_only(
 ) -> None:
     await call_stub(openrouter_stub, model, request.update_messages(PROMPT, UPDATE))
     message = openrouter_stub.requests[0][0]["messages"][0]
-    assert message["content"][0]["text"] == PROMPT
+    assert message["content"][0]["text"] == CACHED_PREFIX
     assert message["content"][0]["cache_control"] == {"type": "ephemeral"}
     assert message["content"][1]["text"] == UPDATE
     assert "cache_control" not in message["content"][1]
@@ -117,7 +120,7 @@ async def test_update_body_keeps_the_breakpoint_on_the_first_block_only(
 async def test_the_deepseek_body_carries_no_marker(openrouter_stub: OpenRouterStub) -> None:
     await call_stub(openrouter_stub, BENCH_MODELS[1], request.first_messages(PROMPT))
     content = openrouter_stub.requests[0][0]["messages"][0]["content"]
-    assert content == [{"type": "text", "text": PROMPT}]
+    assert content == [{"type": "text", "text": CACHED_PREFIX}]
 
 
 @pytest.mark.asyncio
@@ -181,3 +184,10 @@ async def test_the_reply_keeps_usage_provider_and_cache_write(openrouter_stub: O
     assert reply.upstream_provider == "DeepSeek"
     assert reply.usage["cost"] == 0.0123
     assert reply.reply.charged_usd == pytest.approx(0.0123)
+
+
+def test_the_cached_block_is_identical_whether_or_not_it_is_the_last_block() -> None:
+    first_block = request.first_messages(PROMPT)[0]["content"][0]
+    update_first_block = request.update_messages(PROMPT, UPDATE)[0]["content"][0]
+    assert first_block == update_first_block
+    assert first_block["text"] == first_block["text"].rstrip()
