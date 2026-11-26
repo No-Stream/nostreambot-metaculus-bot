@@ -165,7 +165,7 @@ def test_summary_prints_the_three_fits_side_by_side(real_comparison: dict) -> No
     assert "Student-t model" in text
     assert "Normal model" in text
     assert "Bayesian bootstrap by event" in text
-    assert "at two draws per question a follow-up needs about" in text
+    assert "questions per event and two draws per question, a follow-up needs" in text
     assert "Influential questions" not in text
     disagree = json.loads(json.dumps(fits))
     disagree["fits_disagree"] = True
