@@ -641,11 +641,12 @@ def _extract_mc_community_probs(question: MetaculusQuestion) -> list[float] | No
 def _prepare_question_for_backtest(question: MetaculusQuestion) -> MetaculusQuestion:
     """Deep copy a resolved question and sanitize it to look like an open question.
 
-    Sets state=OPEN, clears resolution fields and background_info.
+    Sets state=OPEN, clears the resolution fields, and blanks background_info to an empty string: the
+    prompt templates interpolate it, so None would reach every forecaster as the word "None".
     """
     clean = copy.deepcopy(question)
     clean.state = QuestionState.OPEN
     clean.resolution_string = None
     clean.actual_resolution_time = None
-    clean.background_info = None
+    clean.background_info = ""
     return clean
