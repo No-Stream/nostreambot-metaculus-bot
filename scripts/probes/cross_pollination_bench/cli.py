@@ -74,7 +74,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("run modes require --run-dir")
     if args.rescore and (args.dry_run or args.i_accept_spend or args.build_manifest):
         parser.error("--rescore cannot be combined with run modes")
-    incompatible_analysis_mode = any((args.rescore, args.dry_run, args.i_accept_spend, args.build_manifest))
+    incompatible_analysis_mode = any((args.rescore, args.dry_run, args.i_accept_spend, args.build_manifest, args.smoke))
     if args.analyze and incompatible_analysis_mode:
         parser.error("--analyze cannot be combined with other run modes")
     if args.dry_run and args.i_accept_spend:
