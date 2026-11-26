@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from scripts.probes.bench_common import paid_call
+from scripts.probes.bench_common.paid_call import SpendMeter
 from scripts.probes.cross_pollination_bench import cli, estimate, report
 from scripts.probes.cross_pollination_bench.manifest import build_contexts, build_manifest, write_manifest
 from scripts.probes.cross_pollination_bench.models import BENCH_MODELS
@@ -76,6 +79,17 @@ def test_smoke_fails_on_a_repaired_block() -> None:
 def test_default_caps_are_twenty_and_one() -> None:
     assert cli.parse_args(["--run-dir", "run"]).max_spend_usd == 20.0
     assert cli.parse_args(["--run-dir", "run", "--smoke"]).max_spend_usd == 1.0
+
+
+def test_spend_meter_starts_with_prior_process_charges() -> None:
+    meter = SpendMeter(cap_usd=1.0, prior_usd=0.8)
+    meter.add(0.1)
+    assert meter.measured_usd == pytest.approx(0.9)
+    assert meter.stop_reason is None
+    meter.add(0.2)
+    assert meter.measured_usd == pytest.approx(1.1)
+    assert meter.stop_reason is not None
+    assert "cap" in meter.stop_reason
 
 
 @pytest.mark.parametrize(
@@ -148,6 +162,9 @@ def test_end_to_end_with_a_fake_model(tmp_path: Path, monkeypatch: pytest.Monkey
     order: list[str] = []
     _patch_cli(monkeypatch, calls)
     monkeypatch.setattr(cli, "split_key_environment", lambda: order.append("keys") or object())
+    parser_charge = [0.03]
+    monkeypatch.setattr(cli, "parser_ledger_usd", lambda: parser_charge[0])
+    monkeypatch.setattr(paid_call, "parser_ledger_usd", lambda: parser_charge[0])
 
     def build_call(model, keys):
         order.append("client")
@@ -163,7 +180,7 @@ def test_end_to_end_with_a_fake_model(tmp_path: Path, monkeypatch: pytest.Monkey
     assert len(rows) == 144
     assert all(row.status == "scored" for row in rows)
     assert order[0] == "keys"
-    assert json.loads((run_dir / "run.json").read_text())["measured_usd"] == pytest.approx(0.144)
+    assert json.loads((run_dir / "run.json").read_text())["measured_usd"] == pytest.approx(0.174)
     results = json.loads((run_dir / "results.json").read_text())
     assert len(results["contrasts"]) == 6
     assert {"movement", "spread", "member_changes", "corrections", "production_proxy"} <= results.keys()
@@ -176,8 +193,21 @@ def test_end_to_end_with_a_fake_model(tmp_path: Path, monkeypatch: pytest.Monkey
     assert summary.startswith("# Cross-pollination bench")
     assert "specific to three members" in summary
     before = sum(call.counter for call in calls.values())
+    parser_charge[0] = 0.04
+    original_run_questions = cli.run_questions
+    resumed_meter_starts: list[float] = []
+
+    async def capture_resumed_meter(*args: Any, **kwargs: Any) -> Any:
+        resumed_meter_starts.append(kwargs["meter"].measured_usd)
+        return await original_run_questions(*args, **kwargs)
+
+    monkeypatch.setattr(cli, "run_questions", capture_resumed_meter)
     assert cli.main(["--run-dir", str(run_dir), "--i-accept-spend"]) == 0
     assert sum(call.counter for call in calls.values()) == before
+    assert resumed_meter_starts == [pytest.approx(0.214)]
+    resumed_meta = json.loads((run_dir / "run.json").read_text())
+    assert resumed_meta["parser_usd"] == pytest.approx(0.07)
+    assert resumed_meta["measured_usd"] == pytest.approx(0.214)
     original = (run_dir / "results.json").read_bytes()
     assert cli.main(["--run-dir", str(run_dir), "--rescore"]) == 0
     assert (run_dir / "results.json").read_bytes() == original

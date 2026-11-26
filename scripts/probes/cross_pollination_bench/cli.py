@@ -185,9 +185,14 @@ def _run_totals(rows: list[BenchCallRow]) -> tuple[dict[str, float], dict[str, f
     return model_totals, key_totals
 
 
+def _saved_parser_usd(run_dir: Path) -> float:
+    path = run_dir / "run.json"
+    return float(json.loads(path.read_text(encoding="utf-8")).get("parser_usd", 0.0)) if path.exists() else 0.0
+
+
 def _finalize_run(run: RunInputs, old_rows: list[BenchCallRow], rows: list[BenchCallRow], meter: SpendMeter) -> int:
     latest = _latest_rows(old_rows, rows)
-    parser_usd = parser_ledger_usd()
+    parser_usd = _saved_parser_usd(run.run_dir) + parser_ledger_usd()
     dollars_by_model, dollars_by_key = _run_totals(latest)
     run_meta = _run_meta(run.estimate, BENCH_MODELS, run.config, run.args)
     run_meta.update(
@@ -223,7 +228,9 @@ async def run_bench(
     old_rows = load_rows(calls_path) if calls_path.exists() else []
     saved = saved_replies(old_rows)
     print(f"Reusing {len(saved)} saved replies.")
-    meter = SpendMeter(run.args.max_spend_usd)
+    prior_rows_usd = sum(row.cost_usd or 0.0 for row in old_rows)
+    prior_parser_usd = _saved_parser_usd(run.run_dir)
+    meter = SpendMeter(run.args.max_spend_usd, prior_usd=prior_rows_usd + prior_parser_usd)
     with run_logging(run.run_dir):
         rows = await run_questions(
             run.contexts,

@@ -84,9 +84,14 @@ def parser_ledger_usd() -> float:
 
 @dataclass
 class SpendMeter:
-    """Measured spend against the cap, including salvage-parser charges."""
+    """Measure spend against the cap, including prior runs and salvage-parser charges.
+
+    The cap is checked before each call, so calls already in flight can exceed it by up to the
+    number of concurrent calls times their per-call cost.
+    """
 
     cap_usd: float
+    prior_usd: float = 0.0
     forecaster_usd: float = 0.0
     unpriced_calls: int = 0
     refusal: str | None = None
@@ -102,7 +107,7 @@ class SpendMeter:
 
     @property
     def measured_usd(self) -> float:
-        return self.forecaster_usd + parser_ledger_usd()
+        return self.prior_usd + self.forecaster_usd + parser_ledger_usd()
 
     @property
     def stop_reason(self) -> str | None:
