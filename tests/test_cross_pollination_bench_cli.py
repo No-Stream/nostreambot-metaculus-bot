@@ -220,6 +220,17 @@ def test_smoke_passes_with_cached_replies(tmp_path: Path, monkeypatch: pytest.Mo
     assert len(load_rows(run_dir / "smoke" / "calls.jsonl")) == 48
 
 
+def test_smoke_rescore_reads_the_smoke_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    result, run_dir, _ = _run_smoke(tmp_path, monkeypatch)
+    assert result == 0
+    smoke_results = run_dir / "smoke" / "results.json"
+    before = smoke_results.read_bytes()
+    smoke_results.unlink()
+    assert cli.main(["--run-dir", str(run_dir), "--smoke", "--rescore"]) == 0
+    assert smoke_results.read_bytes() == before
+    assert not (run_dir / "results.json").exists()
+
+
 def test_smoke_fails_without_cached_tokens(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
     result, _, _ = _run_smoke(tmp_path, monkeypatch, cached_share=0.0)
     assert result == 1

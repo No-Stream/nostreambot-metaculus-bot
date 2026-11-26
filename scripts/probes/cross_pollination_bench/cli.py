@@ -74,7 +74,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("run modes require --run-dir")
     if args.rescore and (args.dry_run or args.i_accept_spend or args.build_manifest):
         parser.error("--rescore cannot be combined with run modes")
-    incompatible_analysis_mode = any((args.rescore, args.dry_run, args.i_accept_spend, args.build_manifest, args.smoke))
+    incompatible_analysis_mode = any((args.rescore, args.dry_run, args.i_accept_spend, args.build_manifest))
     if args.analyze and incompatible_analysis_mode:
         parser.error("--analyze cannot be combined with other run modes")
     if args.dry_run and args.i_accept_spend:
@@ -246,8 +246,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _manifest_mode(args)
     root = args.run_dir
     manifest_path = root / "manifest.json"
+    saved_run_dir = root / "smoke" if args.smoke else root
     if args.analyze:
-        paired_by_contrast = load_paired_rows(root / "paired_rows.jsonl")
+        paired_by_contrast = load_paired_rows(saved_run_dir / "paired_rows.jsonl")
         result = run_analysis(
             paired_by_contrast,
             draws=args.mcmc_draws,
@@ -256,15 +257,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             seed=args.mcmc_seed,
             allow_diagnostics_warnings=args.allow_diagnostics_warnings,
         )
-        write_analysis_outputs(root, result)
-        print(f"Analyzed paired rows in {root}")
+        write_analysis_outputs(saved_run_dir, result)
+        print(f"Analyzed paired rows in {saved_run_dir}")
         return 0
     if args.rescore:
-        manifest = load_manifest(manifest_path)
-        rows = load_rows(root / "calls.jsonl")
-        run_meta = json.loads((root / "run.json").read_text(encoding="utf-8"))
-        write_outputs(root, rows, manifest, run_meta, event_map=_read_event_map(args.event_map))
-        print(f"Rescored {len(rows)} calls in {root}")
+        manifest = load_manifest(saved_run_dir / "manifest.json")
+        rows = load_rows(saved_run_dir / "calls.jsonl")
+        run_meta = json.loads((saved_run_dir / "run.json").read_text(encoding="utf-8"))
+        write_outputs(saved_run_dir, rows, manifest, run_meta, event_map=_read_event_map(args.event_map))
+        print(f"Rescored {len(rows)} calls in {saved_run_dir}")
         return 0
     manifest = load_manifest(manifest_path)
     contexts = build_contexts(manifest, args.archive_dir or Path(manifest.archive_dir))
