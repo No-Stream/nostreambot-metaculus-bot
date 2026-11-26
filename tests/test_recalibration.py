@@ -84,6 +84,29 @@ class TestFits:
         expected = clamp_and_renormalize_probs((powered / powered.sum()).tolist())
         assert transformed == pytest.approx(expected)
 
+    def test_power_fit_handles_miscalibrated_ordinary_data(self) -> None:
+        alpha = fit_mc_power([[0.95, 0.05]] * 100, [0] * 70 + [1] * 30)
+
+        assert alpha == pytest.approx(math.log(0.7 / 0.3) / math.log(19), abs=1e-6)
+
+    def test_platt_fit_handles_singular_equal_outcome_rates(self) -> None:
+        probabilities = [0.95] * 50 + [0.9] * 50
+        outcomes = [True] * 35 + [False] * 15 + [True] * 35 + [False] * 15
+
+        fitted = fit_binary_platt(probabilities, outcomes)
+
+        assert fitted.predict(0.95) == pytest.approx(0.7, abs=1e-6)
+        assert fitted.predict(0.9) == pytest.approx(0.7, abs=1e-6)
+        assert fitted.slope == pytest.approx(0.0, abs=1e-6)
+
+    def test_platt_fit_rejects_data_without_a_finite_optimum(self) -> None:
+        with pytest.raises(ValueError, match="finite optimum"):
+            fit_binary_platt([0.1] * 10 + [0.9] * 10, [False] * 10 + [True] * 10)
+
+    def test_mc_power_fit_rejects_data_without_a_finite_optimum(self) -> None:
+        with pytest.raises(ValueError, match="finite optimum"):
+            fit_mc_power([[0.8, 0.2]] * 100, [0] * 100)
+
 
 class TestForwardChaining:
     def test_first_era_late_half_trains_only_on_early_half(self) -> None:
@@ -176,7 +199,8 @@ class TestForwardChaining:
         assert result == forward_chaining_recalibration(records, draws=50)
 
     def test_mc_uses_winner_probability_and_no_spot_peer_field(self) -> None:
-        records = [mc_record(index, "pre_flip", "A" if index < 60 else "B") for index in range(100)]
+        outcomes = ["A" if index % 5 < 3 else "B" for index in range(100)]
+        records = [mc_record(index, "pre_flip", winner) for index, winner in enumerate(outcomes)]
         records += [mc_record(200, "post_flip", "B")]
         result = forward_chaining_recalibration(records)
         row = next(row for row in result.rows if row.era == "post_flip")

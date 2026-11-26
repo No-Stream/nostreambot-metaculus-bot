@@ -451,6 +451,11 @@ exactly where the upstream renormalize-after-clamp fires the >0.05 raise. See
 `clamp_and_renormalize_probs` and `clamp_and_renormalize_mc`, which clamp before every
 `PredictedOptionList` construction.
 
+### MC_POWER_FIT_XTOL
+
+The scalar optimizer tolerance for the offline MC power recalibration fit. It is tight enough for the fitted
+parameter to reproduce the likelihood optimum in held-out scoring without reintroducing a hand-rolled Newton loop.
+
 ### PMF_BELOW_RANGE_KEY, PMF_ABOVE_RANGE_KEY
 
 Per-bin block keys, present only where that bound is open. They share `bin_probs` with the labels so
