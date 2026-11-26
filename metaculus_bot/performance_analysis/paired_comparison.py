@@ -17,6 +17,9 @@ Likelihood = Literal["student_t", "normal"]
 EFFECT_PRIOR_SD = 5.0
 OFFSET_SCALE_PRIOR_SD = 5.0
 NOISE_SCALE_PRIOR_SD = 15.0
+# Paired differences carry a point mass at exactly zero (both arms gave the same forecast). Below nu = 1 the Student-t
+# likelihood of those zeros grows without bound as sigma shrinks, and the sampler collapses onto sigma = 0.
+STUDENT_T_NU_FLOOR = 1.0
 FIT_DISAGREEMENT_POINTS = 1.0
 
 
@@ -112,7 +115,7 @@ def build_model(data: PairedData, *, likelihood: Likelihood, effect_prior_sd: fl
             mu = mu + offsets["member"][data.member_index]
         sigma = pm.HalfNormal("sigma", NOISE_SCALE_PRIOR_SD)
         if likelihood == "student_t":
-            nu = pm.Gamma("nu", 2, 0.1)
+            nu = pm.Deterministic("nu", STUDENT_T_NU_FLOOR + pm.Gamma("nu_above_floor", 2, 0.1))
             pm.StudentT("difference", nu=nu, mu=mu, sigma=sigma, observed=data.differences, dims="observation")
         else:
             pm.Normal("difference", mu=mu, sigma=sigma, observed=data.differences, dims="observation")

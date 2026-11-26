@@ -201,3 +201,26 @@ def test_failed_diagnostics_raise_unless_allowed() -> None:
     with pytest.raises(ValueError, match="diagnostics failed"):
         sampling_diagnostics(inference, allow_diagnostics_warnings=False)
     assert sampling_diagnostics(inference, allow_diagnostics_warnings=True)["passed"] is False
+
+
+def test_student_t_degrees_of_freedom_never_fall_below_one() -> None:
+    prior = sample_prior(
+        prepare_paired_data(rows_for([0.0, 1.0, -1.0, 2.0])), likelihood="student_t", draws=2000, seed=3
+    )
+    assert float(prior.prior["nu"].min()) >= 1.0
+
+
+@pytest.mark.slow
+def test_student_t_fit_converges_when_many_differences_are_exactly_zero() -> None:
+    # Paired differences are exactly zero whenever both arms give the same forecast; in the 2026-11-26 cross-pollination
+    # run 36 of 116 were, and an unbounded nu let the Student-t scale collapse onto that point mass.
+    generator = np.random.default_rng(11)
+    values = [0.0 if generator.random() < 0.35 else float(generator.standard_t(1.5) * 6.0) for _ in range(116)]
+    rows = [
+        PairedScoreRow(
+            f"unit-{index // 2}", f"event-{index // 4}", ("binary", "numeric")[index // 2 % 2], index % 2, value
+        )
+        for index, value in enumerate(values)
+    ]
+    result = compare_paired(rows, draws=1000, tune=1000, chains=4, seed=20261125)
+    assert result["student_t"]["diagnostics"]["passed"]
