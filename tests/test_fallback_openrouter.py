@@ -82,6 +82,11 @@ FREE_MODEL_RATE_LIMIT_429 = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _clear_donated_key_switch_between_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DONATED_OPENROUTER_KEY_ENABLED", raising=False)
+
+
 class TestPredicates:
     def test_should_route_via_donated_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # OpenAI / Anthropic always route via the donated key when one is configured.

@@ -753,7 +753,7 @@ class TestPersonalKeyOnly:
         monkeypatch.setattr("scripts.probes.bench_common.paid_call.load_environment", lambda: None)
         monkeypatch.setenv("OAI_ANTH_OPENROUTER_KEY", "sk-donated")
         monkeypatch.setenv("OPENROUTER_API_KEY", "sk-personal")
-        monkeypatch.delenv("DONATED_OPENROUTER_KEY_ENABLED", raising=False)
+        monkeypatch.setenv("DONATED_OPENROUTER_KEY_ENABLED", "true")
 
         assert run.personal_key_only_environment() == "sk-personal"
         assert "OAI_ANTH_OPENROUTER_KEY" not in os.environ

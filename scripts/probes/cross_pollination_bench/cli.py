@@ -15,6 +15,7 @@ from typing import Any
 from metaculus_bot.credit_telemetry import drain_litellm_callbacks, install_role_spend_tracker
 from scripts.probes.bench_common.cli_support import positive_finite_float, positive_int, run_logging
 from scripts.probes.bench_common.paid_call import SpendMeter, build_parser_llm, parser_ledger_usd
+from scripts.probes.cross_pollination_bench.analysis import load_paired_rows, run_analysis
 from scripts.probes.cross_pollination_bench.estimate import RunEstimate, estimate_run, print_plan
 from scripts.probes.cross_pollination_bench.manifest import (
     Manifest,
@@ -26,7 +27,7 @@ from scripts.probes.cross_pollination_bench.manifest import (
     write_manifest,
 )
 from scripts.probes.cross_pollination_bench.models import BENCH_MODELS
-from scripts.probes.cross_pollination_bench.report import write_outputs
+from scripts.probes.cross_pollination_bench.report import write_analysis_outputs, write_outputs
 from scripts.probes.cross_pollination_bench.request import build_bench_model_call, split_key_environment
 from scripts.probes.cross_pollination_bench.rows import BenchCallRow, append_row, load_rows, saved_replies
 from scripts.probes.cross_pollination_bench.schedule import MAIN_RUN, SMOKE_RUN, RunConfig, run_questions
@@ -50,6 +51,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--i-accept-spend", action="store_true")
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--rescore", action="store_true")
+    parser.add_argument("--analyze", action="store_true")
+    parser.add_argument("--mcmc-draws", type=positive_int, default=2000)
+    parser.add_argument("--mcmc-tune", type=positive_int, default=2000)
+    parser.add_argument("--mcmc-chains", type=positive_int, default=4)
+    parser.add_argument("--mcmc-seed", type=int, default=20261125)
+    parser.add_argument("--allow-diagnostics-warnings", action="store_true")
     parser.add_argument("--max-spend-usd", type=positive_finite_float)
     parser.add_argument("--output-tokens", type=positive_int, default=6000)
     parser.add_argument("--answer-tokens", type=positive_int, default=1500)
@@ -67,6 +74,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("run modes require --run-dir")
     if args.rescore and (args.dry_run or args.i_accept_spend or args.build_manifest):
         parser.error("--rescore cannot be combined with run modes")
+    incompatible_analysis_mode = any((args.rescore, args.dry_run, args.i_accept_spend, args.build_manifest, args.smoke))
+    if args.analyze and incompatible_analysis_mode:
+        parser.error("--analyze cannot be combined with other run modes")
     if args.dry_run and args.i_accept_spend:
         parser.error("--dry-run and --i-accept-spend are mutually exclusive")
     if args.questions and args.build_manifest:
@@ -236,6 +246,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _manifest_mode(args)
     root = args.run_dir
     manifest_path = root / "manifest.json"
+    if args.analyze:
+        paired_by_contrast = load_paired_rows(root / "paired_rows.jsonl")
+        result = run_analysis(
+            paired_by_contrast,
+            draws=args.mcmc_draws,
+            tune=args.mcmc_tune,
+            chains=args.mcmc_chains,
+            seed=args.mcmc_seed,
+            allow_diagnostics_warnings=args.allow_diagnostics_warnings,
+        )
+        write_analysis_outputs(root, result)
+        print(f"Analyzed paired rows in {root}")
+        return 0
     if args.rescore:
         manifest = load_manifest(manifest_path)
         rows = load_rows(root / "calls.jsonl")

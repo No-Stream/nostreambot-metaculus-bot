@@ -1696,7 +1696,9 @@ The paid run is the operator's last step.
   independent forecasts with three update variants. `ARGS="--build-manifest --perf-json <path>"` performs Metaculus
   reads only. Inspect the estimate with `ARGS="--run-dir <dir> --dry-run"`; paid calls require a separate
   `--i-accept-spend` and stay under the $20 main-run cap (the four-question smoke run uses a $1 cap). `--rescore`
-  rebuilds the report from saved calls without network access. Haiku uses the shared key and the other models use the
+  rebuilds the report from saved calls without network access. `--analyze` runs the hierarchical model and robustness
+  checks from `paired_rows.jsonl`, writes `analysis.json`, and updates the decision in the report without provider calls.
+  Haiku uses the shared key and the other models use the
   personal key. Salvage-parser calls are not included in the estimate.
 - Any script that invokes a research provider or the ensemble against real
   questions, including one an agent writes on the spot.

@@ -17,6 +17,7 @@ from scripts.probes.cross_pollination_bench.aggregate import (
     member_paired_rows,
     paired_rows,
 )
+from scripts.probes.cross_pollination_bench.analysis import _paired_rows_digest, decide, load_paired_rows
 from scripts.probes.cross_pollination_bench.manifest import Manifest
 from scripts.probes.cross_pollination_bench.models import BENCH_MODELS, BenchModel
 from scripts.probes.cross_pollination_bench.movement import (
@@ -253,9 +254,11 @@ def _per_question_rows(scores: list[Any], manifest: Manifest) -> list[dict[str, 
     for score in scores:
         row = {
             "question_id": score.question_id,
+            "qtype": score.qtype,
             "draw": score.draw,
             "aggregate": score.aggregate,
             "peer_points": score.peer_points,
+            "score": score.score,
             "forecast": score.forecast,
         }
         entry = entry_map[score.question_id]
@@ -388,7 +391,111 @@ def render_markdown(results: dict[str, Any]) -> str:
         json.dumps(results["production_proxy"], sort_keys=True),
         "",
     ]
+    analysis = results.get("analysis")
+    if analysis:
+        lines.extend(_render_analysis(results, analysis))
+    elif results.get("analysis_stale"):
+        lines += [
+            "",
+            "## Paired score analysis",
+            "",
+            'The saved analysis is stale. Run `make cross_pollination_bench ARGS="--run-dir <run-dir> --analyze"` to refresh it.',
+            "",
+        ]
     return "\n".join(lines)
+
+
+def _render_analysis(results: dict[str, Any], analysis: dict[str, Any]) -> list[str]:
+    lines = ["## Paired score analysis", ""]
+    for name, fits in analysis["contrasts"].items():
+        lines.extend(_render_effect_table(name, fits))
+    primary = analysis["contrasts"]["peers_full_vs_second_look"]
+    for label, fit in (
+        ("Complete panels", analysis["primary_complete_panels"]),
+        ("After release", analysis["primary_after_release"]),
+    ):
+        lines += ["", f"### Primary contrast: {label}", "", _fit_cell(fit["student_t"])]
+    lines += ["", "### Type effects", "", "| type | posterior mean | 90% interval |", "|---|---:|---:|"]
+    lines.extend(
+        f"| {qtype} | {summary['mean']:.3f} | {_interval(summary)} |"
+        for qtype, summary in primary["student_t"]["groups"].items()
+    )
+    lines += ["", "### Leave-one-event-out shifts", "", "| event | units | shift |", "|---|---:|---:|"]
+    lines.extend(
+        f"| {row['cluster']} | {row['units']} | {row['shift']:.3f} |" for row in primary["leave_one_cluster_out"][:10]
+    )
+    lines += ["", "### Variance and follow-up size", ""]
+    lines.append(
+        f"Between-event and question variance: {primary['normal']['variance_between']:.3f}; "
+        f"within-question variance: {primary['normal']['variance_within']:.3f}."
+    )
+    size = primary["sample_size"]["required_units"]
+    lines.append(
+        f"at two draws per question a follow-up needs about {size} questions for the 90% interval to be within 2 points either side."
+    )
+    if primary["fits_disagree"]:
+        lines.extend(_render_influential_questions(primary, results.get("per_question", [])))
+    lines += ["", "### Member effects", "", "| member | posterior mean | 90% interval |", "|---|---:|---:|"]
+    lines.extend(
+        f"| {member} | {summary['mean']:.3f} | {_interval(summary)} |"
+        for member, summary in analysis["members"]["student_t"]["members"].items()
+    )
+    decision = results.get("decision")
+    if decision:
+        lines += ["", "## Decision", "", f"Outcome: **{decision['outcome']}**.", "", "Criteria:"]
+        lines.extend(f"- {name}: {value}" for name, value in decision["criteria"].items())
+        lines.append(
+            "A result from three inexpensive models decides only whether to price a production-model confirmation, not whether to ship."
+        )
+    return lines
+
+
+def _render_effect_table(name: str, fits: dict[str, Any]) -> list[str]:
+    model_names = ("Student-t model", "Normal model", "Bayesian bootstrap by event")
+    effects = (fits["student_t"]["effect"], fits["normal"]["effect"], fits["bootstrap"]["effect"])
+    metrics = (
+        ("Mean", lambda effect: f"{effect['mean']:.3f}"),
+        ("90% interval", _interval),
+        ("P(above 0)", lambda effect: f"{effect['p_above_zero']:.3f}"),
+        ("P(gain above 2)", lambda effect: f"{effect['p_gain_above']['2.0']:.3f}"),
+        ("P(loss above 2)", lambda effect: f"{effect['p_loss_above']['2.0']:.3f}"),
+    )
+    lines = [f"### {name}", "", f"| | {' | '.join(model_names)} |", "|---|---:|---:|---:|"]
+    lines.extend(
+        f"| {label} | {' | '.join(format_value(effect) for effect in effects)} |" for label, format_value in metrics
+    )
+    lines.append("")
+    return lines
+
+
+def _render_influential_questions(primary: dict[str, Any], question_rows: list[dict[str, Any]]) -> list[str]:
+    lines = ["", "### Influential questions", ""]
+    for row in primary["influential_units"]:
+        selected = [item for item in question_rows if str(item["question_id"]) == row["unit_id"]]
+        qtype = selected[0]["qtype"] if selected else ""
+        lines.append(f"- {row['unit_id']}: mean paired difference {row['mean']:.3f} points.")
+        if qtype in {"binary", "multiple_choice"}:
+            lines.extend(
+                f"  - {item['aggregate']}: realized probability {item.get('realized_probability')}; "
+                f"score {item.get('score')} peer points {item['peer_points']}."
+                for item in selected
+            )
+    return lines
+
+
+def _interval(summary: dict[str, Any]) -> str:
+    interval = summary.get("interval_90", [None, None])
+    return f"[{interval[0]:.3f}, {interval[1]:.3f}]" if interval[0] is not None else "n/a"
+
+
+def _fit_cell(fit: dict[str, Any]) -> str:
+    effect = fit["effect"]
+    return (
+        f"mean {effect['mean']:.3f}; 90% {_interval(effect)}; "
+        f"P(>0) {effect['p_above_zero']:.3f}; "
+        f"P(gain >2) {effect['p_gain_above']['2.0']:.3f}; "
+        f"P(loss >2) {effect['p_loss_above']['2.0']:.3f}"
+    )
 
 
 def write_outputs(
@@ -406,3 +513,31 @@ def write_outputs(
     (run_dir / "paired_rows.jsonl").write_text(
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in paired_rows), encoding="utf-8"
     )
+    analysis_path = run_dir / "analysis.json"
+    if analysis_path.exists():
+        saved_analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+        grouped_rows = load_paired_rows(run_dir / "paired_rows.jsonl")
+        if saved_analysis.get("paired_rows_sha256") == _paired_rows_digest(grouped_rows):
+            results["analysis"] = saved_analysis
+            results["decision"] = decide(results, saved_analysis)
+        else:
+            results["analysis_stale"] = True
+        (run_dir / "results.json").write_text(
+            json.dumps(results, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        (run_dir / "SUMMARY.md").write_text(render_markdown(results), encoding="utf-8")
+
+
+def write_analysis_outputs(run_dir: Path, analysis: dict[str, Any]) -> None:
+    results_path = run_dir / "results.json"
+    results = json.loads(results_path.read_text(encoding="utf-8"))
+    current_rows = load_paired_rows(run_dir / "paired_rows.jsonl")
+    if analysis["paired_rows_sha256"] != _paired_rows_digest(current_rows):
+        raise ValueError("paired rows changed while analysis was running")
+    analysis_path = run_dir / "analysis.json"
+    analysis_path.write_text(json.dumps(analysis, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    results["analysis"] = analysis
+    results.pop("analysis_stale", None)
+    results["decision"] = decide(results, analysis)
+    results_path.write_text(json.dumps(results, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    (run_dir / "SUMMARY.md").write_text(render_markdown(results), encoding="utf-8")
