@@ -186,7 +186,14 @@ def test_leave_one_cluster_out_names_the_outlier_event() -> None:
 
 
 def test_sample_size_arithmetic() -> None:
-    assert sample_size_statement(16.0, 36.0)["required_units"] == 23
+    result = sample_size_statement(
+        tau_cluster_squared=16.0,
+        tau_unit_squared=4.0,
+        variance_within=36.0,
+        mean_units_per_cluster=2.0,
+    )
+    assert result["required_units"] == 37
+    assert result["mean_units_per_cluster"] == 2.0
 
 
 def test_failed_diagnostics_raise_unless_allowed() -> None:

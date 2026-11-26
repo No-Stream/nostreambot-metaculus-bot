@@ -189,6 +189,8 @@ def summarize_fit(
     result["variance_between"] = float(
         (posterior["tau_cluster"].values ** 2 + posterior["tau_unit"].values ** 2).mean()
     )
+    result["tau_cluster_squared"] = float((posterior["tau_cluster"].values ** 2).mean())
+    result["tau_unit_squared"] = float((posterior["tau_unit"].values ** 2).mean())
     result["variance_within"] = float((posterior["sigma"].values ** 2).mean())
     result["diagnostics"] = diagnostics
     return result
@@ -257,8 +259,10 @@ def influential_units(rows: Sequence[PairedScoreRow], *, top: int = 10) -> list[
 
 
 def sample_size_statement(
-    variance_between: float,
+    tau_cluster_squared: float,
+    tau_unit_squared: float,
     variance_within: float,
+    mean_units_per_cluster: float,
     *,
     replicates_per_unit: int = 2,
     half_width: float = 2.0,
@@ -267,13 +271,19 @@ def sample_size_statement(
     z = NormalDist().inv_cdf((1 + interval) / 2)
 
     def required(replicates: int) -> int:
-        return math.ceil(z**2 * (variance_between + variance_within / replicates) / half_width**2)
+        variance_of_unit_mean = (
+            mean_units_per_cluster * tau_cluster_squared + tau_unit_squared + variance_within / replicates
+        )
+        return math.ceil(z**2 * variance_of_unit_mean / half_width**2)
 
     return {
         "required_units": required(replicates_per_unit),
         "replicates_per_unit": replicates_per_unit,
         "required_units_at_1_replicate": required(1),
         "required_units_at_4_replicates": required(4),
+        "tau_cluster_squared": tau_cluster_squared,
+        "tau_unit_squared": tau_unit_squared,
+        "mean_units_per_cluster": mean_units_per_cluster,
         "half_width": half_width,
         "interval": interval,
     }
@@ -316,5 +326,10 @@ def compare_paired(
         "leave_one_cluster_out": leave_one_cluster_out(rows),
         "fits_disagree": mean_difference > FIT_DISAGREEMENT_POINTS or opposite_probability,
         "influential_units": influential_units(rows),
-        "sample_size": sample_size_statement(normal["variance_between"], normal["variance_within"]),
+        "sample_size": sample_size_statement(
+            normal["tau_cluster_squared"],
+            normal["tau_unit_squared"],
+            normal["variance_within"],
+            len(data.units) / len(data.clusters),
+        ),
     }

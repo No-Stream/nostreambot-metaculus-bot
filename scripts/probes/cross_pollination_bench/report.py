@@ -428,12 +428,15 @@ def _render_analysis(results: dict[str, Any], analysis: dict[str, Any]) -> list[
     )
     lines += ["", "### Variance and follow-up size", ""]
     lines.append(
-        f"Between-event and question variance: {primary['normal']['variance_between']:.3f}; "
+        f"Between-event variance: {primary['normal']['tau_cluster_squared']:.3f}; "
+        f"between-question variance: {primary['normal']['tau_unit_squared']:.3f}; "
         f"within-question variance: {primary['normal']['variance_within']:.3f}."
     )
     size = primary["sample_size"]["required_units"]
+    mean_units_per_cluster = primary["sample_size"]["mean_units_per_cluster"]
     lines.append(
-        f"at two draws per question a follow-up needs about {size} questions for the 90% interval to be within 2 points either side."
+        f"Assuming {mean_units_per_cluster:.2f} questions per event and two draws per question, a follow-up needs "
+        f"about {size} questions for the 90% interval to be within 2 points either side."
     )
     if primary["fits_disagree"]:
         lines.extend(_render_influential_questions(primary, results.get("per_question", [])))
