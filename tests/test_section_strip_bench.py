@@ -762,6 +762,7 @@ class TestPersonalKeyOnly:
     def test_no_personal_key_refuses(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("scripts.probes.bench_common.paid_call.load_environment", lambda: None)
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.setenv("DONATED_OPENROUTER_KEY_ENABLED", "true")
 
         with pytest.raises(ValueError, match="OPENROUTER_API_KEY"):
             run.personal_key_only_environment()

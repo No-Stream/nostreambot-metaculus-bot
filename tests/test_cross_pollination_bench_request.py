@@ -12,7 +12,11 @@ from typing import Any
 import pytest
 
 from metaculus_bot.api_key_utils import should_route_via_donated_key
-from metaculus_bot.constants import OAI_ANTH_OPENROUTER_KEY_ENV, OPENROUTER_API_KEY_ENV
+from metaculus_bot.constants import (
+    DONATED_OPENROUTER_KEY_ENABLED_ENV,
+    OAI_ANTH_OPENROUTER_KEY_ENV,
+    OPENROUTER_API_KEY_ENV,
+)
 from scripts.probes.bench_common import paid_call
 from scripts.probes.cross_pollination_bench import request
 from scripts.probes.cross_pollination_bench.models import BENCH_MODELS, BenchModel
@@ -156,6 +160,7 @@ def test_split_key_environment_scrubs_the_shared_key(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(paid_call, "load_environment", lambda: None)
     monkeypatch.setenv(OAI_ANTH_OPENROUTER_KEY_ENV, "sk-shared")
     monkeypatch.setenv(OPENROUTER_API_KEY_ENV, "sk-personal")
+    monkeypatch.setenv(DONATED_OPENROUTER_KEY_ENABLED_ENV, "true")
     keys = request.split_key_environment()
     assert keys == request.BenchKeys(shared="sk-shared", personal="sk-personal")
     assert OAI_ANTH_OPENROUTER_KEY_ENV not in os.environ
@@ -171,6 +176,7 @@ def test_split_key_environment_requires_both_keys(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(paid_call, "load_environment", lambda: None)
     monkeypatch.setenv(OAI_ANTH_OPENROUTER_KEY_ENV, "sk-shared")
     monkeypatch.setenv(OPENROUTER_API_KEY_ENV, "sk-personal")
+    monkeypatch.setenv(DONATED_OPENROUTER_KEY_ENABLED_ENV, "true")
     monkeypatch.delenv(missing_key)
     with pytest.raises(ValueError, match=missing_key):
         request.split_key_environment()
