@@ -363,7 +363,8 @@ DEP003 = ["urllib3", "httpx", "streamlit", "plotly"]
 #     uv.lock and cannot see the libcurl (8.15.0 in the 0.15.0 wheel) and BoringSSL binaries
 #     VENDORED inside the curl_cffi wheel, and curl upstream is well past that release, so a
 #     libcurl CVE would not be reported by that gate. A curl_cffi bump is how one gets picked up.
-#   arviz and pymc. The type-pooling CLI is an offline analysis tool, not part of live bot runs.
+#   arviz and pymc. The type-pooling and paired-comparison modules are offline analysis tools,
+#     not part of live bot runs.
 DEP004 = ["matplotlib", "arviz", "pymc"]
 
 # Import-direction contracts. Every contract below was derived from the real graph (grimp).

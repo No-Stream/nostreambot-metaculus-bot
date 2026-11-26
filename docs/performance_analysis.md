@@ -791,6 +791,20 @@ count. By default, a missing R-hat, any R-hat above 1.01, or a divergence rate a
 reports are written. `--allow-diagnostics-warnings` allows the Markdown and JSON reports to be written with the
 failed diagnostics recorded; it does not make the fit reliable.
 
+## Paired score comparisons
+
+`metaculus_bot.performance_analysis.paired_comparison` provides reusable Bayesian analysis for paired score
+differences. Each row identifies a unit, its event cluster, a group, a replicate, and the score difference. The
+module fits hierarchical Student-t and normal models with partially pooled group, event, and unit offsets; optional
+member labels add member offsets. It also reports an event-level Bayesian bootstrap, leave-one-event-out shifts,
+influential units, and a sample-size estimate from between-unit and within-unit variance. The module is an offline
+analysis library and is not imported by the live bot's `performance_analysis` package initializer.
+
+Call `prepare_paired_data` to validate and index rows, then use `compare_paired` for the full pair of fits and
+robustness summaries. Use `fit_model` and `summarize_fit` directly when a caller needs one likelihood or a custom
+analysis. The sampler controls, thresholds and diagnostics policy are explicit arguments; failed diagnostics raise
+unless the caller opts to record them as warnings.
+
 ## Building a round's cluster structure
 
 **The clustering rule is code; which questions share a driver is curated data.** Entry point
