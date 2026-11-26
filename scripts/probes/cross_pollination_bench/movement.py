@@ -75,10 +75,9 @@ def first_draw_noise(scores: Sequence[AggregateScore]) -> dict[str, Any]:
     for score in scores:
         if score.aggregate == FIRST_MEDIAN:
             by_question[score.question_id][score.draw] = score
+    paired_draws = [[draws[number] for number in sorted(draws)] for draws in by_question.values() if len(draws) == 2]
     distances = [
-        (draws[0].qtype, forecast_distance(draws[0].qtype, draws[0].forecast, draws[1].forecast))
-        for draws in by_question.values()
-        if 0 in draws and 1 in draws
+        (first.qtype, forecast_distance(first.qtype, first.forecast, second.forecast)) for first, second in paired_draws
     ]
 
     def summarize(items: list[tuple[str, float]]) -> dict[str, Any]:

@@ -71,15 +71,16 @@ def test_first_draw_noise_is_a_reported_scale_and_never_a_threshold() -> None:
     for qid, first_one, variant in ((1, 0.51, 0.52), (2, 0.61, 0.62)):
         scores.extend(
             [
-                AggregateScore(qid, "binary", 0, FIRST_MEDIAN, 0.50, 0.0, 0.0, 3, True, 0),
-                AggregateScore(qid, "binary", 1, FIRST_MEDIAN, first_one, 0.0, 0.0, 3, True, 0),
-                AggregateScore(qid, "binary", 0, "peers_full_median", variant, 0.0, 0.0, 3, True, 0),
+                AggregateScore(qid, "binary", 1, FIRST_MEDIAN, 0.50, 0.0, 0.0, 3, True, 0),
+                AggregateScore(qid, "binary", 2, FIRST_MEDIAN, first_one, 0.0, 0.0, 3, True, 0),
+                AggregateScore(qid, "binary", 1, "peers_full_median", variant, 0.0, 0.0, 3, True, 0),
             ]
         )
     before = median_movement(scores)
-    scores[1] = AggregateScore(1, "binary", 1, FIRST_MEDIAN, 0.80, 0.0, 0.0, 3, True, 0)
-    scores[4] = AggregateScore(2, "binary", 1, FIRST_MEDIAN, 0.90, 0.0, 0.0, 3, True, 0)
+    scores[1] = AggregateScore(1, "binary", 2, FIRST_MEDIAN, 0.80, 0.0, 0.0, 3, True, 0)
+    scores[4] = AggregateScore(2, "binary", 2, FIRST_MEDIAN, 0.90, 0.0, 0.0, 3, True, 0)
     after = median_movement(scores)
+    assert first_draw_noise(scores)["n_questions"] == 2
     assert first_draw_noise(scores)["median"] > 0
     assert before["peers_full"]["typical_change"] == after["peers_full"]["typical_change"]
     assert before["peers_full"]["share_changed"] == after["peers_full"]["share_changed"]
