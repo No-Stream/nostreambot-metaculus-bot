@@ -19,6 +19,15 @@ from scripts.probes.cross_pollination_bench.aggregate import (
 )
 from scripts.probes.cross_pollination_bench.manifest import Manifest
 from scripts.probes.cross_pollination_bench.models import BENCH_MODELS, BenchModel
+from scripts.probes.cross_pollination_bench.movement import (
+    contrast_by_first_spread,
+    correction_counts,
+    likelihood_ratio,
+    median_movement,
+    member_changes,
+    production_proxy,
+    spread_change,
+)
 from scripts.probes.cross_pollination_bench.rows import STAGE_FIRST, UPDATE_VARIANTS, BenchCallRow
 
 SMOKE_CACHE_SHARE_MIN = 0.80
@@ -199,7 +208,7 @@ def _aggregate_summary(scores: list[Any]) -> dict[str, Any]:
 
 
 def _contrast_tables(
-    scores: list[Any], manifest: Manifest, event_map: dict[int, str] | None
+    scores: list[Any], manifest: Manifest, rows: list[BenchCallRow], event_map: dict[int, str] | None
 ) -> tuple[dict[str, Any], dict[str, list[dict[str, Any]]]]:
     contrasts: dict[str, Any] = {}
     paired: dict[str, list[dict[str, Any]]] = {}
@@ -207,6 +216,17 @@ def _contrast_tables(
         all_rows = paired_rows(scores, manifest, treatment=treatment, control=control, event_map=event_map)
         complete_rows = [row for row in all_rows if row["complete_panel"]]
         after = [row for row in all_rows if row["after_release"]]
+        by_type = {
+            qtype: {
+                "n_question_draws": len(selected),
+                "mean_difference": statistics.fmean(row["difference"] for row in selected),
+            }
+            for qtype in sorted({row["group"] for row in all_rows})
+            if (selected := [row for row in all_rows if row["group"] == qtype])
+        }
+        likelihood_differences = [
+            row["difference"] for row in all_rows if row["group"] in {"binary", "multiple_choice"}
+        ]
 
         def mean(items: list[dict[str, Any]]) -> float | None:
             return statistics.fmean(row["difference"] for row in items) if items else None
@@ -216,6 +236,12 @@ def _contrast_tables(
             "mean_difference": mean(all_rows),
             "complete_panel_mean_difference": mean(complete_rows),
             "after_release_mean_difference": mean(after),
+            "likelihood_ratio_binary_and_mc": likelihood_ratio(likelihood_differences),
+            "by_type": by_type,
+            "by_first_spread": {
+                "label": "exploratory",
+                **contrast_by_first_spread(all_rows, rows, manifest),
+            },
         }
         paired[name] = [{**row, "contrast": name} for row in all_rows]
     return contrasts, paired
@@ -285,7 +311,7 @@ def build_results(
     rows: list[BenchCallRow], manifest: Manifest, run_meta: dict[str, Any], *, event_map: dict[int, str] | None = None
 ) -> dict[str, Any]:
     scores = aggregate_scores(rows, manifest)
-    contrasts, paired = _contrast_tables(scores, manifest, event_map)
+    contrasts, paired = _contrast_tables(scores, manifest, rows, event_map)
     member_rows = member_paired_rows(rows, manifest, variant="peers_full", event_map=event_map)
     paired["peers_full_member_own_score"] = [{**row, "contrast": "peers_full_member_own_score"} for row in member_rows]
     result = {
@@ -297,6 +323,11 @@ def build_results(
         "failures": failure_counts(rows, manifest),
         "aggregates": _aggregate_summary(scores),
         "contrasts": contrasts,
+        "movement": median_movement(scores),
+        "spread": spread_change(rows, manifest),
+        "member_changes": member_changes(rows, manifest),
+        "corrections": correction_counts(rows),
+        "production_proxy": production_proxy(scores, manifest),
         "per_question": _per_question_rows(scores, manifest),
         "cache": cache_summary(rows, BENCH_MODELS),
         "spend": _spend_summary(rows),
@@ -333,6 +364,28 @@ def render_markdown(results: dict[str, Any]) -> str:
         "## Spend",
         "",
         json.dumps(results["spend"], sort_keys=True),
+        "",
+        "## Movement",
+        "",
+        "Median-change shares are specific to three members; a four-member median averages the middle two.",
+        "",
+        json.dumps(results["movement"], sort_keys=True),
+        "",
+        "## Spread",
+        "",
+        json.dumps(results["spread"], sort_keys=True),
+        "",
+        "## Member changes",
+        "",
+        json.dumps(results["member_changes"], sort_keys=True),
+        "",
+        "## Corrections",
+        "",
+        json.dumps(results["corrections"], sort_keys=True),
+        "",
+        "## Production proxy",
+        "",
+        json.dumps(results["production_proxy"], sort_keys=True),
         "",
     ]
     return "\n".join(lines)

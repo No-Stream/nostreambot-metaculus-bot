@@ -166,8 +166,15 @@ def test_end_to_end_with_a_fake_model(tmp_path: Path, monkeypatch: pytest.Monkey
     assert json.loads((run_dir / "run.json").read_text())["measured_usd"] == pytest.approx(0.144)
     results = json.loads((run_dir / "results.json").read_text())
     assert len(results["contrasts"]) == 6
+    assert {"movement", "spread", "member_changes", "corrections", "production_proxy"} <= results.keys()
+    assert all(
+        {"likelihood_ratio_binary_and_mc", "by_type", "by_first_spread"} <= values.keys()
+        for values in results["contrasts"].values()
+    )
     assert (run_dir / "paired_rows.jsonl").exists()
-    assert (run_dir / "SUMMARY.md").read_text().startswith("# Cross-pollination bench")
+    summary = (run_dir / "SUMMARY.md").read_text()
+    assert summary.startswith("# Cross-pollination bench")
+    assert "specific to three members" in summary
     before = sum(call.counter for call in calls.values())
     assert cli.main(["--run-dir", str(run_dir), "--i-accept-spend"]) == 0
     assert sum(call.counter for call in calls.values()) == before
