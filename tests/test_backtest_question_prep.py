@@ -163,6 +163,7 @@ def test_prepare_blanks_background_info_to_an_empty_string():
         scheduled_resolution_time=datetime(2026, 11, 1),
     )
     clean = _prepare_question_for_backtest(question)
+    assert isinstance(clean, BinaryQuestion)
     assert clean.background_info == ""
     prompt = binary_prompt(clean, "research")
     background_section = prompt.split("Question background:")[1].split("This question's outcome")[0]
