@@ -73,7 +73,11 @@ def test_records_written_before_the_platform_field_read_as_metaculus(tmp_path: P
     selected_record = json.loads(selected_record_path.read_text())
     del selected_record["platform"]
     selected_record_path.write_text(json.dumps(selected_record))
-    records = select_records(json.loads(fake_round.perf_path.read_text()), fake_round.archive_dir)
+    perf_rows = json.loads(fake_round.perf_path.read_text())
+    for row in perf_rows:
+        if row["question_id"] in (101, 106):
+            del row["platform"]
+    records = select_records(perf_rows, fake_round.archive_dir)
     assert [int(row["question_id"]) for row, _ in records] == [101, 102, 103, 104, 105, 108]
 
 

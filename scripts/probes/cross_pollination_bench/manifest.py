@@ -14,6 +14,7 @@ from forecasting_tools import BinaryQuestion, MetaculusApi, MultipleChoiceQuesti
 from forecasting_tools.data_models.questions import DiscreteQuestion, MetaculusQuestion
 
 from metaculus_bot.backtest.question_prep import _prepare_question_for_backtest
+from metaculus_bot.constants import PLATFORM_METACULUS
 from metaculus_bot.performance_analysis.id_mapping import record_platform
 from metaculus_bot.prompts import forecasting_window_at
 from scripts.probes.bench_common.prompting import prompt_clock, render_prompt
@@ -102,7 +103,7 @@ def select_records(
 ) -> list[tuple[dict[str, Any], dict[str, Any]]]:
     selected: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for row in perf_rows:
-        if row["platform"] != "metaculus" or row["resolution_raw"] is None:
+        if record_platform(row) != PLATFORM_METACULUS or row["resolution_raw"] is None:
             continue
         question_id = int(row["question_id"])
         archive_path = archive_dir / f"{question_id}.json"
@@ -111,7 +112,7 @@ def select_records(
         archive = json.loads(archive_path.read_text(encoding="utf-8"))
         if _timestamp_date(archive["timestamp"]) <= cutoff:
             continue
-        if record_platform(archive) != row["platform"] or int(archive["post_id"]) != int(row["post_id"]):
+        if record_platform(archive) != record_platform(row) or int(archive["post_id"]) != int(row["post_id"]):
             raise ValueError(f"question {question_id}: archive platform or post_id differs from dataset row")
         selected.append((row, archive))
     return sorted(selected, key=lambda pair: int(pair[0]["question_id"]))
