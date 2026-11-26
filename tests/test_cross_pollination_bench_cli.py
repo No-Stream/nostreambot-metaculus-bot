@@ -92,6 +92,26 @@ def test_spend_meter_starts_with_prior_process_charges() -> None:
     assert "cap" in meter.stop_reason
 
 
+def test_resume_rejects_changed_model_configuration_before_key_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, _, run_dir = _fake_manifest(tmp_path)
+    (run_dir / "run.json").write_text(json.dumps({"models": [{"label": "haiku", "slug": "old/model"}]}))
+    monkeypatch.setattr(cli, "split_key_environment", lambda: pytest.fail("keys must not be set up"))
+
+    with pytest.raises(ValueError, match=r"model configuration.*changed"):
+        cli.main(["--run-dir", str(run_dir), "--i-accept-spend"])
+
+
+def test_resume_model_metadata_pins_generation_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _, _, run_dir = _fake_manifest(tmp_path)
+    (run_dir / "run.json").write_text(json.dumps({"models": cli._model_metadata(BENCH_MODELS)}))
+    monkeypatch.setattr(cli, "REASONING", {"effort": "high"})
+
+    with pytest.raises(ValueError, match=r"model configuration.*changed"):
+        cli._validate_resume_models(run_dir, BENCH_MODELS)
+
+
 @pytest.mark.parametrize(
     "arguments",
     [

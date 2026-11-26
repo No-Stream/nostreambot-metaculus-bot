@@ -14,7 +14,14 @@ from typing import Any
 
 from metaculus_bot.credit_telemetry import drain_litellm_callbacks, install_role_spend_tracker
 from scripts.probes.bench_common.cli_support import positive_finite_float, positive_int, run_logging
-from scripts.probes.bench_common.paid_call import SpendMeter, build_parser_llm, parser_ledger_usd
+from scripts.probes.bench_common.paid_call import (
+    CALL_RETRIES,
+    CALL_TIMEOUT_S,
+    MAX_COMPLETION_TOKENS,
+    SpendMeter,
+    build_parser_llm,
+    parser_ledger_usd,
+)
 from scripts.probes.cross_pollination_bench.analysis import load_paired_rows, run_analysis
 from scripts.probes.cross_pollination_bench.estimate import RunEstimate, estimate_run, print_plan
 from scripts.probes.cross_pollination_bench.manifest import (
@@ -26,7 +33,7 @@ from scripts.probes.cross_pollination_bench.manifest import (
     load_manifest,
     write_manifest,
 )
-from scripts.probes.cross_pollination_bench.models import BENCH_MODELS
+from scripts.probes.cross_pollination_bench.models import BENCH_MODELS, REASONING
 from scripts.probes.cross_pollination_bench.report import write_analysis_outputs, write_outputs
 from scripts.probes.cross_pollination_bench.request import build_bench_model_call, split_key_environment
 from scripts.probes.cross_pollination_bench.rows import BenchCallRow, append_row, load_rows, saved_replies
@@ -143,21 +150,45 @@ def _run_meta(
     estimate: RunEstimate, models: tuple[Any, ...], config: RunConfig, args: argparse.Namespace
 ) -> dict[str, Any]:
     return {
-        "models": [
-            {
-                "label": model.label,
-                "slug": model.slug,
-                "provider_pin": model.provider_only,
-                "upstream_provider": model.upstream_provider,
-                "key_route": model.key_route,
-            }
-            for model in models
-        ],
+        "models": _model_metadata(models),
         "config": {"draws": config.draws, "variants": list(config.variants), "peer_order_seed": args.peer_order_seed},
         "estimate": estimate.as_dict(),
         "started_utc": datetime.now(UTC).isoformat(),
         "smoke": args.smoke,
     }
+
+
+def _model_metadata(models: tuple[Any, ...]) -> list[dict[str, Any]]:
+    return [
+        {
+            "label": model.label,
+            "slug": model.slug,
+            "provider_pin": model.provider_only,
+            "upstream_provider": model.upstream_provider,
+            "key_route": model.key_route,
+            "input_usd_per_m": model.input_usd_per_m,
+            "output_usd_per_m": model.output_usd_per_m,
+            "cache_read_usd_per_m": model.cache_read_usd_per_m,
+            "cache_write_usd_per_m": model.cache_write_usd_per_m,
+            "reasoning": REASONING,
+            "max_tokens": MAX_COMPLETION_TOKENS,
+            "timeout_s": CALL_TIMEOUT_S,
+            "retries": CALL_RETRIES,
+        }
+        for model in models
+    ]
+
+
+def _previous_run_meta(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "run.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+def _validate_resume_models(run_dir: Path, models: tuple[Any, ...]) -> dict[str, Any]:
+    previous = _previous_run_meta(run_dir)
+    if (run_dir / "run.json").exists() and previous.get("models") != _model_metadata(models):
+        raise ValueError("cannot resume: model configuration changed since the existing run.json")
+    return previous
 
 
 @dataclass(frozen=True)
@@ -220,6 +251,7 @@ def _finalize_run(run: RunInputs, old_rows: list[BenchCallRow], rows: list[Bench
 async def run_bench(
     run: RunInputs,
 ) -> int:
+    _validate_resume_models(run.run_dir, BENCH_MODELS)
     keys = split_key_environment()
     install_role_spend_tracker()
     calls = {model.label: build_bench_model_call(model, keys) for model in BENCH_MODELS}
