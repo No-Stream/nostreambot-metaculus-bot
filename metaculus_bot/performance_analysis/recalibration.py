@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from bisect import bisect_right
 from collections import Counter
 from dataclasses import dataclass, replace
@@ -10,10 +11,13 @@ from datetime import datetime
 from typing import Literal
 
 import numpy as np
-from scipy.optimize import isotonic_regression, minimize, minimize_scalar
+import statsmodels.api as sm
+from scipy.optimize import isotonic_regression
 from scipy.special import expit, logsumexp
+from statsmodels.discrete.conditional_models import ConditionalLogit
+from statsmodels.tools.sm_exceptions import PerfectSeparationWarning
 
-from metaculus_bot.constants import BINARY_PROB_MAX, BINARY_PROB_MIN, MC_POWER_FIT_XTOL
+from metaculus_bot.constants import BINARY_PROB_MAX, BINARY_PROB_MIN
 from metaculus_bot.mc_processing import clamp_and_renormalize_probs
 from metaculus_bot.performance_analysis.eras import ERAS, NO_TS, POST_FLIP, PRE_FLIP, TRIPLE_ERA, TRIPLE_SUBERAS
 from metaculus_bot.performance_analysis.loss_attribution_intervals import DEFAULT_DRAWS, DEFAULT_SEED, cluster_interval
@@ -62,35 +66,25 @@ def _validate_binary(probabilities: list[float], outcomes: list[bool]) -> None:
 
 
 def fit_binary_platt(probabilities: list[float], outcomes: list[bool]) -> PlattFit:
-    """Fit unpenalized logistic maximum likelihood with an intercept and logit slope."""
+    """Fit unpenalized logistic maximum likelihood with an intercept and logit slope (statsmodels Logit)."""
     _validate_binary(probabilities, outcomes)
     if len(set(outcomes)) < 2:
         raise ValueError("Platt maximum likelihood needs both outcomes")
-    design = np.column_stack([np.ones(len(probabilities)), [logit(probability) for probability in probabilities]])
+    logits = np.array([logit(probability) for probability in probabilities])
     observed = np.array(outcomes, dtype=float)
-
-    def objective(parameters: np.ndarray) -> float:
-        logits = design @ parameters
-        return float(np.sum(np.logaddexp(0.0, logits) - observed * logits))
-
-    def gradient(parameters: np.ndarray) -> np.ndarray:
-        return design.T @ (expit(design @ parameters) - observed)
-
-    features = design[:, 1]
-    positive_features = features[observed == 1]
-    negative_features = features[observed == 0]
-    if np.ptp(features) == 0:
-        rate = float(np.mean(observed))
+    if np.ptp(logits) == 0:
+        # One distinct forecast: the slope is unidentified, so the fit is the observed rate.
+        rate = float(observed.mean())
         return PlattFit(math.log(rate / (1 - rate)), 0.0)
-    overlap_lower = max(float(positive_features.min()), float(negative_features.min()))
-    overlap_upper = min(float(positive_features.max()), float(negative_features.max()))
-    if overlap_lower >= overlap_upper:
-        raise ValueError("Platt maximum likelihood has no finite optimum (separable training data)")
-
-    result = minimize(objective, np.array([0.0, 1.0]), jac=gradient, method="BFGS")
-    if not result.success or not np.isfinite(result.x).all():
-        raise ValueError(f"Platt maximum likelihood did not converge: {result.message}")
-    return PlattFit(float(result.x[0]), float(result.x[1]))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", PerfectSeparationWarning)
+        try:
+            result = sm.Logit(observed, sm.add_constant(logits, has_constant="add")).fit(disp=False)
+        except PerfectSeparationWarning as exc:
+            raise ValueError("Platt maximum likelihood has no finite optimum (separable training data)") from exc
+    if not result.mle_retvals["converged"]:
+        raise ValueError("Platt maximum likelihood did not converge")
+    return PlattFit(float(result.params[0]), float(result.params[1]))
 
 
 def fit_binary_isotonic(probabilities: list[float], outcomes: list[bool]) -> IsotonicFit:
@@ -110,21 +104,6 @@ def _valid_mc(probabilities: list[float]) -> bool:
     )
 
 
-def _mc_power_objective(alpha: float, logged_ballots: list[np.ndarray], winners: list[int]) -> float:
-    return sum(
-        float(logsumexp(alpha * logged) - alpha * logged[winner])
-        for logged, winner in zip(logged_ballots, winners, strict=True)
-    )
-
-
-def _mc_power_derivative(logged_ballots: list[np.ndarray], winners: list[int], alpha: float) -> float:
-    total = 0.0
-    for logged, winner in zip(logged_ballots, winners, strict=True):
-        weights = np.exp(alpha * logged - logsumexp(alpha * logged))
-        total += float(np.dot(weights, logged) - logged[winner])
-    return total
-
-
 def _mc_power_derivative_limits(logged_ballots: list[np.ndarray], winners: list[int]) -> tuple[float, float]:
     lower = sum(float(logged.min() - logged[winner]) for logged, winner in zip(logged_ballots, winners, strict=True))
     upper = sum(float(logged.max() - logged[winner]) for logged, winner in zip(logged_ballots, winners, strict=True))
@@ -141,7 +120,7 @@ def transform_mc_power(probabilities: list[float], alpha: float) -> list[float]:
 
 
 def fit_mc_power(probabilities: list[list[float]], winners: list[int]) -> float:
-    """Fit one unconstrained power by question-level winner log likelihood (convex in the power)."""
+    """Fit one unconstrained power by question-level winner log likelihood: a conditional logit on log p."""
     if not probabilities or len(probabilities) != len(winners):
         raise ValueError("Ballots and winners must have equal nonzero length")
     if any(
@@ -150,29 +129,26 @@ def fit_mc_power(probabilities: list[list[float]], winners: list[int]) -> float:
     ):
         raise ValueError("Invalid MC ballot or winner")
     logged_ballots = [np.log(ballot) for ballot in probabilities]
+    # ConditionalLogit returns a large finite coefficient on separable data instead of failing, so check that a
+    # finite optimum exists first: the score must change sign between alpha -> -inf and alpha -> +inf.
     lower_derivative_limit, upper_derivative_limit = _mc_power_derivative_limits(logged_ballots, winners)
     if lower_derivative_limit == 0 and upper_derivative_limit == 0:
         return 1.0
     if lower_derivative_limit >= 0 or upper_derivative_limit <= 0:
         raise ValueError("MC power maximum likelihood has no finite optimum")
-
-    lower, upper = -1.0, 1.0
-    while _mc_power_derivative(logged_ballots, winners, lower) >= 0:
-        lower *= 2
-    while _mc_power_derivative(logged_ballots, winners, upper) <= 0:
-        upper *= 2
-    if _mc_power_derivative(logged_ballots, winners, 0.0) == 0:
-        return 0.0
-    result = minimize_scalar(
-        _mc_power_objective,
-        args=(logged_ballots, winners),
-        bounds=(lower, upper),
-        method="bounded",
-        options={"xatol": MC_POWER_FIT_XTOL},
+    chosen = np.concatenate(
+        [np.arange(len(ballot)) == winner for ballot, winner in zip(probabilities, winners, strict=True)]
     )
-    if not result.success or not math.isfinite(float(result.x)):
-        raise ValueError(f"MC power maximum likelihood did not converge: {result.message}")
-    return float(result.x)
+    groups = np.concatenate([np.full(len(ballot), index) for index, ballot in enumerate(probabilities)])
+    log_probabilities = np.concatenate(logged_ballots)[:, None]
+    alpha = float(
+        ConditionalLogit(chosen.astype(float), log_probabilities, groups=groups)
+        .fit(method="newton", disp=False)
+        .params[0]
+    )
+    if not math.isfinite(alpha):
+        raise ValueError("MC power maximum likelihood did not converge")
+    return alpha
 
 
 @dataclass(frozen=True, slots=True)

@@ -344,9 +344,6 @@ THIN_PUBLISH_BINARY_CEIL: float = EXTREME_CALL_HIGH
 MC_PROB_MIN: float = 0.01
 MC_PROB_MAX: float = 0.99
 
-# Tight enough to reproduce the MC power likelihood optimum in held-out scoring.
-MC_POWER_FIT_XTOL: float = 1e-12
-
 # Present only where that bound is OPEN; they share ``bin_probs`` with the labels so one object sums to 1.
 PMF_BELOW_RANGE_KEY: str = "below_range"
 PMF_ABOVE_RANGE_KEY: str = "above_range"

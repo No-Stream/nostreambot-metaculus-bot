@@ -21,7 +21,6 @@ from metaculus_bot.constants import (
     MANTIC_BOT_USER_ID,
     MANTIC_HOST,
     MANTIC_SITE_URL,
-    MC_POWER_FIT_XTOL,
     MC_PROB_MAX,
     MC_PROB_MIN,
     MC_STACKING_ENABLED_ENV,
@@ -73,9 +72,6 @@ class TestMCClampBounds:
 
     def test_mc_prob_max_is_0_99(self):
         assert MC_PROB_MAX == 0.99
-
-    def test_mc_power_fit_tolerance_is_tight(self):
-        assert MC_POWER_FIT_XTOL == 1e-12
 
 
 class TestNativeSearchDefaults:
