@@ -8,9 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from scripts.probes.bench_common.records import (
+    STATUS_API_ERROR,
     STATUS_BUILD_FAILED,
     STATUS_EXTRACTION_FAILED,
     STATUS_SCORED,
+    STATUS_SKIPPED_SPEND_CAP,
     STATUS_UNIT_MISMATCH,
 )
 
@@ -20,7 +22,10 @@ VARIANT_PEERS_FORECASTS = "peers_forecasts"
 VARIANT_SECOND_LOOK = "second_look"
 UPDATE_VARIANTS = (VARIANT_PEERS_FULL, VARIANT_PEERS_FORECASTS, VARIANT_SECOND_LOOK)
 STATUS_SKIPPED_NO_PEERS = "skipped_no_peers"
-REPLY_STATUSES = frozenset({STATUS_SCORED, STATUS_EXTRACTION_FAILED, STATUS_BUILD_FAILED, STATUS_UNIT_MISMATCH})
+STATUS_REPLY_RECEIVED = "reply_received"
+REPLY_STATUSES = frozenset(
+    {STATUS_SCORED, STATUS_EXTRACTION_FAILED, STATUS_BUILD_FAILED, STATUS_UNIT_MISMATCH, STATUS_REPLY_RECEIVED}
+)
 
 CallKey = tuple[int, str, int, str]
 
@@ -70,8 +75,21 @@ def append_row(path: Path, row: BenchCallRow) -> None:
 
 def load_rows(path: Path) -> list[BenchCallRow]:
     with path.open(encoding="utf-8") as handle:
-        return [BenchCallRow(**json.loads(line)) for line in handle if line.strip()]
+        rows = [BenchCallRow(**json.loads(line)) for line in handle if line.strip()]
+    return list({call_key(row): row for row in rows}.values())
 
 
 def saved_replies(rows: list[BenchCallRow]) -> dict[CallKey, BenchCallRow]:
-    return {call_key(row): row for row in rows if row.status in REPLY_STATUSES}
+    latest = {call_key(row): row for row in rows}
+    frozen_draws = {(row.question_id, row.draw) for row in latest.values() if row.stage != STAGE_FIRST}
+    return {
+        key: row
+        for key, row in latest.items()
+        if row.status in REPLY_STATUSES
+        or row.stage != STAGE_FIRST
+        or (
+            row.stage == STAGE_FIRST
+            and row.status in {STATUS_API_ERROR, STATUS_SKIPPED_SPEND_CAP}
+            and (row.question_id, row.draw) in frozen_draws
+        )
+    }

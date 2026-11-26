@@ -78,13 +78,13 @@ def update_block(variant: Variant, own_reply: str, peers: Sequence[PeerAnswer]) 
     """Build the shared update prompt, adding peer content only for peer variants."""
     if variant not in ("peers_full", "peers_forecasts", "second_look"):
         raise ValueError(f"Unknown update variant: {variant}")
-    if variant != "second_look" and len(peers) != len(PEER_LABELS):
-        raise ValueError(f"Expected {len(PEER_LABELS)} peer answers, got {len(peers)}")
+    if variant != "second_look" and not 1 <= len(peers) <= len(PEER_LABELS):
+        raise ValueError(f"Expected one or two peer answers, got {len(peers)}")
 
     sections = ["── YOUR FIRST ANSWER ──", own_reply]
     if variant != "second_look":
         peer_lines = ["── OTHER FORECASTERS ──"]
-        for label, peer in zip(PEER_LABELS, peers, strict=True):
+        for label, peer in zip(PEER_LABELS, peers, strict=False):
             peer_lines.extend((label, peer.reply_text if variant == "peers_full" else peer.forecast_text))
         sections.append("\n".join(peer_lines))
     sections.append(UPDATE_INSTRUCTION)

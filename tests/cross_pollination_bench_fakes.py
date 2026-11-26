@@ -2,14 +2,24 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import openai
 from forecasting_tools import BinaryQuestion, MultipleChoiceQuestion, NumericQuestion
 from forecasting_tools.data_models.questions import DiscreteQuestion, MetaculusQuestion
+
+from metaculus_bot.credit_telemetry import TokenCounts
+from metaculus_bot.numeric.config import STANDARD_PERCENTILES
+from scripts.probes.bench_common.paid_call import ModelReply
+from scripts.probes.cross_pollination_bench.models import BenchModel, model_by_label
+from scripts.probes.cross_pollination_bench.prompts import UPDATE_ROUND_MARKER
+from scripts.probes.cross_pollination_bench.request import BenchReply
 
 
 @dataclass
@@ -141,8 +151,103 @@ def write_fake_round(tmp_path: Path) -> FakeRound:
 
 
 def first_reply(qtype: str, tag: str) -> str:
-    return f"{tag} {qtype} first reply"
+    if qtype == "binary":
+        body = {"question_type": "binary", "posterior_prob": 0.4}
+    elif qtype == "multiple_choice":
+        body = {"question_type": "multiple_choice", "option_probs": {"A": 0.4, "B": 0.3, "C": 0.3}}
+    else:
+        body = {
+            "question_type": "numeric",
+            "declared_percentiles": {str(p): 10 + 80 * p for p in STANDARD_PERCENTILES},
+            "outcome_type": "continuous",
+        }
+    return f"{tag}\n```json\n{json.dumps(body)}\n```"
 
 
 def update_reply(qtype: str, tag: str, kind: str = "none") -> str:
-    return f"{tag} {qtype} update reply: {kind}"
+    return f"UPDATE: prior=0.4 revised=0.4 correction={kind}\n{first_reply(qtype, tag)}"
+
+
+class FakeBenchModel:
+    def __init__(
+        self,
+        label: str,
+        *,
+        charged_usd: float | None = 0.001,
+        price_from: BenchModel | None = None,
+        price_multiplier: float = 1.0,
+        cached_share: float = 0.9,
+        upstream_provider: str | None = None,
+        repair_only_block: bool = False,
+        api_error_first_draws: frozenset[int] = frozenset(),
+        unparseable: frozenset[int] = frozenset(),
+        events: list[Any] | None = None,
+    ) -> None:
+        self.label = label
+        self.charged_usd = charged_usd
+        self.price_from = price_from
+        self.price_multiplier = price_multiplier
+        self.cached_share = cached_share
+        self.upstream_provider = upstream_provider or model_by_label(label).upstream_provider
+        self.repair_only_block = repair_only_block
+        self.api_error_first_draws = api_error_first_draws
+        self.unparseable = unparseable
+        self.events = events if events is not None else []
+        self.counter = 0
+        self.first_counts: dict[str, int] = {}
+
+    async def __call__(self, messages: list[dict[str, Any]], session: str) -> BenchReply:
+        self.counter += 1
+        call_number = self.counter
+        blocks = messages[0]["content"]
+        update = len(blocks) > 1 and UPDATE_ROUND_MARKER in blocks[1]["text"]
+        if not update:
+            self.first_counts[session] = self.first_counts.get(session, 0) + 1
+        draw = self.first_counts.get(session, 0)
+        index = len(self.events)
+        start = time.monotonic_ns()
+        self.events.append((self.label, session, messages, start, -1))
+        await asyncio.sleep(0)
+        end = time.monotonic_ns()
+        self.events[index] = (self.label, session, messages, start, end)
+        if not update and draw in self.api_error_first_draws:
+            raise openai.OpenAIError("fake failure")
+        prompt = blocks[0]["text"]
+        qtype = (
+            "multiple_choice"
+            if "Multiple choice" in prompt
+            else "numeric"
+            if "Numeric" in prompt
+            else "discrete"
+            if "Discrete" in prompt
+            else "binary"
+        )
+        tag = f"{self.label}-{call_number}"
+        text = update_reply(qtype, tag) if update else first_reply(qtype, tag)
+        if not update and draw in self.unparseable:
+            text = tag
+        if self.repair_only_block:
+            text = text.replace("}\n```", ",}\n```")
+        tokens = TokenCounts(
+            prompt=1000, completion=300, cached=int(1000 * self.cached_share) if update else 0, reasoning=200
+        )
+        charge = self.charged_usd
+        if self.price_from:
+            charge = (
+                (
+                    (tokens.prompt - tokens.cached) * self.price_from.input_usd_per_m
+                    + tokens.cached * self.price_from.cache_read_usd_per_m
+                    + tokens.completion * self.price_from.output_usd_per_m
+                )
+                / 1_000_000
+                * self.price_multiplier
+            )
+        return BenchReply(
+            ModelReply(text, tokens, charge),
+            {},
+            0,
+            self.upstream_provider,
+            tag,
+            "2026-01-01T00:00:00+00:00",
+            "2026-01-01T00:00:01+00:00",
+        )
