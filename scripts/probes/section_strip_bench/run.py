@@ -12,82 +12,69 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
 from typing import Any
 
 import litellm
 import openai
 from forecasting_tools import GeneralLlm
 
-from metaculus_bot.config import load_environment
-from metaculus_bot.constants import (
-    DONATED_OPENROUTER_KEY_ENABLED_ENV,
-    OAI_ANTH_OPENROUTER_KEY_ENV,
-    OPENROUTER_API_KEY_ENV,
-)
 from metaculus_bot.credit_telemetry import (
     PERSONAL_KEY_ALIAS,
-    TokenCounts,
-    _CallUsage,  # the ledger's own usage reader and its record; one reader in the repo, so the bench shares it
-    _openrouter_call_usage,
     llm_call_metadata,
-    role_spend_rows,
 )
 from metaculus_bot.exceptions import UnitMismatchError, ValueExtractionError
-from metaculus_bot.fallback_openrouter import build_llm_with_openrouter_fallback
-from scripts.probes.section_strip_bench.plan import PlanItem
-from scripts.probes.section_strip_bench.report import (
-    STATUS_API_ERROR,
-    STATUS_BUILD_FAILED,
-    STATUS_EXTRACTION_FAILED,
-    STATUS_SCORED,
-    STATUS_SKIPPED_SPEND_CAP,
-    STATUS_UNIT_MISMATCH,
-    CallRow,
+from scripts.probes.bench_common.paid_call import (
+    ACCOUNT_REFUSAL_STATUSES,
+    CALL_RETRIES,
+    CALL_TIMEOUT_S,
+    ERROR_TEXT_LIMIT,
+    MAX_COMPLETION_TOKENS,
+    ModelReply,
+    SpendMeter,
+    reply_from_response,
 )
-from scripts.probes.section_strip_bench.scoring import score_reply
+from scripts.probes.bench_common.paid_call import (
+    PARSER_ROLE as PARSER_ROLE,
+)
+from scripts.probes.bench_common.paid_call import (
+    build_parser_llm as build_parser_llm,
+)
+from scripts.probes.bench_common.paid_call import (
+    charged_usd as charged_usd,
+)
+from scripts.probes.bench_common.paid_call import (
+    parser_ledger_usd as parser_ledger_usd,
+)
+from scripts.probes.bench_common.paid_call import (
+    personal_key_only_environment as personal_key_only_environment,
+)
+from scripts.probes.bench_common.records import (
+    STATUS_API_ERROR as STATUS_API_ERROR,
+)
+from scripts.probes.bench_common.records import (
+    STATUS_BUILD_FAILED as STATUS_BUILD_FAILED,
+)
+from scripts.probes.bench_common.records import (
+    STATUS_EXTRACTION_FAILED as STATUS_EXTRACTION_FAILED,
+)
+from scripts.probes.bench_common.records import (
+    STATUS_SCORED,
+)
+from scripts.probes.bench_common.records import (
+    STATUS_SKIPPED_SPEND_CAP as STATUS_SKIPPED_SPEND_CAP,
+)
+from scripts.probes.bench_common.records import (
+    STATUS_UNIT_MISMATCH as STATUS_UNIT_MISMATCH,
+)
+from scripts.probes.bench_common.scoring import score_reply
+from scripts.probes.section_strip_bench.plan import PlanItem
+from scripts.probes.section_strip_bench.report import CallRow
 
 logger = logging.getLogger(__name__)
 
-# The forecaster slots' own ceiling and timeout (llm_configs.REASONING_MODEL_CONFIG); retries are litellm's.
-MAX_COMPLETION_TOKENS = 64_000
-CALL_TIMEOUT_S = 480.0
-CALL_RETRIES = 2
 FORECASTER_ROLE = "strip_bench_forecaster"
-PARSER_ROLE = "parser"
-ERROR_TEXT_LIMIT = 500
-# Bad key, no credit, or a model gate on the account (OpenRouter's 18+ attestation answers 403); never a per-call fault.
-ACCOUNT_REFUSAL_STATUSES = frozenset({401, 402, 403})
-
-
-@dataclass(frozen=True)
-class ModelReply:
-    """One completion: its text, its token counts, and what OpenRouter charged for it (None when unreported)."""
-
-    text: str
-    tokens: TokenCounts
-    charged_usd: float | None
-
-
-def charged_usd(usage: _CallUsage) -> float | None:
-    """The money one call cost, by the ledger's rule (``record_llm_call_spend``): the cost, plus the
-    upstream charge only on a BYOK route, where OpenRouter reports the real bill there and ``cost`` as 0."""
-    if usage.cost_usd is None and usage.byok_upstream_usd is None:
-        return None
-    upstream = (usage.byok_upstream_usd or 0.0) if usage.is_byok else 0.0
-    return (usage.cost_usd or 0.0) + upstream
-
-
-def reply_from_response(response: Any) -> ModelReply:
-    usage = _openrouter_call_usage(response)
-    return ModelReply(
-        text=response.choices[0].message.content or "", tokens=usage.tokens, charged_usd=charged_usd(usage)
-    )
-
-
 ModelCall = Callable[[str], Awaitable[ModelReply]]
 
 
@@ -109,79 +96,6 @@ def build_model_call(model: str, api_key: str, *, reasoning_effort: str | None) 
         return reply_from_response(response)
 
     return _call
-
-
-def personal_key_only_environment() -> str:
-    """Load ``.env``, then make the personal key the ONLY OpenRouter key this process can reach.
-
-    The donated key is removed from the environment and the master switch set false before any client
-    exists, so ``build_llm_with_openrouter_fallback`` (which the parser salvage rung builds through) can
-    only ever hand litellm the personal key.
-    """
-    load_environment()
-    os.environ.pop(OAI_ANTH_OPENROUTER_KEY_ENV, None)
-    os.environ[DONATED_OPENROUTER_KEY_ENABLED_ENV] = "false"
-    api_key = os.getenv(OPENROUTER_API_KEY_ENV)
-    if not api_key:
-        raise ValueError(f"{OPENROUTER_API_KEY_ENV} must be set: this bench spends only the personal key")
-    return api_key
-
-
-def build_parser_llm(parser_model: str) -> GeneralLlm:
-    """The ladder's salvage parser: the same cheap tier at low effort, on the personal key."""
-    return build_llm_with_openrouter_fallback(
-        f"openrouter/{parser_model}",
-        role=PARSER_ROLE,
-        temperature=None,
-        max_tokens=32_000,
-        stream=False,
-        timeout=300,
-        allowed_tries=1,
-        reasoning={"effort": "low"},
-    )
-
-
-def parser_ledger_usd() -> float:
-    """What the parser salvage calls have been charged so far, off the litellm success-callback ledger."""
-    return sum(row.charged_usd or 0.0 for row in role_spend_rows() if row.role == PARSER_ROLE)
-
-
-@dataclass
-class SpendMeter:
-    """Measured spend against the cap: forecaster charges as they return, plus the parser ledger.
-
-    ``stop_reason`` is set once the cap is reached or once any reply came back without a charge, since an
-    unmeasured call cannot be held under a cap; the runner skips every later call while it is set.
-    """
-
-    cap_usd: float
-    forecaster_usd: float = 0.0
-    unpriced_calls: int = 0
-    refusal: str | None = None
-
-    def add(self, reply_charged_usd: float | None) -> None:
-        if reply_charged_usd is None:
-            self.unpriced_calls += 1
-        else:
-            self.forecaster_usd += reply_charged_usd
-
-    def refuse(self, error: str) -> None:
-        """A 401/402/403 is the account, not the call: every later call would fail the same way, so stop now."""
-        self.refusal = error
-
-    @property
-    def measured_usd(self) -> float:
-        return self.forecaster_usd + parser_ledger_usd()
-
-    @property
-    def stop_reason(self) -> str | None:
-        if self.refusal is not None:
-            return f"the provider refused the key or the model: {self.refusal}"
-        if self.unpriced_calls:
-            return f"{self.unpriced_calls} reply(ies) carried no charge, so spend cannot be measured against the cap"
-        if self.measured_usd >= self.cap_usd:
-            return f"measured spend ${self.measured_usd:.4f} reached the cap ${self.cap_usd:.2f}"
-        return None
 
 
 def _row_for(item: PlanItem, status: str) -> CallRow:

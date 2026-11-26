@@ -16,10 +16,17 @@ from pathlib import Path
 from typing import Any
 
 from forecasting_tools import BinaryQuestion, MultipleChoiceQuestion, NumericQuestion
-from forecasting_tools.data_models.questions import DiscreteQuestion, MetaculusQuestion, OutOfBoundsResolution
+from forecasting_tools.data_models.questions import DiscreteQuestion, MetaculusQuestion
 
 from metaculus_bot.performance_analysis.research_tags import GFV2_SECTION_TITLE
-from scripts.probes.section_strip_bench.scoring import Resolution, score_published
+from scripts.probes.bench_common.records import (
+    read_jsonl,
+    typed_resolution,
+)
+from scripts.probes.bench_common.records import (
+    resolution_label as _resolution_label,
+)
+from scripts.probes.bench_common.scoring import Resolution, score_published
 
 # The two appended sections as research/gap_fill_stages.run_gap_fill_passes writes them; v2 heads its own (agentic/artifact.render_findings).
 V1_SECTION_HEADER = "## Targeted Gap-Fill (second pass)"
@@ -124,10 +131,6 @@ class BenchQuestion:
         }
 
 
-def _resolution_label(resolution: Resolution) -> str:
-    return resolution.value if isinstance(resolution, OutOfBoundsResolution) else str(resolution)
-
-
 def _unit_from_header(question_header: str) -> str | None:
     """The unit the driver brief rendered (``Units: Cases``); its unitless placeholder reads back as None."""
     match = _UNITS_LINE.search(question_header)
@@ -184,29 +187,6 @@ def build_question(pair: dict[str, Any], perf: dict[str, Any]) -> MetaculusQuest
     }
     cls = DiscreteQuestion if qtype == "discrete" else NumericQuestion
     return cls(**continuous, **common)
-
-
-def typed_resolution(pair: dict[str, Any], question: MetaculusQuestion) -> Resolution:
-    """The tagged dataset's parsed resolution as the scorer needs it; a NO is ``False``, never a missing value."""
-    parsed = pair["resolution_parsed"]
-    if isinstance(question, BinaryQuestion):
-        if not isinstance(parsed, bool):
-            raise ValueError(f"binary question {pair['question_id']} resolution is {parsed!r}, not a bool")
-        return parsed
-    if isinstance(question, MultipleChoiceQuestion):
-        if parsed not in question.options:
-            raise ValueError(f"question {pair['question_id']} resolved {parsed!r}, not one of {question.options}")
-        return str(parsed)
-    if isinstance(parsed, bool) or not isinstance(parsed, (int, float, str)):
-        raise ValueError(f"numeric question {pair['question_id']} resolution is {parsed!r}")
-    if isinstance(parsed, str):
-        return OutOfBoundsResolution(parsed)
-    return float(parsed)
-
-
-def read_jsonl(path: Path) -> list[dict[str, Any]]:
-    with path.open(encoding="utf-8") as handle:
-        return [json.loads(line) for line in handle if line.strip()]
 
 
 def load_bench_questions(

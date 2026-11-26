@@ -89,6 +89,8 @@ class Scored:
     forecast: Any
     rung: str
     block_present: bool
+    cdf: list[float] | None = None
+    stated_percentiles: list[list[float]] | None = None
 
 
 async def _score_binary_reply(
@@ -148,7 +150,15 @@ async def _score_numeric_reply(
     )
     cdf = [float(point.percentile) for point in prediction.get_cdf()]
     declared = [[float(p.percentile), float(p.value)] for p in prediction.declared_percentiles]
-    return Scored(score_numeric(cdf, question, resolution), declared, extracted.rung, extracted.block_present)
+    stated_percentiles = [[float(point.percentile), float(point.value)] for point in extracted.value]
+    return Scored(
+        score_numeric(cdf, question, resolution),
+        declared,
+        extracted.rung,
+        extracted.block_present,
+        cdf,
+        stated_percentiles,
+    )
 
 
 async def score_reply(

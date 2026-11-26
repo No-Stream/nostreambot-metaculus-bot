@@ -14,16 +14,27 @@ from typing import Any
 
 from metaculus_bot.ablation.scoring import bootstrap_mean_ci, sign_test
 from metaculus_bot.scoring_common import baseline_to_peer_factor
+from scripts.probes.bench_common.records import (
+    STATUS_API_ERROR as STATUS_API_ERROR,
+)
+from scripts.probes.bench_common.records import (
+    STATUS_BUILD_FAILED as STATUS_BUILD_FAILED,
+)
+from scripts.probes.bench_common.records import (
+    STATUS_EXTRACTION_FAILED as STATUS_EXTRACTION_FAILED,
+)
+from scripts.probes.bench_common.records import (
+    STATUS_SCORED,
+)
+from scripts.probes.bench_common.records import (
+    STATUS_SKIPPED_SPEND_CAP as STATUS_SKIPPED_SPEND_CAP,
+)
+from scripts.probes.bench_common.records import (
+    STATUS_UNIT_MISMATCH as STATUS_UNIT_MISMATCH,
+)
 from scripts.probes.section_strip_bench.bundle import FULL_ARM
 
 BOOTSTRAP_DRAWS = 5000
-
-STATUS_SCORED = "scored"
-STATUS_EXTRACTION_FAILED = "extraction_failed"
-STATUS_BUILD_FAILED = "build_failed"
-STATUS_UNIT_MISMATCH = "unit_mismatch"
-STATUS_API_ERROR = "api_error"
-STATUS_SKIPPED_SPEND_CAP = "skipped_spend_cap"
 
 PEER_SCALE = "all_peer_points"
 PUBLISHED_COLUMN = "published"

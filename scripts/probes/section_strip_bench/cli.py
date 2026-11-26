@@ -5,18 +5,22 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import logging
-import math
 from collections import Counter
-from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
+from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from metaculus_bot.credit_telemetry import drain_litellm_callbacks, install_role_spend_tracker
-from scripts.probes.section_strip_bench.bundle import ARMS, FULL_ARM, load_bench_questions, read_jsonl
+from scripts.probes.bench_common.cli_support import (
+    non_negative_int,
+    positive_finite_float,
+    positive_int,
+    run_logging,
+)
+from scripts.probes.bench_common.records import read_jsonl
+from scripts.probes.section_strip_bench.bundle import ARMS, FULL_ARM, load_bench_questions
 from scripts.probes.section_strip_bench.plan import Estimate, PlanItem, build_plan, estimate_spend, print_plan
 from scripts.probes.section_strip_bench.report import CallRow, aggregate, render_markdown
 from scripts.probes.section_strip_bench.run import (
@@ -42,26 +46,9 @@ DEFAULT_OUTPUT_TOKENS = 800
 DEFAULT_CONCURRENCY = 6
 
 
-def _positive_int(text: str) -> int:
-    value = int(text)
-    if value < 1:
-        raise argparse.ArgumentTypeError(f"must be at least 1, got {text}")
-    return value
-
-
-def _non_negative_int(text: str) -> int:
-    value = int(text)
-    if value < 0:
-        raise argparse.ArgumentTypeError(f"must be at least 0, got {text}")
-    return value
-
-
-def _positive_finite_float(text: str) -> float:
-    """A cap that a NaN or a non-positive value would silently disable, so both are refused at parse time."""
-    value = float(text)
-    if not math.isfinite(value) or value <= 0:
-        raise argparse.ArgumentTypeError(f"must be a positive finite number, got {text}")
-    return value
+_positive_int = positive_int
+_non_negative_int = non_negative_int
+_positive_finite_float = positive_finite_float
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -118,29 +105,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return args
 
 
-@contextmanager
-def _run_logging(run_dir: Path) -> Iterator[None]:
-    """Pipeline INFO lines (extraction rungs, CDF repairs) go to the run's log; the console keeps warnings.
-
-    Handlers are attached explicitly rather than through ``basicConfig``, which is a silent no-op once any
-    handler exists on the root logger, and detached on exit so nothing outlives the run.
-    """
-    root = logging.getLogger()
-    file_handler = logging.FileHandler(run_dir / "bench.log", encoding="utf-8")
-    file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
-    console = logging.StreamHandler()
-    console.setLevel(logging.WARNING)
-    previous_level = root.level
-    root.setLevel(logging.INFO)
-    root.addHandler(file_handler)
-    root.addHandler(console)
-    try:
-        yield
-    finally:
-        root.removeHandler(file_handler)
-        root.removeHandler(console)
-        file_handler.close()
-        root.setLevel(previous_level)
+_run_logging = run_logging
 
 
 def write_results(run_dir: Path, rows: Sequence[CallRow], run_meta: dict[str, Any]) -> None:
