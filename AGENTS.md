@@ -27,6 +27,7 @@ run, surface the exact command and rough cost, then stop.
 | `make probe_resolver QUESTION=<id>` | resolver grid, personal key; refuses without `ARGS="--i-accept-spend"` |
 | `make probe_forecaster_timing ARGS="--qid <id> --model <name> --i-accept-spend"` | one forecaster call; roughly $0.10 Argon or $0.50 Fable |
 | `make strip_bench` | ~$1.25; `ARGS="--dry-run"` is the free view |
+| `make cross_pollination_bench` | smoke ~$0.30 under a $1 cap, main run ~$8 under a $20 cap; Haiku on the shared key, the rest personal; `ARGS="--run-dir <dir> --dry-run"`, `--rescore` and `--analyze` are free, `--build-manifest` makes Metaculus reads only |
 | `uv run python scripts/probes/gemini_verify.py --i-accept-spend` | three live google-genai calls, personal AI Studio key; refuses without the flag |
 | Any bot workflow run or dispatch (`run_bot_on_*.yaml`, `test_bot*.yaml`); any edit to a `schedule:` block or to a research or model flag that adds runs or raises per-run cost | spends and publishes exactly as a local run |
 | `make cronjob_dispatch_setup ARGS="--apply"` | every firing it adds is a paid, publishing bot run |
@@ -95,11 +96,12 @@ Per question, in `forecaster.py:_research_and_make_predictions`. Stage by stage:
 
 ## Open work, parked ideas and rejected decisions: Backlog.md
 
-This repo tracks open levers, parked ideas and rejected decisions in Backlog.md (`.backlog/`, local and gitignored like
-`scratch*/`), not in a plain markdown doc; the old root design-log file is retired. Before proposing work, read
-`backlog task list --plain` and `backlog decision list --plain` (`backlog task <id> --plain` and
-`backlog search <query> --plain` show the detail). Check the decisions before re-proposing anything: a rejected idea
-returns only with new evidence, and its decision says what that evidence is. Record a new lever or parked idea as a task
+This repo tracks open levers, parked ideas and rejected decisions in Backlog.md (`.backlog/`, tracked in git, unlike
+`scratch*/`: commit task and decision changes by path with the work they belong to), not in a plain markdown doc;
+the old root design-log file is retired. Before proposing work, read `backlog task list --plain` and
+`backlog decision list --plain` (`backlog task <id> --plain` and `backlog search <query> --plain` show the detail).
+Check the decisions before re-proposing anything: a rejected idea returns only with new evidence, and its decision
+says what that evidence is. Record a new lever or parked idea as a task
 (`backlog task create`) and a new rejection as a decision (`backlog decision create "<title>" -s rejected`), with the
 receipt path, date and numbers in the body. Cite items from code and docs as `backlog task-17 "<title>"` or
 `backlog decision-3 "<title>"`. The doc "How to use this backlog" (`backlog doc list`) has the label scheme.

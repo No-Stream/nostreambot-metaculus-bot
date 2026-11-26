@@ -750,18 +750,19 @@ class TestSpendGates:
 
 class TestPersonalKeyOnly:
     def test_the_donated_key_is_unreachable_on_the_paid_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(run, "load_environment", lambda: None)
+        monkeypatch.setattr("scripts.probes.bench_common.paid_call.load_environment", lambda: None)
         monkeypatch.setenv("OAI_ANTH_OPENROUTER_KEY", "sk-donated")
         monkeypatch.setenv("OPENROUTER_API_KEY", "sk-personal")
-        monkeypatch.delenv("DONATED_OPENROUTER_KEY_ENABLED", raising=False)
+        monkeypatch.setenv("DONATED_OPENROUTER_KEY_ENABLED", "true")
 
         assert run.personal_key_only_environment() == "sk-personal"
         assert "OAI_ANTH_OPENROUTER_KEY" not in os.environ
         assert os.environ["DONATED_OPENROUTER_KEY_ENABLED"] == "false"
 
     def test_no_personal_key_refuses(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(run, "load_environment", lambda: None)
+        monkeypatch.setattr("scripts.probes.bench_common.paid_call.load_environment", lambda: None)
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.setenv("DONATED_OPENROUTER_KEY_ENABLED", "true")
 
         with pytest.raises(ValueError, match="OPENROUTER_API_KEY"):
             run.personal_key_only_environment()

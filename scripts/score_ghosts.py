@@ -28,157 +28,31 @@ import argparse
 import json
 import logging
 import math
-import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import mean, median
 
 from metaculus_bot.api_preflight import verify_metaculus_api_identity
-from metaculus_bot.numeric.config import grid_step_constraints
 from metaculus_bot.performance_analysis.collector import (
     build_performance_dataset,
     load_dataset,
     resolve_numeric_record_to_score_inputs,
 )
+from metaculus_bot.performance_analysis.ghosts import (
+    ambiguous_post_ids,
+    clamp_ghost_to_published_bounds,
+    ghost_cdf_on_published_grid,
+    ghost_numeric_percentiles,
+    latest_ghost_per_qid,
+    normalize_json_ghost,
+    records_by_post_id,
+    select_ghost_per_qid,
+)
 from metaculus_bot.scoring_common import binary_log_score, mc_log_score, numeric_log_score
 from scripts.telemetry.archive import load_marker_records
 
 logger = logging.getLogger(__name__)
-
-_FLOAT = r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?"
-_BINARY_RE = re.compile(rf"posterior_prob=(?P<p>{_FLOAT})")
-_MEDIAN_RE = re.compile(rf"median=(?P<m>{_FLOAT})")
-_MC_PAIR_RE = re.compile(rf"(?P<name>[^=,]+)=(?P<prob>{_FLOAT})")
-
-
-def parse_ghost_summary(qtype: str, summary: str) -> float | dict[str, float] | None:
-    """Parse a legacy ``GHOST_FORECAST`` ``summary=`` payload into a scoreable value.
-
-    * binary          -> ``float`` posterior probability
-    * multiple_choice -> ``{option_name: prob}``
-    * numeric         -> ``{"median": float}`` (median only; not enough to log-score)
-    * anything else / empty -> ``None``
-    """
-    summary = (summary or "").strip()
-    if not summary:
-        return None
-    if qtype == "binary":
-        match = _BINARY_RE.search(summary)
-        return float(match.group("p")) if match else None
-    if qtype == "multiple_choice":
-        probs = {name.strip(): float(prob) for name, prob in _MC_PAIR_RE.findall(summary)}
-        return probs or None
-    if qtype == "numeric":
-        match = _MEDIAN_RE.search(summary)
-        return {"median": float(match.group("m"))} if match else None
-    return None
-
-
-def _latest_ghost_per_qid(ghosts: list[dict]) -> dict[int, dict]:
-    """Keep the newest ghost per question id (by run_date, then line_ts, then seq)."""
-    latest: dict[int, dict] = {}
-    for ghost in ghosts:
-        qid = ghost.get("qid")
-        if qid is None:
-            continue
-        key = (str(ghost.get("run_date", "")), str(ghost.get("line_ts") or ""), ghost.get("seq", 0))
-        current = latest.get(qid)
-        if current is None or key > (
-            str(current.get("run_date", "")),
-            str(current.get("line_ts") or ""),
-            current.get("seq", 0),
-        ):
-            latest[qid] = ghost
-    return latest
-
-
-def _normalize_json_ghost(record: dict) -> dict | None:
-    """Turn a harvested ``ghost_forecast_json`` record into a normalized ghost, or None.
-
-    The ``forecast_json`` field is a raw JSON string (never coerced by the marker
-    parser). None if it is missing / malformed so the caller can fall back to any
-    legacy ghost for the same qid.
-    """
-    raw = record.get("forecast_json")
-    if not isinstance(raw, str):
-        return None
-    try:
-        payload = json.loads(raw)
-    except (json.JSONDecodeError, ValueError, TypeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    return {
-        "qid": record.get("qid"),
-        "qtype": payload.get("qtype"),
-        "source": "json",
-        "payload": payload,
-        # Run identity: a paired read needs both halves from the SAME run (a qid can be forecast in several runs).
-        "run_id": record.get("run_id"),
-    }
-
-
-def _select_ghost_per_qid(json_ghosts: list[dict], legacy_ghosts: list[dict]) -> dict[int, dict]:
-    """Pick one normalized ghost to score per qid: JSON-source preferred, legacy fallback.
-
-    JSON ghosts carry the full forecast (deterministically parsable); legacy ghosts
-    carry only the lossy summary string. Within each source we keep the latest per
-    qid; a (well-formed) JSON ghost always wins over a legacy one for the same qid.
-    """
-    selected: dict[int, dict] = {}
-    for qid, record in _latest_ghost_per_qid(legacy_ghosts).items():
-        selected[qid] = {
-            "qid": qid,
-            "qtype": record.get("qtype"),
-            "source": "legacy",
-            "summary": record.get("summary", ""),
-        }
-    for qid, record in _latest_ghost_per_qid(json_ghosts).items():
-        normalized = _normalize_json_ghost(record)
-        if normalized is not None:
-            selected[qid] = normalized
-    return selected
-
-
-def _binary_prob(ghost: dict) -> float | None:
-    """Ghost's posterior probability, from either source."""
-    if ghost["source"] == "json":
-        prob = ghost["payload"].get("prob")
-        return float(prob) if isinstance(prob, (int, float)) and not isinstance(prob, bool) else None
-    parsed = parse_ghost_summary("binary", ghost.get("summary", ""))
-    return parsed if isinstance(parsed, float) else None
-
-
-def _mc_probs(ghost: dict) -> dict[str, float] | None:
-    """Ghost's option->prob dict, from either source."""
-    if ghost["source"] == "json":
-        option_probs = ghost["payload"].get("option_probs")
-        if not isinstance(option_probs, dict) or not option_probs:
-            return None
-        try:
-            return {str(name): float(prob) for name, prob in option_probs.items()}
-        except (TypeError, ValueError):
-            return None
-    parsed = parse_ghost_summary("multiple_choice", ghost.get("summary", ""))
-    return parsed if isinstance(parsed, dict) else None
-
-
-def _numeric_percentiles(ghost: dict) -> dict[float, float] | None:
-    """Ghost's full percentile->value map (fraction keys in [0, 1]), or None.
-
-    Only JSON-source ghosts carry the full percentile set; the legacy marker exposes
-    a median only and so can't be turned into a CDF.
-    """
-    if ghost["source"] != "json":
-        return None
-    declared = ghost["payload"].get("declared_percentiles")
-    if not isinstance(declared, dict) or len(declared) < 2:
-        return None
-    try:
-        return {float(pct): float(value) for pct, value in declared.items()}
-    except (TypeError, ValueError):
-        return None
 
 
 def _score_binary(ghost: dict, record: dict) -> dict | None:
@@ -186,9 +60,9 @@ def _score_binary(ghost: dict, record: dict) -> dict | None:
     resolution = record.get("resolution_parsed")
     if not isinstance(resolution, bool):
         return None
-    ghost_p = _binary_prob(ghost)
+    ghost_p = clamp_ghost_to_published_bounds(ghost, record)
     published_p = record.get("our_prob_yes")
-    if ghost_p is None or published_p is None:
+    if not isinstance(ghost_p, float) or published_p is None:
         return None
     ghost_ls = binary_log_score(ghost_p, resolution)
     published_ls = binary_log_score(float(published_p), resolution)
@@ -208,7 +82,7 @@ def _score_mc(ghost: dict, record: dict) -> dict | None:
     resolution = record.get("resolution_parsed")
     options = record.get("options") or []
     published_values = record.get("our_forecast_values")
-    ghost_probs = _mc_probs(ghost)
+    ghost_probs = clamp_ghost_to_published_bounds(ghost, record)
     if not isinstance(resolution, str) or resolution not in options:
         return None
     if not isinstance(ghost_probs, dict) or not all(opt in ghost_probs for opt in options):
@@ -229,43 +103,19 @@ def _score_mc(ghost: dict, record: dict) -> dict | None:
 
 
 def _paired_numeric_scores(
-    percentiles: dict[float, float],
+    ghost_cdf: list[float],
     published_cdf: list[float],
     score_inputs: tuple[float, float, float, float | None],
     *,
     open_lower: bool,
     open_upper: bool,
 ) -> dict:
-    """Rebuild the ghost CDF on the published grid, then log-score both sides.
+    """Log-score the ghost and published CDFs against shared numeric inputs.
 
     Returns the scored fields WITHOUT ``qid`` (the caller stamps it), or a
     ``scoreable: False`` stub naming which of the two steps failed.
     """
-    # Function-scoped so the test's patch of pchip_cdf.generate_pchip_cdf at its source is seen by the ghost build only.
-    from metaculus_bot.numeric.pchip_cdf import (  # noqa: PLC0415  # HARNESS-SCAN-EXEMPT-function-level-import  # late import: tests patch numeric.pchip_cdf.generate_pchip_cdf at source
-        generate_pchip_cdf,
-    )
-
     res_float, lower, upper, zero_point = score_inputs
-
-    # Percent keys for the builder; the published grid length and step bounds scaled to it keep the pair on one grid.
-    pct_values = {frac * 100.0: value for frac, value in percentiles.items()}
-    num_points = len(published_cdf)
-    min_step, max_step = grid_step_constraints(num_points)
-    try:
-        ghost_cdf, _ = generate_pchip_cdf(
-            pct_values,
-            open_upper_bound=open_upper,
-            open_lower_bound=open_lower,
-            upper_bound=upper,
-            lower_bound=lower,
-            zero_point=zero_point,
-            min_step=min_step,
-            max_step=max_step,
-            num_points=num_points,
-        )
-    except (ValueError, RuntimeError):
-        return {"scoreable": False, "reason": "cdf_build_failed"}
 
     try:
         ghost_ls = numeric_log_score(
@@ -311,7 +161,7 @@ def _score_numeric(ghost: dict, record: dict) -> dict:
     on that minority (docs/agentic_gap_fill.md "Scoring the ghosts").
     """
     qid = ghost["qid"]
-    percentiles = _numeric_percentiles(ghost)
+    percentiles = ghost_numeric_percentiles(ghost)
     if percentiles is None:
         reason = "legacy_median_only" if ghost["source"] == "legacy" else "no_declared_percentiles"
         return {"qid": qid, "scoreable": False, "reason": reason}
@@ -324,8 +174,12 @@ def _score_numeric(ghost: dict, record: dict) -> dict:
     if score_inputs is None:
         return {"qid": qid, "scoreable": False, "reason": "no_score_inputs"}
 
+    ghost_cdf = ghost_cdf_on_published_grid(percentiles, record)
+    if ghost_cdf is None:
+        return {"qid": qid, "scoreable": False, "reason": "cdf_build_failed"}
+
     outcome = _paired_numeric_scores(
-        percentiles,
+        ghost_cdf,
         list(published_cdf),
         score_inputs,
         open_lower=bool(record.get("open_lower_bound", False)),
@@ -376,8 +230,8 @@ def _json_ghosts_by_qid(records: list[dict] | None) -> dict[int, dict]:
     the same log_prefix ref, so the same map serves every pairing.
     """
     by_qid: dict[int, dict] = {}
-    for qid, record in _latest_ghost_per_qid(records or []).items():
-        normalized = _normalize_json_ghost(record)
+    for qid, record in latest_ghost_per_qid(records or []).items():
+        normalized = normalize_json_ghost(record)
         if normalized is not None:
             by_qid[qid] = normalized
     return by_qid
@@ -589,15 +443,16 @@ def join_and_score(
     sub-question id, so keying on it would make every join silently miss. Group posts collapse
     their sub-questions to one record per post on both sides, a limitation of the post-level ref.
     """
-    records_by_post_id = {r.get("post_id"): r for r in records}
-    selected = _select_ghost_per_qid(json_ghosts, legacy_ghosts)
+    ambiguous_ids = ambiguous_post_ids(records)
+    post_id_records = records_by_post_id(records)
+    selected = select_ghost_per_qid(json_ghosts, legacy_ghosts)
     pre_by_qid = _json_ghosts_by_qid(pre_ghosts)
     post_by_qid = _json_ghosts_by_qid(json_ghosts)
     tally = _GhostScoreTally(pre_by_qid=pre_by_qid)
 
     n_joined = 0
     for qid, ghost in selected.items():
-        record = records_by_post_id.get(qid)
+        record = post_id_records.get(qid)
         if record is None:
             continue
         n_joined += 1
@@ -605,11 +460,12 @@ def join_and_score(
 
     return {
         # delta = post minus pre: what v2's own research did to the driver, the instrument for v2.
-        "pre_post": paired_same_run_read(pre_by_qid, post_by_qid, records_by_post_id),
+        "pre_post": paired_same_run_read(pre_by_qid, post_by_qid, post_id_records),
         # delta = with-v1 minus plain: v1's marginal value on the same driver, the mirror read for v1.
-        "v1_pairs": paired_same_run_read(post_by_qid, _json_ghosts_by_qid(v1_ghosts), records_by_post_id),
+        "v1_pairs": paired_same_run_read(post_by_qid, _json_ghosts_by_qid(v1_ghosts), post_id_records),
         "n_ghosts": len(selected),
         "n_joined": n_joined,
+        "n_ambiguous_posts": len(ambiguous_ids),
         "n_scored": tally.n_scored,
         "source_counts": _count_sources(selected),
         "qtype_counts": _count_qtypes(selected),
@@ -645,6 +501,7 @@ def _inventory_lines(summary: dict) -> list[str]:
     if qtype_counts:
         lines.append("  by type: " + _counts_inline(qtype_counts))
     lines.append(f"Joined to resolved-question dataset: {summary['n_joined']}")
+    lines.append(f"Ambiguous group posts excluded from post-id joins: {summary['n_ambiguous_posts']}")
     if summary["joined_without_scorer"]:
         lines.append("  joined but no scorer for the type: " + _counts_inline(summary["joined_without_scorer"]))
     if qtype_counts.get("date"):

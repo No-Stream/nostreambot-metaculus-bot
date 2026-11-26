@@ -14,13 +14,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from typing import Any
 
-import litellm
-from forecasting_tools import BinaryQuestion, MultipleChoiceQuestion, NumericQuestion
-from forecasting_tools.data_models.questions import MetaculusQuestion
-
-from metaculus_bot import prompts as prompts_module
-from metaculus_bot.numeric.utils import bound_messages
-from metaculus_bot.prompts import binary_prompt, multiple_choice_prompt, numeric_prompt
+from scripts.probes.bench_common.prompting import count_tokens, prompt_clock, render_prompt
 from scripts.probes.section_strip_bench.bundle import ARMS, FULL_ARM, BenchQuestion
 
 
@@ -31,35 +25,8 @@ def anchored_clock(forecasting_window: str, today: str) -> Iterator[None]:
     The prompt module reads ``datetime.now`` through two functions; both are swapped for the duration of a
     synchronous prompt build and restored on exit. Never hold this across an ``await``.
     """
-    original_window = prompts_module._forecasting_window_str
-    original_today = prompts_module._today_str
-
-    def _recorded_window(question: MetaculusQuestion) -> str:
-        del question
-        return forecasting_window
-
-    def _recorded_today() -> str:
-        return today
-
-    prompts_module._forecasting_window_str = _recorded_window
-    prompts_module._today_str = _recorded_today
-    try:
+    with prompt_clock(lambda _question: forecasting_window, today):
         yield
-    finally:
-        prompts_module._forecasting_window_str = original_window
-        prompts_module._today_str = original_today
-
-
-def render_prompt(question: MetaculusQuestion, research: str) -> str:
-    """The production forecaster prompt for this question type over ``research``."""
-    if isinstance(question, BinaryQuestion):
-        return binary_prompt(question, research)
-    if isinstance(question, MultipleChoiceQuestion):
-        return multiple_choice_prompt(question, research)
-    if isinstance(question, NumericQuestion):
-        upper_message, lower_message = bound_messages(question, stated_tail_fields=True)
-        return numeric_prompt(question, research, lower_message, upper_message)
-    raise TypeError(f"no forecaster prompt for {type(question).__name__}")
 
 
 def replicate_nonce(seed: int) -> str:
@@ -74,11 +41,6 @@ class PlanItem:
     seed: int
     prompt: str
     prompt_tokens: int
-
-
-def count_tokens(model: str, text: str) -> int:
-    """tiktoken through litellm's counter; Muse Spark's own tokenizer is unpublished, so treat this as approximate."""
-    return litellm.token_counter(model=f"openrouter/{model}", text=text)
 
 
 def build_plan(questions: Sequence[BenchQuestion], arms: Sequence[str], seeds: int, *, model: str) -> list[PlanItem]:

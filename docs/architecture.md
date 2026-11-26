@@ -341,7 +341,8 @@ with `is_date` set so the comment renders dates through the framework formatter.
 are read from the API's `scaling` block and never derived for a date question. The analysis
 side stays date-free by decision, each at an explicit seam: the backtest
 (`backtest/question_prep.py`), the ablation harness (`ablation/run_pdf.py`), the residual
-dataset (`performance_analysis/collector.py`) and the ghost scorer (`scripts/score_ghosts.py`);
+dataset (`performance_analysis/collector.py`), reusable ghost parsing and CDF helpers
+(`performance_analysis/ghosts.py`), and the report scorer (`scripts/score_ghosts.py`);
 see `docs/performance_analysis.md` "Date questions are excluded from the dataset". Detail:
 [numeric_pipeline.md](numeric_pipeline.md) and `docs/operations.md` "Date questions".
 
@@ -1308,6 +1309,8 @@ welcome.
 | Gap-fill v1 / v2 | `research/targeted.py`, `research/agentic/` |
 | Forecaster runners | `metaculus_bot/forecaster_runners.py` |
 | Value extraction | `metaculus_bot/value_extraction.py` |
+| Loss-attribution calculations | `metaculus_bot/performance_analysis/loss_attribution.py` |
+| Loss-attribution Markdown and JSON rendering | `metaculus_bot/performance_analysis/loss_attribution_report.py` |
 | Numeric CDF | `metaculus_bot/numeric/` |
 | Date question as a numeric question on the epoch-seconds axis | `metaculus_bot/numeric/date_axis.py` (`EpochDateQuestion`, `as_epoch_question`, `numeric_view`, `parse_forecast_date`, `format_epoch`, `question_json`) |
 | Per-bin PMF elicitation on the small Mantic grids | `metaculus_bot/numeric/config.py` (`elicit_per_bin`, `PMF_ELICITATION_MAX_BINS`, `PMF_ELICITATION_PLATFORMS`), `numeric/pmf_grid.py` (bin labels), `numeric/pmf_cdf.py` (PMF to CDF) |

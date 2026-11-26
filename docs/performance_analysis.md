@@ -5,7 +5,7 @@ make a number trustworthy, and the receipts behind each one. It covers the round
 and the `--prior` rescoring diff, what the archives hold and which of their fields are
 historically unreadable, era bucketing and the merge-to-main dating rule, the standing
 exclusion cohorts, the scoring conventions (spot peer, and `spot_peer_delta` for
-counterfactuals), the clip-threshold sweep, partially pooled type and era estimates,
+counterfactuals), the clip-threshold sweep, loss attribution, partially pooled type and era estimates,
 per-model forecast recovery, how to read the
 width monitor's era table, the PIT convention for out-of-range resolutions, starved outer
 tails, and question-supply / forfeit accounting.
@@ -460,7 +460,7 @@ bot published its comment) and return the fields a round's tagging pass writes:
 |---|---|---|---|
 | `config_era` | `era_of` | `pre_flip`, `post_flip`, `triple_era`, `no_ts` | `era_gap` (its default `ERA_FIELD`), the clip sweep's era windows |
 | `triple_subera` | `triple_subera_of` | `triple_pre_market`, `triple_ranked_market`, `triple_time_budget`, `triple_fall_config` | the coarse pooling, where every fall merge is one bucket |
-| `triple_subera_fine` | `triple_subera_fine_of` | `pre_ft_unfreeze`, `ft_0292`, `july25`, `post_dry_key_fix`, `ranked_markets`, `time_budget`, `fall_config`, `fall_gpt6_opus55`, `fall_gpt61_sol`, `fall_gemini4_argon`, `fall_terra_research`, `fall_gemini4_hydrogen`, `fall_gemini4_carbon`, `fall_gemini4_argon_return` | per-merge labels; the fall season's pooled read selects on the coarse field instead (below) |
+| `triple_subera_fine` | `triple_subera_fine_of` | `pre_ft_unfreeze`, `ft_0292`, `july25`, `post_dry_key_fix`, `ranked_markets`, `time_budget`, `fall_config`, `fall_gpt6_opus55`, `fall_gpt61_sol`, `fall_gemini4_argon`, `fall_terra_research`, `fall_gemini4_hydrogen`, `fall_gemini4_carbon`, `fall_gemini4_argon_return`, `fall_four_member` | per-merge labels; the fall season's pooled read selects on the coarse field instead (below) |
 | `ft_unfreeze_side` | `ft_unfreeze_side_of` | `pre_ft_0292`, `ft_0292` | the MC-clamp cuts |
 | `post_linters_merge` | `post_linters_merge_of` | `True` / `False` | provenance only |
 
@@ -791,6 +791,20 @@ count. By default, a missing R-hat, any R-hat above 1.01, or a divergence rate a
 reports are written. `--allow-diagnostics-warnings` allows the Markdown and JSON reports to be written with the
 failed diagnostics recorded; it does not make the fit reliable.
 
+## Paired score comparisons
+
+`metaculus_bot.performance_analysis.paired_comparison` provides reusable Bayesian analysis for paired score
+differences. Each row identifies a unit, its event cluster, a group, a replicate, and the score difference. The
+module fits hierarchical Student-t and normal models with partially pooled group, event, and unit offsets; optional
+member labels add member offsets. It also reports an event-level Bayesian bootstrap, leave-one-event-out shifts,
+influential units, and a sample-size estimate from between-unit and within-unit variance. The module is an offline
+analysis library and is not imported by the live bot's `performance_analysis` package initializer.
+
+Call `prepare_paired_data` to validate and index rows, then use `compare_paired` for the full pair of fits and
+robustness summaries. Use `fit_model` and `summarize_fit` directly when a caller needs one likelihood or a custom
+analysis. The sampler controls, thresholds and diagnostics policy are explicit arguments; failed diagnostics raise
+unless the caller opts to record them as warnings.
+
 ## Building a round's cluster structure
 
 **The clustering rule is code; which questions share a driver is curated data.** Entry point
@@ -1008,6 +1022,113 @@ parameters and nothing in the live pipeline reads them.
   p_midpoint)`. Low bins are half-open as `(lower, upper]` and high bins as `[lower, upper)`.
   The implied rate of the COUNTED event is the midpoint for a low bin and its complement for a
   high one, because a high bin counts NO resolutions.
+
+## Loss attribution
+
+**The loss-attribution report separates point accounting from diagnostics.** Run it on the tagged round dataset and
+the local telemetry archive:
+
+```bash
+uv run python -m metaculus_bot.performance_analysis.loss_attribution \
+  --cached <round>/perf_all_tagged.json \
+  --exclude-qids known_bug,degraded_run,partial_degraded \
+  --telemetry-archive backtests/telemetry_archive \
+  --out <round>/loss_attribution
+```
+
+The command writes `loss_attribution.md` and `loss_attribution.json`. It repeats every table for `all` and for each
+value of `--era-field` (default `triple_subera`, with records that have no value in their own `(none)` bucket), and
+`triple_fall_config` is always present. Each section counts what it left out, so no record drops silently: an
+accounting table prints its eligible count, the exclusion reasons and the excluded spot-peer total; CORP and MC
+discrimination print excluded outcome records; the ghost section counts join and scoreability statuses by question
+type; and the slices count records without spot peer or, for the research slices, without a research source class.
+Read each section's counts beside its own values rather than carrying one global count across tables.
+
+### Accounting and outcome diagnostics
+
+The **ACCOUNTING** tables show where spot-peer points went on realized outcomes. Binary and multiple-choice bins
+group each question by the probability assigned to the realized answer, then report the count, sum and mean spot peer,
+the share of total negative spot peer, the fraction with negative spot peer, and a resolution-day cluster interval.
+Low probability on the realized outcome usually loses spot peer, though not always, because spot peer is measured
+against the other forecasters; these tables say where points were won and lost but not why, so read them beside the
+outcome-blind confidence tables and never alone. The additional binary `by p_yes` table
+preserves the YES-probability direction, while the numeric and discrete table groups spot-peer results by PIT placement
+and keeps out-of-bound resolutions separate by side and open or closed bound.
+
+The points-lost tables are circular bookkeeping: they group questions by the probability assigned to the outcome
+that happened. The non-circular counterparts are calibration, measured in the reliability tables, and discrimination,
+measured by CORP and the outcome-blind tables. The option-level multiple-choice reliability table asks whether options
+we called unlikely won more often than their assigned probabilities predicted. Each bin reports the observed count,
+the sum of forecast probabilities, and their difference. Its 95% resolution-day cluster bootstrap interval requires at
+least ten questions across five days and at least five expected outcomes both inside and outside the bin. These
+outcome diagnostics do not require a spot-peer score.
+
+The **OUTCOME-BLIND** confidence tables use the published confidence rather than the realized outcome: binary bins
+use `max(p_yes, 1 - p_yes)`, and MC bins use the top-option probability. These tables show the same spot-peer
+accounting quantities across confidence levels and help check whether the accounting pattern comes from a particular
+confidence range. Their bin assignment does not use the outcome, although the spot-peer values in each bin still
+depend on the realized outcome. The CORP decomposition and reliability tables diagnose forecast quality: binary
+forecasts contribute one observation per question, and MC contributes the top option's probability and whether that
+option won, where a tie at the top scores the first tied option in option order, chosen before the outcome is read.
+
+CORP follows Dimitriadis, Gneiting & Jordan (2021, PNAS): isotonic recalibration by the pool-adjacent-violators
+algorithm (PAV), with equal forecast probabilities pooled before fitting, decomposes proper score into miscalibration
+(MCB), discrimination (DSC), and uncertainty (UNC), where score = MCB - DSC + UNC. The report gives Brier and log
+score decompositions, plus reliability bins with observed frequency and a Jeffreys interval. MC's one-observation-per-
+question top-option result is primary because options within one ballot are dependent; the option-pooled line is
+secondary. For binary questions, log miscalibration times 100 is an in-sample upper bound on spot-peer improvement
+per question; it overstates the gain expected out of sample. The floor calibration comparison carries forward the 1.01% MC option check formerly run from
+`scratch/residual_2026-11-25_floors/floor_calibration.py`; that scratch script is retired.
+
+The report also tests recalibration out of sample across chronological config eras. It splits eligible `pre_flip`
+questions at the median `bot_comment_created_at` time, computed across binary and multiple-choice questions together;
+the two halves share that boundary even though they remain under one config. The later half is scored using a fit on
+the earlier half, and each subsequent era is scored using eligible questions from all preceding halves and eras. For
+each test era it fits binary Platt scaling and isotonic regression, or multiple-choice power scaling, and scores the
+later questions with `spot_peer_delta`. It skips a test era when fewer than 50 training questions are available for its
+question type, and counts missing forecast timestamps and other exclusions. The JSON and Markdown report show the
+split boundary. Per-era rows report training and test counts, fitted parameters where applicable, and mean spot-peer
+change with resolution-day cluster intervals; the pooled row averages the held-out question changes. Positive change
+means the fitted layer would have helped, but a layer still requires a decisive out-of-sample era test before shipping.
+
+The MC discrimination table compares the published forecast, each complete member vector, and the ghost when an
+archive is supplied. It reports top accuracy, normalized rank and probability of the winning option, counterfactual
+spot peer and paired delta where both forecasts can be scored, and symmetric counts for member-only and published-
+only top rankings. Top accuracy scores the first tied option in option order when a ballot ties at the top; the two
+directional counts treat a winner tied at the maximum as on top in both directions, and rank averages tied positions. The ghost comparison groups forecasts by outcome-blind distance from the published
+vector and reports counterfactual changes by distance; binary distance is absolute probability difference, MC uses
+total variation, and numeric or discrete uses the published-grid CDF distance. Ghost status counts explain unjoined
+and unscoreable records. Every distance bin also keeps its question ids, URLs, distances and spot-peer changes in the
+JSON, ordered from the lowest change for trace review. The markdown report prints those lists once in the all-era
+section and omits distances below 0.05. The descriptive slice ranking and worst-decile list provide additional
+follow-up cohorts for review.
+
+Every number in the report is in SPOT PEER points. Point accounting reads `spot_peer_score`; member counterfactuals
+and binary or MC ghost changes go through `spot_peer_delta`. Numeric and discrete ghost changes are the difference of
+`numeric_log_score` between the ghost CDF (rebuilt on the published grid) and the published CDF, which equals
+`spot_peer_delta` on the resolving-bucket masses because `numeric_log_score` already carries the continuous halving;
+a test pins the equivalence. Binary and MC ghosts are clamped with the historical bounds active at
+`bot_comment_created_at`; MC probabilities use the production clamp-and-renormalize function. The same prepared ghost
+values feed the loss-attribution report and `scripts/score_ghosts.py`. The numeric ghost CDF uses the production PCHIP
+builder and published grid constraints; it does not add a separate CDF clamp. `scripts/score_ghosts.py` reports
+LOG-score deltas, so label units when quoting the two side by side. Alternatives that assign zero or negative
+probability to the realized outcome are excluded from score changes and counted; they remain visible in the related
+accuracy and status counts. The report gives an interval only when a cell has at least 10 observations across at least
+5 UTC resolution-day clusters; each section reports its own exclusions, including excluded spot-peer totals where
+available.
+
+The member MC audit revives backlog decision-31 `"Time-of-tournament Brier averages, nr_forecasters stratification,
+per-model MC audit"`: complete member MC vectors are present on 130 of 130 resolved MC records in the 2026-11-25
+round. The symmetric counts on all eligible questions address backlog decision-11 `"Median drowns the correct
+dissenter"`; per-member rows remain diagnostic and do not rank members as an action, per backlog decision-15
+`"Per-model peer ranking as an action"`. The report does not re-run backlog decision-2 `"Retired calibration
+signatures (NO-right vs YES-right, fall 0.70-0.90 under-confidence, MC 0-5% bucket, 3D grid)"` or the
+clip-threshold sweep. Any change motivated by these diagnostics still needs the out-of-sample era test described
+above before it ships.
+
+Ghost marker parsing and joining now live in `metaculus_bot/performance_analysis/ghosts.py`, shared with
+`scripts/score_ghosts.py`; the report joins ghost records by post id. The report is an offline analysis of cached
+round data and a local telemetry archive, so it makes no paid research or model calls.
 
 ## Receipts behind the survivor-conditional markers
 

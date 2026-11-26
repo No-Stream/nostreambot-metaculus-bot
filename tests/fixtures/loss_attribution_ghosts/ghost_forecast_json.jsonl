@@ -1,0 +1,2 @@
+{"qid":201,"run_date":"2026-01-01T00:00:00Z","seq":0,"forecast_json":"{\"qtype\":\"multiple_choice\",\"option_probs\":{\"A\":0.7,\"B\":0.3}}"}
+{"qid":999,"run_date":"2026-01-01T00:00:00Z","seq":0,"forecast_json":"{\"qtype\":\"binary\",\"prob\":0.7}"}

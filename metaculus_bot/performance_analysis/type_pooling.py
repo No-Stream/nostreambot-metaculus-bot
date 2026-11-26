@@ -8,17 +8,16 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
 
-import arviz as az
 import numpy as np
-import pandas as pd
 import pymc as pm
 
 from metaculus_bot.performance_analysis.collector import load_dataset
 from metaculus_bot.performance_analysis.era_gap import ERA_FIELD, SECONDS_PER_DAY, in_exclusion_cohort
 from metaculus_bot.performance_analysis.markdown import markdown_table
 from metaculus_bot.performance_analysis.platform_scores import spot_peer_score
+from metaculus_bot.performance_analysis.posterior_summary import interval_summary as _interval
+from metaculus_bot.performance_analysis.posterior_summary import sampling_diagnostics as _diagnostics
 from metaculus_bot.time_utils import parse_iso_utc
 
 logger = logging.getLogger(__name__)
@@ -149,14 +148,6 @@ def fit_model(data: PoolingData, *, draws: int, tune: int, chains: int, seed: in
     return inference
 
 
-def _interval(values: np.ndarray) -> dict:
-    return {
-        "mean": float(np.mean(values)),
-        "interval_90": np.quantile(values, [0.05, 0.95]).tolist(),
-        "interval_95": np.quantile(values, [0.025, 0.975]).tolist(),
-    }
-
-
 def make_report(data: PoolingData, inference, *, allow_diagnostics_warnings: bool = False) -> dict:
     diagnostics = _diagnostics(inference, allow_diagnostics_warnings=allow_diagnostics_warnings)
     posterior = inference.posterior
@@ -190,35 +181,6 @@ def make_report(data: PoolingData, inference, *, allow_diagnostics_warnings: boo
             "sd": _interval(ppc_sds),
         },
     }
-
-
-def _diagnostics(inference, *, allow_diagnostics_warnings: bool) -> dict:
-    summary = cast(pd.DataFrame, az.summary(inference, kind="diagnostics", round_to="none"))
-    rhat = summary["r_hat"]
-    ess_bulk = summary["ess_bulk"]
-    ess_tail = summary["ess_tail"]
-    divergences = int(inference.sample_stats["diverging"].sum())
-    sample_count = int(inference.sample_stats["diverging"].size)
-    invalid = bool(rhat.isna().any() or (rhat > 1.01).any() or divergences / sample_count > 0.01)
-    if invalid:
-        message = "Sampling diagnostics failed: R-hat missing or above 1.01, or divergences above 1%"
-        if not allow_diagnostics_warnings:
-            raise ValueError(message)
-        logger.warning(message)
-    clean_summary = summary.replace([np.inf, -np.inf], np.nan).reset_index()
-    return {
-        "max_r_hat": _finite_or_none(rhat.max()),
-        "min_ess_bulk": _finite_or_none(ess_bulk.min()),
-        "min_ess_tail": _finite_or_none(ess_tail.min()),
-        "divergences": divergences,
-        "draws": sample_count,
-        "passed": not invalid,
-        "parameters": clean_summary.astype(object).where(clean_summary.notna(), None).to_dict(orient="records"),
-    }
-
-
-def _finite_or_none(value: float) -> float | None:
-    return float(value) if np.isfinite(value) else None
 
 
 def _cell_summaries(data: PoolingData, cells: np.ndarray) -> tuple[list[dict], list[dict]]:

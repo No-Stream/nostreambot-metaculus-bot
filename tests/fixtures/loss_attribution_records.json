@@ -1,0 +1,4 @@
+[
+  {"question_id": 100, "post_id": 200, "title": "Binary example", "type": "binary", "our_prob_yes": 0.6, "resolution_parsed": true, "metaculus_scores": {"spot_peer_score": 4.0}, "metadata": {"actual_resolve_time": "2026-01-01T00:00:00Z"}, "triple_subera": null},
+  {"question_id": 101, "post_id": 201, "title": "Choice example", "type": "multiple_choice", "options": ["A", "B"], "our_forecast_values": [0.4, 0.6], "resolution_parsed": "A", "per_model_forecasts": {"model": {"A": 0.7, "B": 0.3}}, "metaculus_scores": {"spot_peer_score": -2.0}, "metadata": {"actual_resolve_time": "2026-01-02T00:00:00Z"}, "triple_subera": "triple_fall_config"}
+]

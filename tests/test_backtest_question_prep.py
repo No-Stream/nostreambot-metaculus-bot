@@ -23,6 +23,7 @@ from metaculus_bot.constants import (
     BACKTEST_DEFAULT_TOURNAMENT,
     BACKTEST_OVERFETCH_RATIO,
 )
+from metaculus_bot.prompts import binary_prompt
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -147,10 +148,26 @@ def test_prepare_clears_resolution(binary_question_yes: BinaryQuestion):
     assert clean.actual_resolution_time is None
 
 
-def test_prepare_clears_background_info(binary_question_yes: BinaryQuestion):
-    binary_question_yes.background_info = "Some background info"
-    clean = _prepare_question_for_backtest(binary_question_yes)
-    assert clean.background_info is None
+def test_prepare_blanks_background_info_to_an_empty_string():
+    """None would be printed as the word "None" under "Question background:" in every forecaster prompt."""
+    question = BinaryQuestion(
+        question_text="Will it rain tomorrow?",
+        id_of_question=1,
+        resolution_string="yes",
+        state=QuestionState.RESOLVED,
+        api_json={},
+        background_info="Some background info",
+        resolution_criteria="Resolves yes if it rains.",
+        fine_print="",
+        open_time=datetime(2026, 10, 1),
+        scheduled_resolution_time=datetime(2026, 11, 1),
+    )
+    clean = _prepare_question_for_backtest(question)
+    assert isinstance(clean, BinaryQuestion)
+    assert clean.background_info == ""
+    prompt = binary_prompt(clean, "research")
+    background_section = prompt.split("Question background:")[1].split("This question's outcome")[0]
+    assert background_section.strip() == ""
 
 
 def test_prepare_is_deep_copy(binary_question_yes: BinaryQuestion):
@@ -659,7 +676,7 @@ async def test_stratified_clean_questions_are_sanitized(mock_fetch):
     assert clean.state == QuestionState.OPEN
     assert clean.resolution_string is None
     assert clean.actual_resolution_time is None
-    assert clean.background_info is None
+    assert clean.background_info == ""
     # Original is untouched (deep copy)
     assert q.state == QuestionState.RESOLVED
     assert q.background_info == "leak this"
