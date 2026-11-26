@@ -225,9 +225,11 @@ def _contrast_tables(
             for qtype in sorted({row["group"] for row in all_rows})
             if (selected := [row for row in all_rows if row["group"] == qtype])
         }
-        likelihood_differences = [
-            row["difference"] for row in all_rows if row["group"] in {"binary", "multiple_choice"}
-        ]
+        likelihood_differences_by_question: dict[str, list[float]] = defaultdict(list)
+        for row in all_rows:
+            if row["group"] in {"binary", "multiple_choice"}:
+                likelihood_differences_by_question[str(row["unit_id"])].append(float(row["difference"]))
+        likelihood_differences = [statistics.fmean(values) for values in likelihood_differences_by_question.values()]
 
         def mean(items: list[dict[str, Any]]) -> float | None:
             return statistics.fmean(row["difference"] for row in items) if items else None

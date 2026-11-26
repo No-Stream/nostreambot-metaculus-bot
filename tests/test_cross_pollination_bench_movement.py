@@ -154,6 +154,26 @@ def test_likelihood_ratio_and_numeric_rows_are_excluded(manifest: Manifest) -> N
     )
 
 
+def test_likelihood_ratio_averages_draw_differences_within_each_question(manifest: Manifest) -> None:
+    scores = []
+    for qid, qtype, differences in (
+        (101, "binary", (10.0, 10.0)),
+        (102, "multiple_choice", (-5.0, -5.0)),
+        (103, "numeric", (100.0, 100.0)),
+    ):
+        for draw, difference in enumerate(differences):
+            scores.extend(
+                [
+                    AggregateScore(qid, qtype, draw, "peers_full_median", 0.4, 0.0, difference, 3, True, 0),
+                    AggregateScore(qid, qtype, draw, "second_look_median", 0.4, 0.0, 0.0, 3, True, 0),
+                ]
+            )
+
+    contrasts, _ = _contrast_tables(scores, manifest, [], None)
+
+    assert contrasts["peers_full_vs_second_look"]["likelihood_ratio_binary_and_mc"] == pytest.approx(math.exp(0.05))
+
+
 def test_summary_has_the_movement_sections_and_the_three_member_note(manifest: Manifest) -> None:
     result = build_results([], manifest, {})
     assert {"movement", "spread", "member_changes", "corrections", "production_proxy"} <= result.keys()
