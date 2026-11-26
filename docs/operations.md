@@ -1699,7 +1699,9 @@ The paid run is the operator's last step.
   rebuilds the report from saved calls without network access. `--analyze` runs the hierarchical model and robustness
   checks from `paired_rows.jsonl`, writes `analysis.json`, and updates the decision in the report without provider calls.
   Haiku uses the shared key and the other models use the
-  personal key. Salvage-parser calls are not included in the estimate.
+  personal key. Salvage-parser calls are not included in the estimate. The spend cap is checked before each call, so
+  calls already in flight can take measured spend past the cap by up to the number of concurrent calls multiplied by
+  the per-call cost. The output-token limit remains deliberately generous.
 - Any script that invokes a research provider or the ensemble against real
   questions, including one an agent writes on the spot.
 
