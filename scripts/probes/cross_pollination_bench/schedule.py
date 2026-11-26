@@ -94,7 +94,13 @@ class _QuestionScheduler:
             return None
         if old.prompt_sha256 != digest:
             raise ValueError(f"question {question_id}: prompt changed for {model.label} draw {draw} {stage}")
-        frozen = any(key[0] == question_id and key[2] == draw and key[3] != STAGE_FIRST for key in self.saved)
+        frozen = any(
+            key[0] == question_id
+            and key[2] == draw
+            and key[3] != STAGE_FIRST
+            and saved_row.status not in {STATUS_SKIPPED_SPEND_CAP, STATUS_SKIPPED_NO_PEERS}
+            for key, saved_row in self.saved.items()
+        )
         if stage == STAGE_FIRST and old.status in (STATUS_API_ERROR, STATUS_SKIPPED_SPEND_CAP) and not frozen:
             return None
         return old

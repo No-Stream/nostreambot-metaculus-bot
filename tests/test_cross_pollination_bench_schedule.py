@@ -15,7 +15,7 @@ from scripts.probes.cross_pollination_bench import schedule
 from scripts.probes.cross_pollination_bench.manifest import build_contexts, build_manifest
 from scripts.probes.cross_pollination_bench.models import BENCH_MODELS
 from scripts.probes.cross_pollination_bench.request import message_sha256
-from scripts.probes.cross_pollination_bench.rows import append_row, call_key, load_rows, saved_replies
+from scripts.probes.cross_pollination_bench.rows import BenchCallRow, append_row, call_key, load_rows, saved_replies
 from scripts.probes.cross_pollination_bench.schedule import (
     MAIN_RUN,
     SMOKE_RUN,
@@ -356,6 +356,30 @@ def test_measured_cap_stops_calls_that_have_not_started(setup_run):
     assert len(events) == 3
     assert sum(row.status == "scored" for row in rows) == 3
     assert all(row.status == "skipped_spend_cap" for row in rows if row.status != "scored")
+
+
+def test_cap_stopped_updates_are_sent_after_resume_with_a_higher_cap(setup_run):
+    contexts, calls, parsers, events = setup_run
+    stopped_rows = run(contexts[101], calls, parsers, meter=SpendMeter(0.001), config=SMOKE_RUN)
+    saved = saved_replies(stopped_rows)
+    assert any(row.stage != "first" and row.status == "skipped_spend_cap" for row in stopped_rows)
+    events.clear()
+
+    resumed_rows = run(contexts[101], calls, parsers, meter=SpendMeter(10), saved=saved, config=SMOKE_RUN)
+
+    assert any(len(event[2][0]["content"]) > 1 for event in events)
+    assert any(row.stage == "peers_full" and row.status == "scored" for row in resumed_rows)
+
+
+def test_skipped_no_peer_update_does_not_freeze_a_failed_first_call(setup_run):
+    contexts, calls, parsers, events = setup_run
+    failed_first = BenchCallRow(101, "binary", "haiku", 0, "first", "api_error", "unused")
+    skipped_update = BenchCallRow(101, "binary", "haiku", 0, "peers_full", "skipped_no_peers", "unused")
+    saved = saved_replies([failed_first, skipped_update])
+
+    run(contexts[101], calls, parsers, saved=saved, config=SMOKE_RUN)
+
+    assert any(event[0] == "haiku" and len(event[2][0]["content"]) == 1 for event in events)
 
 
 def test_changed_update_prompt_raises_before_reuse(setup_run):

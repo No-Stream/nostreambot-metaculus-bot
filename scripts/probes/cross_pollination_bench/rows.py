@@ -81,12 +81,17 @@ def load_rows(path: Path) -> list[BenchCallRow]:
 
 def saved_replies(rows: list[BenchCallRow]) -> dict[CallKey, BenchCallRow]:
     latest = {call_key(row): row for row in rows}
-    frozen_draws = {(row.question_id, row.draw) for row in latest.values() if row.stage != STAGE_FIRST}
+    never_sent_statuses = {STATUS_SKIPPED_SPEND_CAP, STATUS_SKIPPED_NO_PEERS}
+    frozen_draws = {
+        (row.question_id, row.draw)
+        for row in latest.values()
+        if row.stage != STAGE_FIRST and row.status not in never_sent_statuses
+    }
     return {
         key: row
         for key, row in latest.items()
         if row.status in REPLY_STATUSES
-        or row.stage != STAGE_FIRST
+        or (row.stage != STAGE_FIRST and row.status not in never_sent_statuses)
         or (
             row.stage == STAGE_FIRST
             and row.status in {STATUS_API_ERROR, STATUS_SKIPPED_SPEND_CAP}
